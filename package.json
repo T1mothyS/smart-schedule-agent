@@ -1,0 +1,111 @@
+{
+  "name": "smart-schedule-agent",
+  "version": "1.0.0",
+  "description": "跨平台智能日程表 Agent 应用",
+  "author": "Smart Schedule Team",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:client": "vite",
+    "dev:electron": "concurrently -k \"npm run dev:server\" \"npm run dev:electron:client\"",
+    "dev:electron:client": "vite",
+    "build": "npm run build:client && npm run build:electron",
+    "build:client": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "preview": "vite preview",
+    "server": "tsx server/index.ts",
+    "electron": "electron .",
+    "electron:dev": "concurrently -k \"npm run dev:server\" \"npm run electron:dev:start\"",
+    "electron:dev:start": "wait-on http://localhost:5173 && electron .",
+    "electron:build": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "@tdesign-react/aigc": "^0.1.0-alpha.1",
+    "@tdesign-react/chat": "^1.0.2",
+    "@tencent-ai/agent-sdk": "^0.3.43",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.6.2",
+    "dotenv": "^17.4.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.3",
+    "lucide-react": "^0.563.0",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^7.13.0",
+    "sql.js": "^1.14.1",
+    "tdesign-icons-react": "^0.5.0",
+    "tdesign-react": "^1.12.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^20.10.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/nodemailer": "^8.0.0",
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@types/uuid": "^9.0.7",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^8.2.2",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
+    "less": "^4.3.0",
+    "postcss": "^8.5.0",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.6.2",
+    "typescript": "^5.3.2",
+    "vite": "^5.0.10",
+    "wait-on": "^8.0.2"
+  },
+  "build": {
+    "appId": "com.smartschedule.agent",
+    "productName": "智能日程表",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "public/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "public/icon.icns"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "public/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "public/icon.ico",
+      "uninstallerIcon": "public/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

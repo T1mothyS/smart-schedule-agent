@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+dist-electron/
+release/
+data/*.db
+data/*.db-*
+*.log
+*.zip
+
+*.tsbuildinfo
+vite.config.d.ts
