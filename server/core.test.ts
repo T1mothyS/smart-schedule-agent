@@ -11,10 +11,12 @@ process.env.APP_TIMEZONE = 'Asia/Shanghai';
 const db = await import('./db.js');
 const schedules = await import('./schedule-store.js');
 const reminders = await import('./reminder-store.js');
+const reminderCalendarSync = await import('./reminder-calendar-sync.js');
 const activity = await import('./activity-store.js');
 const attachments = await import('./attachment-service.js');
 const backups = await import('./backup-service.js');
 const actionCenter = await import('./action-center.js');
+const email = await import('./email-service.js');
 
 await db.initDb();
 await schedules.initScheduleDb();
@@ -36,6 +38,13 @@ test('不存在的账单日按该月最后一天计算', () => {
   assert.equal(reminders.clampDateForMonth(2025, 2, 31), '2025-02-28');
   assert.equal(reminders.clampDateForMonth(2024, 2, 31), '2024-02-29');
   assert.equal(reminders.clampDateForMonth(2026, 4, 31), '2026-04-30');
+});
+
+test('邮件测试时间按 GMT+8 输出', () => {
+  assert.equal(
+    email.formatDateTimeInTimezone(new Date('2026-07-15T15:11:00.000Z'), 'Asia/Shanghai'),
+    '2026-07-15 23:11:00 GMT+8',
+  );
 });
 
 test('日历按用户隔离并自动迁移默认日历', () => {
@@ -63,9 +72,20 @@ test('通用周期任务、逾期手动完成和下一周期生成', () => {
     },
   });
   assert.ok(task.currentCycle);
+  const linked = reminderCalendarSync.syncReminderTaskToCalendar(task);
+  assert.equal(linked?.all_day, true);
+  assert.equal(linked?.type, 'todo');
+  assert.equal(linked?.start_time.slice(0, 10), task.currentCycle?.dueDate);
+  assert.equal(actionCenter.getActionCenter(userId, 14).today.some(item => item.sourceId === linked?.id), false);
+  const firstCycle = task.currentCycle!;
   const completed = reminders.completeReminderCycle(task.id, userId, task.currentCycle!.id, task.currentCycle!.dueDate, '已支付');
   assert.equal(completed?.currentCycle?.status, 'pending');
   assert.notEqual(completed?.currentCycle?.id, task.currentCycle?.id);
+  const completedCycle = reminders.getReminderHistory(task.id, userId).find(cycle => cycle.id === firstCycle.id)!;
+  reminderCalendarSync.syncReminderCycleToCalendar(completed!, completedCycle);
+  reminderCalendarSync.syncReminderTaskToCalendar(completed!);
+  assert.equal(schedules.getSchedule(reminderCalendarSync.reminderScheduleId(firstCycle.id))?.is_completed, true);
+  assert.ok(schedules.getSchedule(reminderCalendarSync.reminderScheduleId(completed!.currentCycle!.id)));
   const expiredTask = reminders.createReminderTask({
     userId,
     type: 'generic',

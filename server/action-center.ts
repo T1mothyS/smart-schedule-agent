@@ -91,6 +91,8 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
 
   const items: ActionItem[] = [];
   for (const schedule of scheduleStore.getAllSchedules(userId)) {
+    // 周期事务会生成日历全天待办；行动中心仍使用周期事务本体，避免重复两条。
+    if (schedule.id.startsWith('reminder-cycle:')) continue;
     const dueDate = dateOnly(schedule.start_time);
     const completion = latestCompletion.get(`schedule:${schedule.id}:`);
     const completed = schedule.is_completed || !!completion;

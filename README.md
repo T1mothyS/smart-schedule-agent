@@ -9,6 +9,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - 登录后默认进入 `/today` 今日行动中心。
 - 日历支持日程、待办、分类、优先级和完成状态。
 - 周期事务支持信用卡、SIM、订阅、保险、证件、会员、房租、水电、车辆年检和自定义规则。
+- 周期事务会按当前周期到期日同步为日历全天待办，完成后继续生成下一周期事项。
 - 通知支持邮件、站内消息、浏览器通知、免打扰、失败重试和发送记录。
 - 完成时可保存备注、金额、账单日期、图片或 PDF 证明。
 - 支持用户加密导出/恢复和管理员全站快照。
@@ -343,6 +344,7 @@ cp .env.example .env
 | `server/schedule-format.ts` | 把日程整理成邮件或 AI 可读文本 |
 | `server/reminder-store.ts` | `reminder.db` 的周期规则、任务、周期实例和迁移逻辑 |
 | `server/reminder-service.ts` | 计算到期日、月末兜底、逾期状态和周期推进 |
+| `server/reminder-calendar-sync.ts` | 将周期任务同步为日历全天待办，并维护完成、下一周期和删除联动 |
 | `server/action-center.ts` | 聚合日程、待办和周期事务，计算“下一步”和行动中心分组 |
 | `server/activity-store.ts` | `activity.db` 的完成记录、附件元数据、通知队列、偏好和 AI 草稿访问层 |
 | `server/notification-service.ts` | 持久化通知调度、免打扰、幂等去重、失败重试和发送状态 |

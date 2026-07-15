@@ -10,6 +10,7 @@ import * as scheduleStore from "./schedule-store.js";
 import { initScheduleDb } from "./schedule-store.js";
 import * as reminderStore from "./reminder-store.js";
 import { initReminderDb } from "./reminder-store.js";
+import * as reminderCalendarSync from "./reminder-calendar-sync.js";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -978,9 +979,14 @@ app.post("/api/completions", authenticate, (req, res) => {
       scheduleStore.updateSchedule(sourceId, { is_completed: true });
     } else if (sourceType === 'reminder') {
       if (!instanceId) return res.status(400).json({ error: '周期编号不能为空' });
-      const completedDate = String(req.body.completedAt || new Date().toISOString()).slice(0, 10);
+      const completedDate = req.body.completedAt
+        ? String(req.body.completedAt).slice(0, 10)
+        : reminderStore.todayInTimezone();
       const task = reminderStore.completeReminderCycle(sourceId, userId, instanceId, completedDate, req.body.note);
       if (!task) return res.status(404).json({ error: '周期事务不存在' });
+      const completedCycle = reminderStore.getReminderHistory(task.id, userId).find(cycle => cycle.id === instanceId);
+      if (completedCycle) reminderCalendarSync.syncReminderCycleToCalendar(task, completedCycle);
+      reminderCalendarSync.syncReminderTaskToCalendar(task);
     } else {
       return res.status(400).json({ error: '完成记录来源不正确' });
     }
@@ -1006,7 +1012,14 @@ app.post("/api/completions/:id/reopen", authenticate, (req, res) => {
   const current = activityStore.getCompletion(req.params.id, userId);
   if (!current) return res.status(404).json({ error: '完成记录不存在' });
   if (current.sourceType === 'schedule') scheduleStore.updateSchedule(current.sourceId, { is_completed: false });
-  else if (current.instanceId) reminderStore.reopenReminderCycle(current.sourceId, userId, current.instanceId);
+  else if (current.instanceId) {
+    const task = reminderStore.reopenReminderCycle(current.sourceId, userId, current.instanceId);
+    const reopenedCycle = task
+      ? reminderStore.getReminderHistory(task.id, userId).find(cycle => cycle.id === current.instanceId)
+      : null;
+    if (task && reopenedCycle) reminderCalendarSync.syncReminderCycleToCalendar(task, reopenedCycle);
+    if (task) reminderCalendarSync.syncReminderTaskToCalendar(task);
+  }
   res.json({ completion: activityStore.reopenCompletion(current.id, userId) });
 });
 
@@ -1247,8 +1260,10 @@ function normaliseReminderConfig(type: reminderStore.ReminderTaskType, input: an
 app.get("/api/cycle-reminders", authenticate, (req, res) => {
   try {
     const userId = (req as any).user.userId;
+    const tasks = reminderStore.listReminderTasks(userId);
+    reminderCalendarSync.syncReminderTasksToCalendar(tasks);
     res.json({
-      tasks: reminderStore.listReminderTasks(userId),
+      tasks,
       stats: reminderStore.getReminderStats(userId),
     });
   } catch (error: any) {
@@ -1283,6 +1298,7 @@ app.post("/api/cycle-reminders", authenticate, (req, res) => {
       timezone: req.body.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai',
       config: normaliseReminderConfig(type, req.body.config),
     });
+    reminderCalendarSync.syncReminderTaskToCalendar(task);
     addLog('info', 'reminder', '创建周期提醒任务: ' + task.name, { taskId: task.id, type });
     res.json({ task });
   } catch (error: any) {
@@ -1301,6 +1317,7 @@ app.patch("/api/cycle-reminders/:id", authenticate, (req, res) => {
     if (req.body.timezone !== undefined) updates.timezone = String(req.body.timezone);
     if (req.body.config !== undefined) updates.config = normaliseReminderConfig(current.type, req.body.config);
     const task = reminderStore.updateReminderTask(req.params.id, userId, updates);
+    if (task) reminderCalendarSync.syncReminderTaskToCalendar(task);
     res.json({ task });
   } catch (error: any) {
     res.status(400).json({ error: error?.message || '更新周期提醒失败' });
@@ -1309,6 +1326,8 @@ app.patch("/api/cycle-reminders/:id", authenticate, (req, res) => {
 
 app.delete("/api/cycle-reminders/:id", authenticate, (req, res) => {
   const userId = (req as any).user.userId;
+  const cycles = reminderStore.getReminderHistory(req.params.id, userId);
+  reminderCalendarSync.deleteReminderSchedules(userId, cycles);
   const success = reminderStore.deleteReminderTask(req.params.id, userId);
   if (!success) return res.status(404).json({ error: '周期提醒不存在' });
   addLog('warn', 'reminder', '删除周期提醒任务: ' + req.params.id);
@@ -1328,6 +1347,10 @@ app.post("/api/cycle-reminders/:id/complete", authenticate, (req, res) => {
       req.body.note,
     );
     if (!task) return res.status(404).json({ error: '任务或周期不存在' });
+    const completedCycle = reminderStore.getReminderHistory(task.id, userId)
+      .find(cycle => cycle.id === String(req.body.cycleId || ''));
+    if (completedCycle) reminderCalendarSync.syncReminderCycleToCalendar(task, completedCycle);
+    reminderCalendarSync.syncReminderTaskToCalendar(task);
     const existingCompletion = activityStore.listCompletions(userId, { sourceType: 'reminder', sourceId: task.id })
       .find(item => item.instanceId === String(req.body.cycleId || '') && !item.reopenedAt);
     const completion = existingCompletion || activityStore.createCompletion({
@@ -1412,7 +1435,7 @@ app.post("/api/ai/imports/:id/confirm", authenticate, (req, res) => {
     let created: unknown;
     if (draft.kind === 'recurring') {
       const date = draft.dueDate;
-      created = reminderStore.createReminderTask({
+      const task = reminderStore.createReminderTask({
         userId,
         type: 'generic',
         name: draft.title,
@@ -1436,6 +1459,8 @@ app.post("/api/ai/imports/:id/confirm", authenticate, (req, res) => {
           priority: 'medium',
         }),
       });
+      reminderCalendarSync.syncReminderTaskToCalendar(task);
+      created = task;
     } else {
       created = scheduleStore.createSchedule({
         id: uuidv4(),
@@ -1523,6 +1548,7 @@ app.get("/api/schedules", authenticate, (req, res) => {
   try {
     const userId = (req as any).user?.userId;
     const { start, end } = req.query;
+    if (userId) reminderCalendarSync.syncReminderTasksToCalendar(reminderStore.listReminderTasks(userId));
     let schedules;
     
     if (start && end) {
@@ -1543,6 +1569,7 @@ app.get("/api/schedules/date/:date", authenticate, (req, res) => {
   try {
     const userId = (req as any).user?.userId;
     const { date } = req.params;
+    if (userId) reminderCalendarSync.syncReminderTasksToCalendar(reminderStore.listReminderTasks(userId));
     const schedules = scheduleStore.getSchedulesByDate(date, userId);
     res.json({ schedules });
   } catch (error: any) {

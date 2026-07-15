@@ -30,6 +30,29 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+export function formatDateTimeInTimezone(
+  date = new Date(),
+  timezone = process.env.APP_TIMEZONE || 'Asia/Shanghai',
+): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+    timeZoneName: 'shortOffset',
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day} ${value.hour}:${value.minute}:${value.second} ${value.timeZoneName}`;
+}
+
+function dateInTimezone(date = new Date(), timezone = process.env.APP_TIMEZONE || 'Asia/Shanghai'): string {
+  return formatDateTimeInTimezone(date, timezone).slice(0, 10);
+}
+
 function assertEmailConfiguration(to: string): void {
   if (!to.trim()) {
     throw new Error('没有可用的收件邮箱，请先在右上角“设置”中配置提醒邮箱');
@@ -123,7 +146,7 @@ export async function sendDailyReminderEmail(to: string, userId: string): Promis
   const { formatScheduleList } = await import('./schedule-format.js');
 
   const today = new Date();
-  const dateStr = today.toISOString().slice(0, 10);
+  const dateStr = dateInTimezone(today);
   const schedules = getSchedulesByDate(dateStr, userId);
   const content = formatScheduleList(schedules, today);
 
@@ -173,7 +196,7 @@ export async function sendCycleReminderEmail(input: {
   const { task, cycle, reminderType, scheduledDate } = input;
   const to = input.to;
   const appUrl = process.env.APP_URL || 'http://localhost:3000/schedule';
-  const today = new Date().toISOString().slice(0, 10);
+  const today = dateInTimezone();
   const delayed = scheduledDate < today;
   const safeName = escapeHtml(task.name);
   const safeDueDate = escapeHtml(cycle.dueDate);
@@ -263,7 +286,7 @@ export async function sendReminderTestEmail(to: string): Promise<void> {
     subject: '【测试成功】周期提醒系统邮件发送正常',
     text: [
       '周期提醒系统邮件发送正常。',
-      `测试时间：${new Date().toISOString()}`,
+      `测试时间：${formatDateTimeInTimezone()}`,
       `服务器时区：${process.env.APP_TIMEZONE || 'Asia/Shanghai'}`,
       `发件地址：${OFFICIAL_SENDER_EMAIL || '(未配置)'}`,
       `收件地址：${to}`,
