@@ -11,16 +11,68 @@ const OFFICIAL_SENDER_EMAIL = 'aicalendarofficial@163.com';
 
 dotenv.config();
 
+const SMTP_HOST = (process.env.SMTP_HOST || 'smtp.163.com').trim();
+const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
+const SMTP_USER = (process.env.SMTP_USER || OFFICIAL_SENDER_EMAIL).trim();
+
 // 创建 transporter
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.163.com',
-  port: Number(process.env.SMTP_PORT) || 465,
-  secure: true, // 使用 SSL
+  host: SMTP_HOST,
+  port: SMTP_PORT,
+  secure: SMTP_PORT === 465,
+  requireTLS: SMTP_PORT !== 465,
+  connectionTimeout: 15_000,
+  greetingTimeout: 15_000,
+  socketTimeout: 30_000,
   auth: {
-    user: OFFICIAL_SENDER_EMAIL,
+    user: SMTP_USER,
     pass: process.env.SMTP_PASS || '',
   },
 });
+
+function assertEmailConfiguration(to: string): void {
+  if (!to.trim()) {
+    throw new Error('没有可用的收件邮箱，请先在右上角“设置”中配置提醒邮箱');
+  }
+  if (SMTP_HOST.toLowerCase() !== 'smtp.163.com') {
+    throw new Error('邮件服务配置不一致：SMTP_HOST 必须设置为 smtp.163.com');
+  }
+  if (SMTP_USER.toLowerCase() !== OFFICIAL_SENDER_EMAIL) {
+    throw new Error(`邮件服务配置不一致：SMTP_USER 必须设置为 ${OFFICIAL_SENDER_EMAIL}`);
+  }
+  if (!Number.isInteger(SMTP_PORT) || SMTP_PORT <= 0) {
+    throw new Error('邮件服务配置错误：SMTP_PORT 必须是有效端口，推荐使用 465');
+  }
+  if (!process.env.SMTP_PASS?.trim()) {
+    throw new Error('邮件服务尚未配置：请在 .env 的 SMTP_PASS 中填写 163 邮箱客户端授权码');
+  }
+}
+
+async function sendEmail(message: {
+  from: string;
+  to: string;
+  subject: string;
+  html?: string;
+  text?: string;
+}): Promise<void> {
+  assertEmailConfiguration(message.to);
+  try {
+    await transporter.sendMail(message);
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    const code = typeof error === 'object' && error && 'code' in error
+      ? String((error as { code?: unknown }).code || '')
+      : '';
+
+    if (code === 'EAUTH') {
+      throw new Error('163 邮箱认证失败：请确认已开启 SMTP 服务，并且 SMTP_PASS 填写的是客户端授权码而不是网页登录密码');
+    }
+    if (['ECONNECTION', 'ECONNRESET', 'ESOCKET', 'ETIMEDOUT'].includes(code) || /TLS|socket/i.test(details)) {
+      throw new Error(`无法与 163 邮箱建立安全连接，请检查 SMTP_HOST、SMTP_PORT 和服务器出站网络。原始错误：${details}`);
+    }
+    throw error;
+  }
+}
 
 // 生成6位验证码
 export function generateCode(): string {
@@ -56,7 +108,7 @@ export async function sendVerificationEmail(to: string, code: string, purpose: '
     </div>
   `;
 
-  await transporter.sendMail({
+  await sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
     subject,
@@ -88,7 +140,7 @@ export async function sendDailyReminderEmail(to: string, userId: string): Promis
     </div>
   `;
 
-  await transporter.sendMail({
+  await sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
     subject: `📅 ${today.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} 您有 ${schedules.length} 项日程待处理`,
@@ -112,14 +164,14 @@ function daysBetween(from: string, to: string): number {
 }
 
 export async function sendCycleReminderEmail(input: {
-  to?: string;
+  to: string;
   task: ReminderTask;
   cycle: ReminderCycle;
   reminderType: string;
   scheduledDate: string;
 }): Promise<void> {
   const { task, cycle, reminderType, scheduledDate } = input;
-  const to = input.to || process.env.REMINDER_RECIPIENT_EMAIL || '905080737@qq.com';
+  const to = input.to;
   const appUrl = process.env.APP_URL || 'http://localhost:3000/schedule';
   const today = new Date().toISOString().slice(0, 10);
   const delayed = scheduledDate < today;
@@ -166,7 +218,7 @@ export async function sendCycleReminderEmail(input: {
     `;
   }
 
-  await transporter.sendMail({
+  await sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
     subject,
@@ -187,7 +239,7 @@ export async function sendCycleReminderEmail(input: {
 
 export async function sendQueuedNotificationEmail(to: string, title: string, body: string): Promise<void> {
   const appUrl = process.env.APP_URL || 'http://localhost:3000/today';
-  await transporter.sendMail({
+  await sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
     subject: title,
@@ -204,8 +256,8 @@ export async function sendQueuedNotificationEmail(to: string, title: string, bod
   });
 }
 
-export async function sendReminderTestEmail(to = process.env.REMINDER_RECIPIENT_EMAIL || '905080737@qq.com'): Promise<void> {
-  await transporter.sendMail({
+export async function sendReminderTestEmail(to: string): Promise<void> {
+  await sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
     subject: '【测试成功】周期提醒系统邮件发送正常',
