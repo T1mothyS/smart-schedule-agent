@@ -19,11 +19,9 @@ interface ScheduleSidebarProps {
 }
 
 const PRESET_COLORS = [
-  '#3B82F6', '#8B5CF6', '#EC4899', '#EF4444',
-  '#F59E0B', '#10B981', '#06B6D4', '#6B7280',
+  '#627D98', '#7C7391', '#88758C', '#987276',
+  '#9A7B52', '#69877B', '#66858C', '#737B86',
 ];
-
-const PRESET_ICONS = ['📅', '💼', '🏠', '❤️', '🚗', '🎯', '📚', '🏃', '🎵', '✈️'];
 
 function CalendarFormModal({
   editing,
@@ -36,7 +34,7 @@ function CalendarFormModal({
 }) {
   const [name, setName] = useState(editing?.name || '');
   const [color, setColor] = useState(editing?.color || '#3B82F6');
-  const [icon, setIcon] = useState(editing?.icon || '📅');
+  const icon = '';
 
   return (
     <div
@@ -73,26 +71,6 @@ function CalendarFormModal({
           }}
         />
 
-        {/* 图标选择 */}
-        <div className="mb-3">
-          <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>图标</div>
-          <div className="flex flex-wrap gap-1.5">
-            {PRESET_ICONS.map(i => (
-              <button
-                key={i}
-                onClick={() => setIcon(i)}
-                className="w-8 h-8 rounded-lg flex items-center justify-center text-base transition-all"
-                style={{
-                  backgroundColor: icon === i ? `${color}25` : 'var(--td-bg-color-component)',
-                  border: icon === i ? `2px solid ${color}` : '2px solid transparent',
-                }}
-              >
-                {i}
-              </button>
-            ))}
-          </div>
-        </div>
-
         {/* 颜色选择 */}
         <div className="mb-4">
           <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>颜色</div>
@@ -115,7 +93,7 @@ function CalendarFormModal({
           className="flex items-center gap-2 px-3 py-2 rounded-lg mb-4"
           style={{ backgroundColor: `${color}15`, border: `1px solid ${color}30` }}
         >
-          <span className="text-lg">{icon}</span>
+          <span className="calendar-color-dot large" style={{ backgroundColor: color }} />
           <span className="text-sm font-medium" style={{ color }}>{name || '日程表名称'}</span>
         </div>
 
@@ -332,7 +310,7 @@ export function ScheduleSidebar({ activeCalendarIds, onActiveChange, onCalendars
               </div>
 
               {/* 图标 */}
-              <span className="text-base leading-none flex-shrink-0">{cal.icon}</span>
+              <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />
 
               {/* 名称 */}
               <span

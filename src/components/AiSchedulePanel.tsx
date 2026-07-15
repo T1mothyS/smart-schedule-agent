@@ -168,7 +168,7 @@ function ScheduleMiniCard({ schedule, calendars, onDelete }: {
       {schedule.notes && (
         <div className="mt-1.5 text-xs rounded-lg px-2 py-1"
           style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-secondary)' }}>
-          💡 {schedule.notes}
+          备注：{schedule.notes}
         </div>
       )}
     </div>
@@ -198,8 +198,8 @@ function MessageBubble({ msg, calendars, onDeleteSchedule }: {
   }
 
   // AI 回复
-  const intentIcon: Record<string, string> = {
-    create: '✨', update: '✏️', delete: '🗑️', query: '🔍', chat: '💬'
+  const intentLabel: Record<string, string> = {
+    create: '创建', update: '修改', delete: '删除', query: '查询', chat: '对话'
   };
 
   return (
@@ -216,14 +216,14 @@ function MessageBubble({ msg, calendars, onDeleteSchedule }: {
           <span className="text-xs font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
             AI 助手
             {msg.intent && msg.intent !== 'chat' && (
-              <span className="ml-1">{intentIcon[msg.intent] || ''}</span>
+              <span className="ml-1">· {intentLabel[msg.intent] || ''}</span>
             )}
           </span>
         </div>
 
         {msg.type === 'error' ? (
           <div className="px-3 py-2 rounded-xl text-xs whitespace-pre-line" style={{ backgroundColor: '#FEF2F2', color: '#EF4444', border: '1px solid #FCA5A5' }}>
-            ⚠️ {msg.text}
+            {msg.text}
           </div>
         ) : (
           <div
@@ -360,7 +360,7 @@ export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds }: AiSch
         role: 'assistant',
         type: 'error',
         text: isLoginError 
-          ? '⚠️ ' + (errorMsg || '请先配置 API Key 或登录 CodeBuddy CLI')
+          ? (errorMsg || '请先配置 API Key 或登录 CodeBuddy CLI')
           : (errorMsg || '处理失败，请重试'),
         timestamp: new Date().toISOString(),
       }]);

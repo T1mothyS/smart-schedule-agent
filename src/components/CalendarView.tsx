@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  ChevronLeft, ChevronRight, Plus, MapPin, Clock, CheckCircle2,
+  ChevronDown, ChevronLeft, ChevronRight, Plus, MapPin, Clock, CheckCircle2,
   Circle, Trash2, Edit3, Calendar, LayoutList, LayoutGrid, X, Bell, AlertTriangle
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
@@ -36,12 +36,12 @@ type ViewMode = 'day' | 'week' | 'month';
 // ==================== 常量 ====================
 
 const CATEGORY_COLORS: Record<string, string> = {
-  travel: '#F59E0B',
-  work: '#3B82F6',
-  social: '#EC4899',
-  life: '#10B981',
-  health: '#EF4444',
-  other: '#6B7280',
+  travel: '#9A7B52',
+  work: '#627D98',
+  social: '#88758C',
+  life: '#69877B',
+  health: '#987276',
+  other: '#737B86',
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -49,15 +49,11 @@ const CATEGORY_LABELS: Record<string, string> = {
   life: '生活', health: '健康', other: '其他',
 };
 
-const CATEGORY_ICONS: Record<string, string> = {
-  travel: '🚗', work: '💼', social: '👥', life: '🏠', health: '❤️', other: '📌'
-};
-
 // 优先级颜色系统
 const PRIORITY_COLORS: Record<string, { bg: string; border: string; dot: string; label: string }> = {
-  high:   { bg: '#FEF2F2', border: '#EF4444', dot: '#EF4444', label: '高优先' },
-  medium: { bg: '#FFFBEB', border: '#F59E0B', dot: '#F59E0B', label: '中优先' },
-  low:    { bg: '#F0FDF4', border: '#10B981', dot: '#10B981', label: '低优先' },
+  high:   { bg: '#F5ECEC', border: '#9D676C', dot: '#9D676C', label: '高优先' },
+  medium: { bg: '#F4F0E8', border: '#9A7B52', dot: '#9A7B52', label: '中优先' },
+  low:    { bg: '#EBF1EE', border: '#69877B', dot: '#69877B', label: '低优先' },
 };
 
 // 暗色模式优先级颜色
@@ -69,6 +65,7 @@ const PRIORITY_COLORS_DARK: Record<string, { bg: string; border: string; dot: st
 
 const WEEK_DAYS = ['一', '二', '三', '四', '五', '六', '日'];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const WEEKDAY_LABELS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 
 // ==================== 工具函数 ====================
 
@@ -78,6 +75,22 @@ function toDateKey(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function parseDateKey(value: string): Date | null {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+}
+
+function formatScheduleDate(value: string): { date: string; weekday: string; isToday: boolean } {
+  const parsed = parseDateKey(value);
+  if (!parsed) return { date: '选择日期', weekday: '', isToday: false };
+  return {
+    date: parsed.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }),
+    weekday: WEEKDAY_LABELS[parsed.getDay()],
+    isToday: toDateKey(parsed) === toDateKey(new Date()),
+  };
 }
 
 function isSameDay(a: Date, b: Date): boolean {
@@ -433,14 +446,14 @@ function ReminderPicker({
   }, []);
 
   const presetOptions = [
-    { label: '不提醒', value: '', icon: '🔕' },
-    { label: '5分钟', value: '5', icon: '⏱️' },
-    { label: '10分钟', value: '10', icon: '🔟' },
-    { label: '15分钟', value: '15', icon: '🕒' },
-    { label: '30分钟', value: '30', icon: '🕝' },
-    { label: '1小时', value: '60', icon: '⏰' },
-    { label: '2小时', value: '120', icon: '⏲️' },
-    { label: '1天', value: '1440', icon: '📅' },
+    { label: '不提醒', value: '' },
+    { label: '5分钟', value: '5' },
+    { label: '10分钟', value: '10' },
+    { label: '15分钟', value: '15' },
+    { label: '30分钟', value: '30' },
+    { label: '1小时', value: '60' },
+    { label: '2小时', value: '120' },
+    { label: '1天', value: '1440' },
   ];
 
   const isCustom = value && !presetOptions.find(o => o.value === value);
@@ -467,7 +480,7 @@ function ReminderPicker({
       >
         <div className="flex items-center gap-2">
           <Bell className="w-4 h-4" style={{ color: 'var(--td-text-color-secondary)' }} />
-          <span>{isCustom ? `提前${formatReminder(value)}` : (presetOptions.find(o => o.value === value)?.icon + ' ' + formatReminder(value))}</span>
+          <span>{isCustom ? `提前${formatReminder(value)}` : formatReminder(value)}</span>
         </div>
       </button>
 
@@ -494,7 +507,6 @@ function ReminderPicker({
                     color: value === opt.value ? '#fff' : 'var(--td-text-color-primary)',
                   }}
                 >
-                  <span>{opt.icon}</span>
                   <span>{opt.label}</span>
                 </button>
               ))}
@@ -556,6 +568,7 @@ function ScheduleFormModal({
   activeCalendars?: Array<{ id: string; name: string; color: string; icon: string }>;
 }) {
   const isEditing = !!editingSchedule;
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [form, setForm] = useState({
     type: (editingSchedule?.type || 'event') as 'event' | 'todo',
     title: editingSchedule?.title || '',
@@ -580,6 +593,7 @@ function ScheduleFormModal({
   });
 
   const set = (k: string, v: any) => setForm(prev => ({ ...prev, [k]: v }));
+  const selectedDate = formatScheduleDate(form.date);
 
   // 类别颜色配置
   const catColor = CATEGORY_COLORS[form.category] || '#6B7280';
@@ -597,6 +611,7 @@ function ScheduleFormModal({
     onSave({
       type: form.type,
       title: form.title.trim(),
+      calendar_id: form.calendarId,
       start_time: startTime,
       end_time: endTime,
       all_day: form.all_day,
@@ -614,12 +629,12 @@ function ScheduleFormModal({
 
   // 类别选项
   const categoryOptions = [
-    { key: 'travel', label: '🚗 出行', color: '#F59E0B' },
-    { key: 'work', label: '💼 工作', color: '#3B82F6' },
-    { key: 'social', label: '👥 社交', color: '#EC4899' },
-    { key: 'life', label: '🏠 生活', color: '#10B981' },
-    { key: 'health', label: '❤️ 健康', color: '#EF4444' },
-    { key: 'other', label: '📌 其他', color: '#6B7280' },
+    { key: 'travel', label: '出行', color: CATEGORY_COLORS.travel },
+    { key: 'work', label: '工作', color: CATEGORY_COLORS.work },
+    { key: 'social', label: '社交', color: CATEGORY_COLORS.social },
+    { key: 'life', label: '生活', color: CATEGORY_COLORS.life },
+    { key: 'health', label: '健康', color: CATEGORY_COLORS.health },
+    { key: 'other', label: '其他', color: CATEGORY_COLORS.other },
   ];
 
   return (
@@ -629,13 +644,13 @@ function ScheduleFormModal({
       onMouseDown={onClose}
     >
       <div
-        className="rounded-2xl p-6 w-full max-w-md shadow-2xl"
+        className="schedule-form-modal rounded-2xl p-6 w-full max-w-md shadow-2xl"
         style={{ backgroundColor: 'var(--td-bg-color-container)' }}
         onMouseDown={e => e.stopPropagation()}
       >
         {/* 标题 */}
         <div className="flex items-center justify-between mb-5">
-          <h3 className="text-base font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
+          <h3 className="schedule-form-heading" style={{ color: 'var(--td-text-color-primary)' }}>
             {isEditing ? '编辑日程' : '新增日程'}
           </h3>
           <button onClick={onClose} className="p-1 rounded-lg hover:opacity-60">
@@ -650,13 +665,13 @@ function ScheduleFormModal({
               <button
                 key={t}
                 onClick={() => set('type', t)}
-                className="flex-1 py-2 rounded-lg text-sm font-medium transition-all"
+                className="schedule-type-option flex-1 py-2 rounded-lg text-sm font-medium transition-all"
                 style={{
                   backgroundColor: form.type === t ? 'var(--td-brand-color)' : 'var(--td-bg-color-component)',
                   color: form.type === t ? '#fff' : 'var(--td-text-color-secondary)',
                 }}
               >
-                {t === 'event' ? '📅 日程' : '✅ 待办'}
+                {t === 'event' ? <><Calendar size={16} />日程</> : <><CheckCircle2 size={16} />待办</>}
               </button>
             ))}
           </div>
@@ -668,7 +683,7 @@ function ScheduleFormModal({
             value={form.title}
             onChange={e => set('title', e.target.value)}
             autoFocus
-            className="w-full px-3 py-2.5 rounded-lg text-sm outline-none"
+            className="schedule-title-input w-full px-3 py-2.5 rounded-lg outline-none"
             style={{
               backgroundColor: 'var(--td-bg-color-component)',
               color: 'var(--td-text-color-primary)',
@@ -707,11 +722,13 @@ function ScheduleFormModal({
               }}
             />
             {/* 显示当前选择的日期 */}
-            <div className="px-3 py-2 flex items-center gap-2">
-              <Calendar className="w-4 h-4" style={{ color: 'var(--td-text-color-secondary)' }} />
-              <span className="text-sm" style={{ color: 'var(--td-text-color-primary)' }}>
-                {form.date ? new Date(form.date).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' }) : '选择日期'}
-              </span>
+            <div className="schedule-date-summary">
+              <Calendar className="w-5 h-5" />
+              <div>
+                <strong>{selectedDate.date}</strong>
+                {selectedDate.weekday && <span>{selectedDate.weekday}</span>}
+              </div>
+              {selectedDate.isToday && <em>今天</em>}
             </div>
           </div>
 
@@ -757,7 +774,7 @@ function ScheduleFormModal({
           {form.type === 'todo' && (
             <div>
               <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
-                📌 待办时间（占用1小时高度）
+                待办时间
               </div>
               <div className="flex gap-3 items-center">
                 <SmartTimePicker
@@ -787,10 +804,24 @@ function ScheduleFormModal({
             />
           </div>
 
+          <button
+            type="button"
+            className={showAdvanced ? 'schedule-advanced-toggle open' : 'schedule-advanced-toggle'}
+            onClick={() => setShowAdvanced(value => !value)}
+            aria-expanded={showAdvanced}
+          >
+            <div>
+              <strong>高级选项</strong>
+              <span>地点、分类、优先级、日程表、备注与重复</span>
+            </div>
+            <ChevronDown size={17} />
+          </button>
+
+          {showAdvanced && <div className="schedule-advanced-options">
           {/* 地点 */}
           <input
             type="text"
-            placeholder="📍 添加地点（可选）"
+            placeholder="添加地点（可选）"
             value={form.location}
             onChange={e => set('location', e.target.value)}
             className="w-full px-3 py-2 rounded-lg text-sm outline-none"
@@ -831,9 +862,9 @@ function ScheduleFormModal({
             </div>
             <div className="flex gap-2">
               {[
-                { key: 'high', label: '🔴 高', bg: '#FEF2F2', color: '#EF4444' },
-                { key: 'medium', label: '🟡 中', bg: '#FFFBEB', color: '#F59E0B' },
-                { key: 'low', label: '🟢 低', bg: '#F0FDF4', color: '#10B981' },
+                { key: 'high', label: '高', bg: '#F5ECEC', color: '#9D676C' },
+                { key: 'medium', label: '中', bg: '#F4F0E8', color: '#9A7B52' },
+                { key: 'low', label: '低', bg: '#EBF1EE', color: '#69877B' },
               ].map(opt => (
                 <button
                   key={opt.key}
@@ -869,7 +900,7 @@ function ScheduleFormModal({
                       border: `1.5px solid ${form.calendarId === cal.id ? cal.color : 'transparent'}`,
                     }}
                   >
-                    <span>{cal.icon}</span>
+                    <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />
                     <span>{cal.name}</span>
                   </button>
                 ))}
@@ -879,7 +910,7 @@ function ScheduleFormModal({
 
           {/* 备注 */}
           <textarea
-            placeholder="💡 添加备注（可选）"
+            placeholder="添加备注（可选）"
             value={form.notes}
             onChange={e => set('notes', e.target.value)}
             rows={2}
@@ -894,14 +925,14 @@ function ScheduleFormModal({
           {/* 循环设置 */}
           <div>
             <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
-              🔄 循环重复
+              循环重复
             </div>
             <div className="flex gap-2">
               {[
                 { key: '', label: '不重复', color: '#6B7280' },
-                { key: 'daily', label: '🔁 每日', color: '#3B82F6' },
-                { key: 'weekly', label: '📅 每周', color: '#10B981' },
-                { key: 'monthly', label: '📆 每月', color: '#8B5CF6' },
+                { key: 'daily', label: '每日', color: '#627D98' },
+                { key: 'weekly', label: '每周', color: '#69877B' },
+                { key: 'monthly', label: '每月', color: '#88758C' },
               ].map(opt => (
                 <button
                   key={opt.key}
@@ -918,6 +949,7 @@ function ScheduleFormModal({
               ))}
             </div>
           </div>
+          </div>}
         </div>
 
         <div className="flex gap-2 mt-6">
@@ -937,7 +969,7 @@ function ScheduleFormModal({
               color: form.title.trim() ? '#fff' : 'var(--td-text-color-disabled)',
             }}
           >
-            {isEditing ? '💾 保存修改' : '➕ 添加日程'}
+            {isEditing ? '保存修改' : '添加日程'}
           </button>
         </div>
       </div>
@@ -998,7 +1030,7 @@ function ScheduleChip({
             }}
             title={calendar.name}
           >
-            {calendar.icon || '📅'}
+            <span className="calendar-color-dot" style={{ backgroundColor: calendar.color }} />
           </span>
         )}
       </div>
@@ -1065,7 +1097,7 @@ function ScheduleChip({
                 }}
                 title={calendar.name}
               >
-                {calendar.icon || '📅'}{calendar.name}
+                <span className="calendar-color-dot" style={{ backgroundColor: calendar.color }} />{calendar.name}
               </span>
             )}
           </div>
@@ -1116,7 +1148,7 @@ function ScheduleChip({
             className="mt-2 pl-6 text-xs"
             style={{ color: 'var(--td-text-color-secondary)' }}
           >
-            💡 {schedule.notes}
+            备注：{schedule.notes}
           </div>
         )}
       </div>
@@ -1198,7 +1230,7 @@ function DayView({
           <div className="flex items-center gap-2 mb-2">
             <div className="flex items-center gap-1.5">
               <Calendar className="w-4 h-4" style={{ color: '#3b82f6' }} />
-              <span className="text-xs font-semibold" style={{ color: '#3b82f6' }}>📅 全天日程</span>
+              <span className="text-xs font-semibold" style={{ color: 'var(--td-brand-color)' }}>全天日程</span>
             </div>
             <div className="h-px flex-1" style={{ background: 'linear-gradient(to right, rgba(59,130,246,0.3), transparent)' }} />
           </div>
@@ -1233,10 +1265,6 @@ function DayView({
                       }
                     </button>
                   )}
-                  {/* 事件类型图标 */}
-                  {s._isEvent && (
-                    <span className="text-xs flex-shrink-0">{CATEGORY_ICONS[s.category] || '📌'}</span>
-                  )}
                   <span 
                     className="font-medium truncate max-w-[150px]" 
                     style={{ color, textDecoration: s.is_completed ? 'line-through' : 'none', opacity: s.is_completed ? 0.6 : 1 }}
@@ -1246,7 +1274,7 @@ function DayView({
                   {/* 地点 */}
                   {s.location && (
                     <span className="text-xs opacity-60 truncate max-w-[80px]" style={{ color }}>
-                      📍{s.location}
+                      <MapPin size={11} />{s.location}
                     </span>
                   )}
                 </div>
@@ -1401,7 +1429,7 @@ function DayView({
                                   className="text-xs px-1 py-0 rounded flex-shrink-0 font-medium"
                                   style={{ backgroundColor: `${catColor}25`, color: catColor, fontSize: '8px' }}
                                 >
-                                  {CATEGORY_ICONS[s.category] || '📌'}{catLabel}
+                                  {catLabel}
                                 </span>
                               )}
                               <span className="truncate">{s.title}</span>
@@ -1421,7 +1449,7 @@ function DayView({
                                       }}
                                       title={cal.name}
                                     >
-                                      {cal.icon || '📅'}{cal.name.slice(0, 2)}
+                                      <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />{cal.name.slice(0, 2)}
                                     </span>
                                   );
                                 })()
@@ -1440,7 +1468,7 @@ function DayView({
                                 className={`text-xs opacity-75 line-clamp-${notesLines} flex items-start gap-0.5`} 
                                 style={{ color: s.is_completed ? '#9CA3AF' : 'var(--td-text-color-secondary)' }}
                               >
-                                <span className="flex-shrink-0">💡</span>
+                                <span className="flex-shrink-0">备注</span>
                                 <span className="truncate">{s.notes}</span>
                               </div>
                             )}
@@ -1591,9 +1619,6 @@ function WeekView({
                         {item.is_completed ? <CheckCircle2 className="w-3 h-3" /> : <Circle className="w-3 h-3" />}
                       </button>
                     )}
-                    {!isTodo && (
-                      <span className="text-xs flex-shrink-0">{CATEGORY_ICONS[item.category] || '📌'}</span>
-                    )}
                     <span className="truncate font-medium">{item.title}</span>
                   </div>
                 );
@@ -1710,7 +1735,7 @@ function WeekView({
                                 }}
                                 title={cal.name}
                               >
-                                {cal.icon || '📅'}
+                                <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />
                               </span>
                             );
                           })()}
@@ -1838,14 +1863,13 @@ function MonthView({
                             {item.is_completed ? <CheckCircle2 className="w-2.5 h-2.5" /> : <Circle className="w-2.5 h-2.5" />}
                           </button>
                         )}
-                        {!isTodo && <span className="text-xs flex-shrink-0">{CATEGORY_ICONS[item.category] || '📌'}</span>}
                         <span className="truncate font-medium">{item.title}</span>
                       </div>
                     );
                   })}
                   {allDayItems.length > 2 && (
                     <div className="text-xs px-1 font-medium" style={{ color: '#3b82f6' }}>
-                      📅 +{allDayItems.length - 2}个全天日程
+                      +{allDayItems.length - 2}个全天日程
                     </div>
                   )}
                 </div>
@@ -1978,7 +2002,7 @@ function ScheduleDetailModal({
                   }}
                   title={calendar.name}
                 >
-                  {calendar.icon || '📅'} {calendar.name}
+                  <span className="calendar-color-dot" style={{ backgroundColor: calendar.color }} /> {calendar.name}
                 </span>
               )}
             </h3>
@@ -2004,7 +2028,7 @@ function ScheduleDetailModal({
           )}
           {schedule.notes && (
             <div className="mt-2 p-3 rounded-xl text-sm" style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-secondary)' }}>
-              💡 {schedule.notes}
+              备注：{schedule.notes}
             </div>
           )}
           {schedule.description && (
@@ -2095,7 +2119,7 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds }: CalendarView
     const delay = triggerMs - nowMs;
     if (delay > 0 && delay < 24 * 3600 * 1000) {
       setTimeout(() => {
-        new Notification(`⏰ ${s.title}`, {
+        new Notification(s.title, {
           body: `${minutesBefore} 分钟后开始${s.location ? ' · ' + s.location : ''}`,
           icon: '/favicon.ico',
         });
@@ -2148,9 +2172,8 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds }: CalendarView
 
   const headerTitle = () => {
     if (viewMode === 'day') {
-      const isToday = isSameDay(currentDate, new Date());
       return currentDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
-        + (isToday ? ' · 今天' : '');
+        + ' · ' + WEEKDAY_LABELS[currentDate.getDay()];
     }
     if (viewMode === 'week') {
       const ws = getWeekStart(currentDate);
@@ -2292,9 +2315,10 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds }: CalendarView
           >
             <ChevronRight className="w-4 h-4" />
           </button>
-          <span className="text-sm font-semibold ml-1" style={{ color: 'var(--td-text-color-primary)' }}>
+          <span className="calendar-toolbar-date" style={{ color: 'var(--td-text-color-primary)' }}>
             {headerTitle()}
           </span>
+          {viewMode === 'day' && isToday && <span className="calendar-today-badge">今天</span>}
           {todoInfo && (
             <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#EF444420', color: '#EF4444' }}>
               {todoInfo.label} {todoInfo.count} 项
@@ -2374,7 +2398,7 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds }: CalendarView
               >
                 <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                 <span className="font-semibold">
-                  ⚠️ {conflictingIds.size} 个日程存在时间冲突
+                  <AlertTriangle size={14} /> {conflictingIds.size} 个日程存在时间冲突
                 </span>
                 <span style={{ color: '#991B1B' }}>
                   {conflictDetails.slice(0, 3).map(({ a, b }, i) => (

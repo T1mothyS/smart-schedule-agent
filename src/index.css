@@ -1020,3 +1020,163 @@ t-chat-sender::part(send-btn):disabled,
   }
   .schedule-workspace-body > .flex-1 { min-height: 420px; }
 }
+
+/* ===== 专业日历工作区 ===== */
+.schedule-workspace {
+  position: relative;
+  --td-brand-color: #526d7a;
+  --td-brand-color-hover: #435d69;
+  --td-brand-color-light: rgba(82, 109, 122, .12);
+}
+.schedule-workspace-toolbar {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px;
+  border-bottom: 1px solid rgba(100, 116, 139, .18);
+  background: rgba(var(--color-card), .88);
+}
+.schedule-workspace-toolbar > div { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.schedule-workspace-toolbar strong {
+  overflow: hidden;
+  color: var(--td-text-color-primary);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--td-text-color-secondary);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+}
+.workspace-tool:hover,
+.workspace-tool.active {
+  color: #435d69;
+  border-color: rgba(82, 109, 122, .24);
+  background: rgba(82, 109, 122, .1);
+}
+.schedule-workspace .schedule-workspace-body { height: calc(100% - 48px); }
+.schedule-calendar-panel {
+  width: 220px;
+  flex: 0 0 220px;
+  overflow: hidden;
+  border-right: 1px solid rgba(100, 116, 139, .18);
+  background: rgba(var(--color-card), .76);
+}
+.schedule-calendar-main { background: rgb(var(--color-background)); }
+.schedule-ai-drawer {
+  position: absolute;
+  z-index: 35;
+  top: 48px;
+  right: 0;
+  bottom: 0;
+  width: min(380px, 92vw);
+  overflow: hidden;
+  border-left: 1px solid rgba(100, 116, 139, .2);
+  background: rgb(var(--color-card));
+  box-shadow: -18px 0 48px rgba(15, 23, 42, .14);
+}
+.schedule-ai-close { position: absolute; z-index: 4; top: 10px; right: 10px; }
+
+.schedule-form-modal {
+  max-height: min(88vh, 760px);
+  overflow-y: auto;
+  border: 1px solid rgba(100, 116, 139, .2);
+}
+.schedule-form-heading {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 750;
+  letter-spacing: -.025em;
+}
+.schedule-type-option { display: flex; align-items: center; justify-content: center; gap: 7px; }
+.schedule-title-input {
+  min-height: 48px;
+  font-size: 17px;
+  font-weight: 680;
+  letter-spacing: -.01em;
+}
+.schedule-date-summary {
+  min-height: 54px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  color: #526d7a;
+}
+.schedule-date-summary > div { display: flex; flex-direction: column; gap: 2px; }
+.schedule-date-summary strong {
+  color: var(--td-text-color-primary);
+  font-size: 16px;
+  font-weight: 750;
+}
+.schedule-date-summary span { color: var(--td-text-color-secondary); font-size: 12px; font-weight: 600; }
+.schedule-date-summary em,
+.calendar-today-badge {
+  padding: 4px 8px;
+  border: 1px solid rgba(82, 109, 122, .24);
+  border-radius: 999px;
+  color: #435d69;
+  background: rgba(82, 109, 122, .11);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+}
+.calendar-toolbar-date { margin-left: 4px; font-size: 15px; font-weight: 750; letter-spacing: -.01em; }
+.schedule-advanced-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 12px;
+  border: 1px solid rgba(100, 116, 139, .18);
+  border-radius: 10px;
+  color: var(--td-text-color-primary);
+  background: rgba(100, 116, 139, .055);
+  text-align: left;
+}
+.schedule-advanced-toggle > div { display: flex; flex-direction: column; gap: 2px; }
+.schedule-advanced-toggle strong { font-size: 13px; }
+.schedule-advanced-toggle span { color: var(--td-text-color-secondary); font-size: 10px; font-weight: 400; }
+.schedule-advanced-toggle svg { transition: transform .18s ease; }
+.schedule-advanced-toggle.open svg { transform: rotate(180deg); }
+.schedule-advanced-options {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  padding: 15px;
+  border: 1px solid rgba(100, 116, 139, .16);
+  border-radius: 11px;
+  background: rgba(100, 116, 139, .035);
+}
+.calendar-color-dot {
+  width: 8px;
+  height: 8px;
+  display: inline-block;
+  flex: 0 0 auto;
+  border-radius: 999px;
+}
+.calendar-color-dot.large { width: 12px; height: 12px; }
+.spin { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 760px) {
+  .schedule-calendar-panel {
+    width: 190px;
+    flex-basis: 190px;
+  }
+  .schedule-workspace-toolbar strong { display: none; }
+  .calendar-toolbar-date { font-size: 13px; }
+}
