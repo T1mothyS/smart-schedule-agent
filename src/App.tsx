@@ -5,7 +5,7 @@ import { useSessions } from './hooks/useSessions';
 import { useModels } from './hooks/useModels';
 import { useChat } from './hooks/useChat';
 import { useAuth } from './hooks/useAuth';
-import { Bot, CalendarDays, PanelLeft, X } from 'lucide-react';
+import { CalendarDays, PanelLeft, X } from 'lucide-react';
 
 import { SettingsPage } from './components/SettingsPage';
 import { AdminModal } from './components/AdminModal';
@@ -37,8 +37,7 @@ function SchedulePage({ theme, onToggleTheme, onOpenSettings, onOpenAdmin, onOpe
   const [activeCalendarIds, setActiveCalendarIds] = useState<string[]>([]);
   const [calendarNames, setCalendarNames] = useState<Record<string, string>>({});
   const [scheduleTitle, setScheduleTitle] = useState('全部日程');
-  const [showCalendarPanel, setShowCalendarPanel] = useState(true);
-  const [showAiPanel, setShowAiPanel] = useState(false);
+  const [showCalendarPanel, setShowCalendarPanel] = useState(false);
 
   const handleSchedulesCreated = useCallback(() => {
     setCalendarRefreshKey(prev => prev + 1);
@@ -60,44 +59,29 @@ function SchedulePage({ theme, onToggleTheme, onOpenSettings, onOpenAdmin, onOpe
 
   return (
     <div className="schedule-workspace">
-      <div className="schedule-workspace-toolbar">
-        <div>
-          <button className={showCalendarPanel ? 'workspace-tool active' : 'workspace-tool'} onClick={() => setShowCalendarPanel(value => !value)}>
-            <PanelLeft size={16} />
-            日程表
-          </button>
-          <strong>{scheduleTitle}</strong>
-        </div>
-        <button className={showAiPanel ? 'workspace-tool active' : 'workspace-tool'} onClick={() => setShowAiPanel(value => !value)}>
-          <Bot size={16} />
-          AI 助手
-        </button>
-      </div>
-
       <div className="flex flex-1 overflow-hidden schedule-workspace-body">
-        {showCalendarPanel && <aside className="schedule-calendar-panel">
-          <ScheduleSidebar
-            activeCalendarIds={activeCalendarIds}
-            onActiveChange={handleActiveChange}
-            onCalendarsLoaded={handleCalendarsLoaded}
-          />
-        </aside>}
-
-        <main className="flex-1 overflow-hidden schedule-calendar-main">
-          <CalendarView
-            refreshKey={calendarRefreshKey}
-            activeCalendarIds={activeCalendarIds}
-          />
-        </main>
+        <aside className="schedule-ai-primary">
+          <AiSchedulePanel onSchedulesCreated={handleSchedulesCreated} activeCalendarIds={activeCalendarIds} />
+        </aside>
+        <section className="schedule-calendar-shell">
+          <div className="schedule-workspace-toolbar">
+            <button className={showCalendarPanel ? 'workspace-tool active' : 'workspace-tool'} onClick={() => setShowCalendarPanel(value => !value)}>
+              <PanelLeft size={16} /> 日程表
+            </button>
+            <strong>{scheduleTitle}</strong>
+          </div>
+          <main className="flex-1 overflow-hidden schedule-calendar-main">
+            <CalendarView refreshKey={calendarRefreshKey} activeCalendarIds={activeCalendarIds} />
+          </main>
+        </section>
       </div>
-
-      {showAiPanel && <aside className="schedule-ai-drawer">
-        <button className="schedule-ai-close icon-button" onClick={() => setShowAiPanel(false)} title="关闭 AI 助手"><X size={16} /></button>
-        <AiSchedulePanel
-          onSchedulesCreated={handleSchedulesCreated}
-          activeCalendarIds={activeCalendarIds}
-        />
-      </aside>}
+      {showCalendarPanel && <>
+        <button className="schedule-calendar-scrim" onClick={() => setShowCalendarPanel(false)} aria-label="关闭日程表筛选" />
+        <aside className="schedule-calendar-popover">
+          <div className="schedule-calendar-popover-head"><strong>筛选日程表</strong><button onClick={() => setShowCalendarPanel(false)} aria-label="关闭日程表筛选"><X size={15} /></button></div>
+          <ScheduleSidebar activeCalendarIds={activeCalendarIds} onActiveChange={handleActiveChange} onCalendarsLoaded={handleCalendarsLoaded} />
+        </aside>
+      </>}
     </div>
   );
 }

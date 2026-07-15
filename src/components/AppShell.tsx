@@ -1,5 +1,5 @@
 import { ReactNode } from 'react';
-import { BellRing, CalendarDays, LayoutDashboard, Mail, Moon, Settings, Shield, Sparkles, Sun } from 'lucide-react';
+import { BellRing, CalendarDays, LayoutDashboard, Moon, Settings, Shield, Sparkles, Sun } from 'lucide-react';
 
 type Section = 'today' | 'schedule' | 'reminders' | 'import';
 
@@ -66,10 +66,6 @@ export function AppShell({
 
         <div className="topbar-actions">
           <span className="user-chip" title={user?.email}>{user?.email}</span>
-          <button className="topbar-action topbar-email" onClick={onOpenSettings} title="设置提醒邮箱">
-            <Mail size={15} />
-            <span>提醒邮箱</span>
-          </button>
           <button className="icon-button" onClick={onOpenSettings} title="设置" aria-label="打开设置">
             <Settings size={16} />
           </button>

@@ -36,12 +36,12 @@ type ViewMode = 'day' | 'week' | 'month';
 // ==================== 常量 ====================
 
 const CATEGORY_COLORS: Record<string, string> = {
-  travel: '#9A7B52',
-  work: '#627D98',
-  social: '#88758C',
-  life: '#69877B',
-  health: '#987276',
-  other: '#737B86',
+  travel: '#F59E0B',
+  work: '#3B82F6',
+  social: '#EC4899',
+  life: '#10B981',
+  health: '#EF4444',
+  other: '#6B7280',
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -51,9 +51,9 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 // 优先级颜色系统
 const PRIORITY_COLORS: Record<string, { bg: string; border: string; dot: string; label: string }> = {
-  high:   { bg: '#F5ECEC', border: '#9D676C', dot: '#9D676C', label: '高优先' },
-  medium: { bg: '#F4F0E8', border: '#9A7B52', dot: '#9A7B52', label: '中优先' },
-  low:    { bg: '#EBF1EE', border: '#69877B', dot: '#69877B', label: '低优先' },
+  high:   { bg: '#FEF2F2', border: '#EF4444', dot: '#EF4444', label: '高优先' },
+  medium: { bg: '#FFFBEB', border: '#F59E0B', dot: '#F59E0B', label: '中优先' },
+  low:    { bg: '#F0FDF4', border: '#10B981', dot: '#10B981', label: '低优先' },
 };
 
 // 暗色模式优先级颜色
@@ -862,9 +862,9 @@ function ScheduleFormModal({
             </div>
             <div className="flex gap-2">
               {[
-                { key: 'high', label: '高', bg: '#F5ECEC', color: '#9D676C' },
-                { key: 'medium', label: '中', bg: '#F4F0E8', color: '#9A7B52' },
-                { key: 'low', label: '低', bg: '#EBF1EE', color: '#69877B' },
+                { key: 'high', label: '高', bg: '#FEF2F2', color: '#EF4444' },
+                { key: 'medium', label: '中', bg: '#FFFBEB', color: '#F59E0B' },
+                { key: 'low', label: '低', bg: '#F0FDF4', color: '#10B981' },
               ].map(opt => (
                 <button
                   key={opt.key}
@@ -930,9 +930,9 @@ function ScheduleFormModal({
             <div className="flex gap-2">
               {[
                 { key: '', label: '不重复', color: '#6B7280' },
-                { key: 'daily', label: '每日', color: '#627D98' },
-                { key: 'weekly', label: '每周', color: '#69877B' },
-                { key: 'monthly', label: '每月', color: '#88758C' },
+                { key: 'daily', label: '每日', color: '#3B82F6' },
+                { key: 'weekly', label: '每周', color: '#10B981' },
+                { key: 'monthly', label: '每月', color: '#8B5CF6' },
               ].map(opt => (
                 <button
                   key={opt.key}
@@ -1971,9 +1971,6 @@ function ScheduleDetailModal({
         style={{ backgroundColor: 'var(--td-bg-color-container)' }}
         onMouseDown={e => e.stopPropagation()}
       >
-        {/* 优先级指示条 */}
-        <div className="h-1 rounded-full mb-4" style={{ backgroundColor: pColor.dot }} />
-
         <div className="flex items-start justify-between mb-3">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">

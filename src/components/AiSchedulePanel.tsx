@@ -400,7 +400,7 @@ export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds }: AiSch
   ];
 
   return (
-    <div className="flex flex-col h-full" style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
+    <div className="flex flex-col h-full schedule-ai-panel" style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
       {/* 面板头部 */}
       <div
         className="px-4 pt-3 pb-2.5 flex-shrink-0 flex items-center justify-between"
@@ -503,17 +503,12 @@ export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds }: AiSch
 
       {/* 输入框 */}
       <div
-        className="px-3 pb-3 pt-2 flex-shrink-0"
+        className="px-3 pb-3 pt-2 flex-shrink-0 schedule-ai-composer-wrap"
         style={{ borderTop: '1px solid var(--td-component-stroke)' }}
       >
         <div
-          className="rounded-xl overflow-hidden transition-all"
-          style={{
-            border: '1.5px solid var(--td-component-stroke)',
-            backgroundColor: 'var(--td-bg-color-page)',
-          }}
-          onFocusCapture={e => (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--td-brand-color)'}
-          onBlurCapture={e => (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--td-component-stroke)'}
+          className="rounded-xl overflow-hidden transition-all schedule-ai-composer"
+          style={{ backgroundColor: 'var(--td-bg-color-page)' }}
         >
           <textarea
             ref={textareaRef}
@@ -522,8 +517,8 @@ export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds }: AiSch
             onKeyDown={handleKeyDown}
             placeholder="输入日程、修改要求或随意聊天..."
             rows={3}
-            className="w-full px-3 pt-2.5 pb-1 resize-none text-sm outline-none bg-transparent"
-            style={{ color: 'var(--td-text-color-primary)' }}
+            className="w-full px-3 pt-2.5 pb-1 resize-none text-sm outline-none bg-transparent border-0"
+            style={{ color: 'var(--td-text-color-primary)', border: 0, boxShadow: 'none' }}
             disabled={isLoading}
           />
           <div className="flex items-center justify-between px-3 pb-2">

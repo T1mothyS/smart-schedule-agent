@@ -19,8 +19,8 @@ interface ScheduleSidebarProps {
 }
 
 const PRESET_COLORS = [
-  '#627D98', '#7C7391', '#88758C', '#987276',
-  '#9A7B52', '#69877B', '#66858C', '#737B86',
+  '#3B82F6', '#8B5CF6', '#EC4899', '#EF4444',
+  '#F59E0B', '#10B981', '#06B6D4', '#6B7280',
 ];
 
 function CalendarFormModal({
