@@ -11,6 +11,7 @@ export interface ActionItem {
   instanceId: string | null;
   title: string;
   dueAt: string;
+  allDay: boolean;
   status: ActionItemStatus;
   priority: 'high' | 'medium' | 'low';
   nextAction: string;
@@ -38,6 +39,19 @@ export interface ActionCenterResult {
 
 function dateOnly(value: string): string {
   return value.slice(0, 10);
+}
+
+function dateInTimezone(value: string, timezone: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return dateOnly(value);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
 }
 
 function endOfWindow(today: string, days: number): string {
@@ -97,7 +111,7 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
     const completion = latestCompletion.get(`schedule:${schedule.id}:`);
     const completed = schedule.is_completed || !!completion;
     let status: ActionItemStatus | null = null;
-    if (completed && dateOnly(completion?.completedAt || schedule.updated_at) === today) status = 'completed';
+    if (completed && dateInTimezone(completion?.completedAt || schedule.updated_at, timezone) === today) status = 'completed';
     else if (completed) continue;
     else if (schedule.type === 'todo' && dueDate < today) status = 'overdue';
     else if (dueDate === today) status = 'today';
@@ -110,9 +124,10 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
       instanceId: null,
       title: schedule.title,
       dueAt: schedule.start_time,
+      allDay: schedule.all_day,
       status,
       priority: schedule.priority,
-      nextAction: schedule.type === 'todo' ? '完成这项待办' : '按时参加或处理该日程',
+      nextAction: schedule.notes?.trim() || '',
       itemType: schedule.type === 'todo' ? 'todo' : 'event',
       completedAt: completion?.completedAt || (completed ? schedule.updated_at : null),
       completionId: completion?.id || null,
@@ -128,7 +143,7 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
     const completion = latestCompletion.get(`reminder:${task.id}:${cycle.id}`);
     const completed = cycle.status === 'completed' || !!completion;
     let status: ActionItemStatus | null = null;
-    if (completed && dateOnly(completion?.completedAt || cycle.completedAt || cycle.updatedAt) === today) status = 'completed';
+    if (completed && dateInTimezone(completion?.completedAt || cycle.completedAt || cycle.updatedAt, timezone) === today) status = 'completed';
     else if (completed || !task.enabled) continue;
     else if (cycle.status === 'expired' || cycle.dueDate < today) status = 'overdue';
     else if (cycle.dueDate === today) status = 'today';
@@ -142,6 +157,7 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
       instanceId: cycle.id,
       title: task.name,
       dueAt: `${cycle.dueDate}T23:59:59`,
+      allDay: true,
       status,
       priority: config.priority || 'medium',
       nextAction: config.actionGuide || config.nextAction || '完成本周期事务并登记证明',
@@ -154,7 +170,7 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
 
   // 周期事务完成后会立即推进到下一周期，因此从完成记录补回当天已完成的旧周期。
   for (const completion of completions) {
-    if (completion.sourceType !== 'reminder' || completion.reopenedAt || dateOnly(completion.completedAt) !== today) continue;
+    if (completion.sourceType !== 'reminder' || completion.reopenedAt || dateInTimezone(completion.completedAt, timezone) !== today) continue;
     const id = `reminder:${completion.sourceId}:${completion.instanceId || ''}`;
     if (items.some(item => item.id === id)) continue;
     const task = reminderTaskMap.get(completion.sourceId);
@@ -167,6 +183,7 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
       instanceId: completion.instanceId,
       title: task.name,
       dueAt: completion.completedAt,
+      allDay: true,
       status: 'completed',
       priority: config.priority || 'medium',
       nextAction: config.actionGuide || '本周期已完成',

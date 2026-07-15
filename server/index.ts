@@ -11,6 +11,7 @@ import { initScheduleDb } from "./schedule-store.js";
 import * as reminderStore from "./reminder-store.js";
 import { initReminderDb } from "./reminder-store.js";
 import * as reminderCalendarSync from "./reminder-calendar-sync.js";
+import { toggleScheduleCompletion } from "./schedule-completion-service.js";
 import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
@@ -1713,7 +1714,7 @@ app.post("/api/schedules/:id/toggle", authenticate, (req, res) => {
       return res.status(403).json({ error: "无权操作该日程" });
     }
     
-    const schedule = scheduleStore.toggleScheduleComplete(id);
+    const schedule = toggleScheduleCompletion(id, userId);
     const action = schedule?.is_completed ? '标记完成' : '取消完成';
     addLog('info', 'schedule', `${action}: ${schedule?.title}`, { id: schedule?.id });
     res.json({ schedule });

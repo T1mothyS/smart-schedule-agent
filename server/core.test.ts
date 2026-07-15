@@ -16,6 +16,7 @@ const activity = await import('./activity-store.js');
 const attachments = await import('./attachment-service.js');
 const backups = await import('./backup-service.js');
 const actionCenter = await import('./action-center.js');
+const scheduleCompletion = await import('./schedule-completion-service.js');
 const email = await import('./email-service.js');
 
 await db.initDb();
@@ -108,9 +109,10 @@ test('通用周期任务、逾期手动完成和下一周期生成', () => {
 });
 
 test('行动中心聚合待办并记录完成证明', () => {
+  const today = reminders.todayInTimezone();
   const schedule = schedules.createSchedule({
     id: 'schedule-one', user_id: userId, calendar_id: 'personal', type: 'todo', title: '测试待办',
-    description: undefined, start_time: new Date().toISOString().slice(0, 10) + 'T09:00:00', end_time: undefined,
+    description: undefined, start_time: today + 'T09:00:00', end_time: undefined,
     all_day: false, location: undefined, notes: undefined, category: 'other', priority: 'high', is_completed: false,
     is_repeated: false, repeat_rule: undefined, reminders: [], is_high_risk: false,
   });
@@ -126,6 +128,28 @@ test('行动中心聚合待办并记录完成证明', () => {
   const updated = activity.updateCompletion(completion.id, userId, { note: '更新后的证明', amountCents: 12345 });
   assert.equal(updated?.note, '更新后的证明');
   assert.equal(updated?.amountCents, 12345);
+});
+
+test('日历取消完成会同步行动中心，全天事项保留全天语义和备注', () => {
+  const today = reminders.todayInTimezone();
+  const schedule = schedules.createSchedule({
+    id: 'schedule-all-day-undo', user_id: userId, calendar_id: 'personal', type: 'todo', title: '全天回退测试',
+    description: undefined, start_time: `${today}T00:00:00`, end_time: `${today}T23:59:59`,
+    all_day: true, location: undefined, notes: '携带账单原件', category: 'other', priority: 'medium', is_completed: false,
+    is_repeated: false, repeat_rule: undefined, reminders: [], is_high_risk: false,
+  });
+
+  const before = actionCenter.getActionCenter(userId, 7).today.find(item => item.sourceId === schedule.id);
+  assert.equal(before?.allDay, true);
+  assert.equal(before?.nextAction, '携带账单原件');
+
+  assert.equal(scheduleCompletion.toggleScheduleCompletion(schedule.id, userId)?.is_completed, true);
+  assert.ok(actionCenter.getActionCenter(userId, 7).completedToday.some(item => item.sourceId === schedule.id));
+
+  assert.equal(scheduleCompletion.toggleScheduleCompletion(schedule.id, userId)?.is_completed, false);
+  const reopened = actionCenter.getActionCenter(userId, 7);
+  assert.equal(reopened.completedToday.some(item => item.sourceId === schedule.id), false);
+  assert.ok(reopened.today.some(item => item.sourceId === schedule.id));
 });
 
 test('通知队列幂等且可重试', () => {
