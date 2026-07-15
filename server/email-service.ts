@@ -236,7 +236,6 @@ export async function sendCycleReminderEmail(input: {
       <p>${safeName} 即将到期，请按计划处理。</p>
       <p>到期日期：${safeDueDate}<br>
       事务类型：${escapeHtml(config.templateKey)}<br>
-      ${config.amountCents ? `参考金额：${escapeHtml((config.amountCents / 100).toFixed(2))} ${escapeHtml(config.currency || 'CNY')}<br>` : ''}
       建议操作：${escapeHtml(config.actionGuide || '完成本周期事务并登记')}</p>
     `;
   }

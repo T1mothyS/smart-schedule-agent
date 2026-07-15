@@ -21,8 +21,6 @@ export interface CompletionRecord {
   instanceId: string | null;
   completedAt: string;
   note: string | null;
-  amountCents: number | null;
-  currency: string;
   billDate: string | null;
   reopenedAt: string | null;
   createdAt: string;
@@ -117,8 +115,6 @@ function rowToCompletion(row: any): CompletionRecord {
     instanceId: row.instance_id,
     completedAt: row.completed_at,
     note: row.note,
-    amountCents: row.amount_cents === null ? null : Number(row.amount_cents),
-    currency: row.currency || 'CNY',
     billDate: row.bill_date,
     reopenedAt: row.reopened_at,
     createdAt: row.created_at,
@@ -290,8 +286,6 @@ export function createCompletion(input: {
   instanceId?: string | null;
   completedAt?: string;
   note?: string | null;
-  amountCents?: number | null;
-  currency?: string;
   billDate?: string | null;
 }): CompletionRecord {
   const now = nowIso();
@@ -303,8 +297,6 @@ export function createCompletion(input: {
     instanceId: input.instanceId || null,
     completedAt: input.completedAt || now,
     note: input.note?.trim() || null,
-    amountCents: input.amountCents === undefined || input.amountCents === null ? null : Math.round(input.amountCents),
-    currency: (input.currency || 'CNY').toUpperCase().slice(0, 3),
     billDate: input.billDate || null,
     reopenedAt: null,
     createdAt: now,
@@ -312,10 +304,10 @@ export function createCompletion(input: {
   };
   run(
     `INSERT INTO completion_records
-      (id, user_id, source_type, source_id, instance_id, completed_at, note, amount_cents, currency, bill_date, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, user_id, source_type, source_id, instance_id, completed_at, note, bill_date, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [record.id, record.userId, record.sourceType, record.sourceId, record.instanceId, record.completedAt,
-      record.note, record.amountCents, record.currency, record.billDate, now, now],
+      record.note, record.billDate, now, now],
   );
   addAudit(record.userId, 'completion', record.id, 'completed', record.note || undefined);
   return record;
@@ -329,19 +321,17 @@ export function getCompletion(id: string, userId: string): CompletionRecord | nu
 export function updateCompletion(
   id: string,
   userId: string,
-  changes: Partial<Pick<CompletionRecord, 'completedAt' | 'note' | 'amountCents' | 'currency' | 'billDate'>>,
+  changes: Partial<Pick<CompletionRecord, 'completedAt' | 'note' | 'billDate'>>,
 ): CompletionRecord | null {
   const current = getCompletion(id, userId);
   if (!current) return null;
   const completedAt = changes.completedAt ?? current.completedAt;
   const note = changes.note === undefined ? current.note : changes.note?.trim() || null;
-  const amountCents = changes.amountCents === undefined ? current.amountCents : changes.amountCents === null ? null : Math.round(changes.amountCents);
-  const currency = (changes.currency || current.currency || 'CNY').toUpperCase().slice(0, 3);
   const billDate = changes.billDate === undefined ? current.billDate : changes.billDate || null;
   const now = nowIso();
   run(
-    'UPDATE completion_records SET completed_at = ?, note = ?, amount_cents = ?, currency = ?, bill_date = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-    [completedAt, note, amountCents, currency, billDate, now, id, userId],
+    'UPDATE completion_records SET completed_at = ?, note = ?, bill_date = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+    [completedAt, note, billDate, now, id, userId],
   );
   addAudit(userId, 'completion', id, 'updated');
   return getCompletion(id, userId);

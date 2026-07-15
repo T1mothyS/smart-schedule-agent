@@ -52,7 +52,6 @@ interface FormState {
   reminderOffsets: string;
   reminderTime: string;
   priority: 'high' | 'medium' | 'low';
-  amount: string;
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -79,7 +78,6 @@ const initialForm: FormState = {
   reminderOffsets: '7,1',
   reminderTime: '09:00',
   priority: 'medium',
-  amount: '',
 };
 
 const templates: Array<{ key: GenericReminderConfig['templateKey']; name: string; frequency: FormState['frequency']; offsets: string; action: string }> = [
@@ -128,7 +126,7 @@ function configToForm(task: ReminderTask): FormState {
     name: task.name,
     templateKey: config.templateKey,
     frequency: rule.frequency,
-    anchorDate: rule.anchorDate,
+    anchorDate: task.currentCycle?.dueDate || rule.anchorDate,
     dayOfMonth: 'dayOfMonth' in rule ? String(rule.dayOfMonth) : rule.anchorDate.slice(8, 10),
     month: 'month' in rule ? String(rule.month) : rule.anchorDate.slice(5, 7),
     ruleInterval: 'interval' in rule ? String(rule.interval) : '1',
@@ -137,7 +135,6 @@ function configToForm(task: ReminderTask): FormState {
     reminderOffsets: config.reminderOffsets.join(','),
     reminderTime: config.reminderTime,
     priority: config.priority,
-    amount: config.amountCents ? String(config.amountCents / 100) : '',
     actionGuide: config.actionGuide,
   };
 }
@@ -212,8 +209,6 @@ export function ReminderPage() {
           reminderTime: form.reminderTime,
           actionGuide: form.actionGuide,
           priority: form.priority,
-          amountCents: form.amount ? Math.round(Number(form.amount) * 100) : null,
-          currency: 'CNY',
         };
       const response = await fetch(editing ? '/api/cycle-reminders/' + editing.id : '/api/cycle-reminders', {
         method: editing ? 'PATCH' : 'POST',
@@ -308,7 +303,7 @@ export function ReminderPage() {
             const simConfig = task.config as SimConfig;
             const genericConfig = task.config as GenericReminderConfig;
             return <article className={!task.enabled ? 'task-card disabled' : 'task-card'} key={task.id}>
-              <div className="task-card-head"><div className={'task-type-icon ' + (task.type === 'credit_card' ? 'card' : task.type === 'sim' ? 'sim' : 'generic')}>{task.type === 'credit_card' ? <CreditCard size={20} /> : task.type === 'sim' ? <Smartphone size={20} /> : <Repeat2 size={20} />}</div><div className="task-title-wrap"><div className="task-kicker">{task.type === 'credit_card' ? '信用卡' : task.type === 'sim' ? 'SIM 卡' : templates.find(item => item.key === genericConfig.templateKey)?.name || '生活事务'}</div><h3>{task.name}</h3></div><span className={'status-badge ' + status.tone}>{status.label}</span></div>
+              <div className="task-card-head"><div className={'task-type-icon ' + (task.type === 'credit_card' ? 'card' : task.type === 'sim' ? 'sim' : 'generic')}>{task.type === 'credit_card' ? <CreditCard size={20} /> : task.type === 'sim' ? <Smartphone size={20} /> : <Repeat2 size={20} />}</div><div className="task-title-wrap"><h3>{task.name}</h3></div><span className={'status-badge ' + status.tone}>{status.label}</span></div>
               <div className="task-due-block"><span>{task.type === 'credit_card' ? '本期还款日' : task.type === 'sim' ? '本次保号截止' : '本周期到期日'}</span><strong>{formatDue(cycle?.dueDate || null)}</strong><em>{remaining === null ? '—' : remaining < 0 ? '已逾期 ' + Math.abs(remaining) + ' 天' : remaining === 0 ? '今天到期' : '还有 ' + remaining + ' 天'}</em></div>
               <div className="task-details">{task.type === 'credit_card' ? <><span>账单日每月 {cardConfig.statementDay} 日</span><span>{cardConfig.paymentMonthOffset === 1 ? '次月' : '当月'} {cardConfig.paymentDay} 日还款</span></> : task.type === 'sim' ? <><span>{simConfig.provider || '未填写运营商'} · {simConfig.numberMasked || '未填写号码'}</span><span>每 {simConfig.intervalDays} 天检查一次</span></> : <><span>{genericConfig.actionGuide}</span><span>{genericConfig.reminderOffsets.map(value => '提前 ' + value + ' 天').join(' · ')}</span></>}</div>
               <div className="task-card-foot"><span className="next-reminder">{task.enabled && task.nextReminderDate ? '下一提醒 ' + formatDue(task.nextReminderDate) : task.enabled ? '暂无待发送提醒' : '已暂停提醒'}</span><div className="card-actions">{task.enabled && cycle && cycle.status !== 'completed' && <button className="complete-button" onClick={() => { setCompleteTarget(task); setCompleteDate(today()); }}><CheckCircle2 size={15} /> 标记完成</button>}<button className="icon-button small" onClick={() => openEdit(task)} title="编辑"><Edit3 size={15} /></button><button className="icon-button small" onClick={() => toggleTask(task)} title={task.enabled ? '暂停' : '启用'}>{task.enabled ? <PauseCircle size={15} /> : <PlayCircle size={15} />}</button><button className="icon-button small danger-button" onClick={() => deleteTask(task)} title="删除"><Trash2 size={15} /></button></div></div>
@@ -348,7 +343,6 @@ export function ReminderPage() {
             <label className="form-label">提醒时间<input type="time" value={form.reminderTime} onChange={event => updateForm('reminderTime', event.target.value)} /></label>
             <label className="form-label">提前提醒天数<input value={form.reminderOffsets} onChange={event => updateForm('reminderOffsets', event.target.value)} placeholder="例如：30,7,1" /></label>
             <label className="form-label">优先级<select value={form.priority} onChange={event => updateForm('priority', event.target.value)}><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select></label>
-            <label className="form-label">参考金额<input type="number" min="0" step="0.01" value={form.amount} onChange={event => updateForm('amount', event.target.value)} /></label>
             <label className="form-label full">建议操作<input value={form.actionGuide} onChange={event => updateForm('actionGuide', event.target.value)} /></label>
           </div>}
           <div className="modal-foot"><button type="button" className="secondary-button" onClick={() => setFormOpen(false)}>取消</button><button className="primary-button" disabled={saving}>{saving ? '保存中…' : editing ? '保存修改' : '创建提醒'}</button></div>

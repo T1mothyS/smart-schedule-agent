@@ -42,6 +42,33 @@ test('不存在的账单日按该月最后一天计算', () => {
   assert.equal(reminders.clampDateForMonth(2026, 4, 31), '2026-04-30');
 });
 
+test('未来年度周期使用明确填写的本期到期日，编辑后同步当前周期', () => {
+  const task = reminders.createReminderTask({
+    userId,
+    type: 'generic',
+    name: '车辆年检日期测试',
+    config: {
+      templateKey: 'vehicle_inspection',
+      rule: { frequency: 'yearly', anchorDate: '2027-04-18', month: 4, dayOfMonth: 18, interval: 1, advancePolicy: 'calendar' },
+      reminderOffsets: [30, 7, 1],
+      reminderTime: '09:00',
+      actionGuide: '预约年检',
+      priority: 'medium',
+    },
+  });
+  assert.equal(task.currentCycle?.dueDate, '2027-04-18');
+  assert.equal(task.currentCycle?.status, 'pending');
+
+  const updated = reminders.updateReminderTask(task.id, userId, {
+    config: {
+      ...(task.config as reminders.GenericReminderConfig),
+      rule: { frequency: 'yearly', anchorDate: '2028-05-19', month: 5, dayOfMonth: 19, interval: 1, advancePolicy: 'calendar' },
+    },
+  });
+  assert.equal(updated?.currentCycle?.dueDate, '2028-05-19');
+  assert.equal(updated?.currentCycle?.status, 'pending');
+});
+
 test('邮件测试时间按 GMT+8 输出', () => {
   assert.equal(
     email.formatDateTimeInTimezone(new Date('2026-07-15T15:11:00.000Z'), 'Asia/Shanghai'),
@@ -67,18 +94,24 @@ test('日历按用户隔离并自动迁移默认日历', () => {
 });
 
 test('通用周期任务、逾期手动完成和下一周期生成', () => {
+  const upcomingDueDate = reminders.addDays(reminders.todayInTimezone(), 1);
   const task = reminders.createReminderTask({
     userId,
     type: 'generic',
     name: '测试房租',
     config: {
       templateKey: 'rent',
-      rule: { frequency: 'monthly', anchorDate: '2026-01-31', dayOfMonth: 31, interval: 1, advancePolicy: 'calendar' },
+      rule: {
+        frequency: 'monthly',
+        anchorDate: upcomingDueDate,
+        dayOfMonth: Number(upcomingDueDate.slice(8, 10)),
+        interval: 1,
+        advancePolicy: 'calendar',
+      },
       reminderOffsets: [3, 1, 0],
       reminderTime: '09:00',
       actionGuide: '支付房租',
       priority: 'high',
-      currency: 'CNY',
     },
   });
   assert.ok(task.currentCycle);
@@ -107,7 +140,6 @@ test('通用周期任务、逾期手动完成和下一周期生成', () => {
       reminderTime: '09:00',
       actionGuide: '补办证件',
       priority: 'high',
-      currency: 'CNY',
     },
   });
   assert.equal(expiredTask.currentCycle?.status, 'expired');
@@ -134,9 +166,8 @@ test('行动中心聚合待办并记录完成证明', () => {
   assert.equal(attachments.readAttachment(file).equals(pngHeader), true);
   assert.equal(activity.listAttachments(userId, completion.id).length, 1);
   assert.equal(activity.getAttachment(file.id, 'other-user'), null);
-  const updated = activity.updateCompletion(completion.id, userId, { note: '更新后的证明', amountCents: 12345 });
-  assert.equal(updated?.note, '更新后的证明');
-  assert.equal(updated?.amountCents, 12345);
+  const updated = activity.updateCompletion(completion.id, userId, { note: '更新后的证明，金额 123.45 元' });
+  assert.equal(updated?.note, '更新后的证明，金额 123.45 元');
 });
 
 test('日历取消完成会同步行动中心，全天事项保留全天语义和备注', () => {

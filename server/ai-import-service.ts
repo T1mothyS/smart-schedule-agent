@@ -12,8 +12,6 @@ export interface AiImportDraft {
   title: string;
   dueDate: string;
   dueTime: string | null;
-  amountCents: number | null;
-  currency: string;
   templateKey: 'subscription' | 'insurance' | 'document' | 'membership' | 'rent' | 'utilities' | 'vehicle_inspection' | 'custom';
   recurrence: {
     frequency: 'once' | 'monthly' | 'yearly' | 'interval';
@@ -61,8 +59,6 @@ function normaliseDraft(raw: any): AiImportDraft {
     title: String(raw?.title || '待确认事项').trim().slice(0, 160),
     dueDate: dateOnly(raw?.dueDate),
     dueTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(raw?.dueTime) ? raw.dueTime : null,
-    amountCents: raw?.amountCents === null || raw?.amountCents === undefined ? null : Math.max(0, Math.round(Number(raw.amountCents))),
-    currency: String(raw?.currency || 'CNY').toUpperCase().slice(0, 3),
     templateKey: allowedTemplates.includes(raw?.templateKey) ? raw.templateKey : 'custom',
     recurrence: {
       frequency: allowedFrequencies.includes(raw?.recurrence?.frequency) ? raw.recurrence.frequency : 'once',
@@ -98,17 +94,15 @@ JSON 格式：
   "title":"事项标题",
   "dueDate":"YYYY-MM-DD",
   "dueTime":"HH:mm|null",
-  "amountCents":12345,
-  "currency":"CNY",
   "templateKey":"subscription|insurance|document|membership|rent|utilities|vehicle_inspection|custom",
   "recurrence":{"frequency":"once|monthly|yearly|interval","interval":1,"unit":"day|month|year","advancePolicy":"calendar|completion"},
   "reminderOffsets":[30,7,1],
   "actionGuide":"下一步操作",
   "notes":"识别依据摘要",
-  "confidence":{"title":0.9,"dueDate":0.9,"amountCents":0.8,"recurrence":0.8},
+  "confidence":{"title":0.9,"dueDate":0.9,"recurrence":0.8},
   "warnings":[]
 }
-不能确定的字段要降低 confidence 并写入 warnings，禁止编造日期或金额。`,
+不能确定的字段要降低 confidence 并写入 warnings，禁止编造日期。金额等补充信息统一写入 notes，不生成独立金额字段。`,
     },
     ...images.map(image => ({
       type: 'image' as const,

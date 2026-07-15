@@ -31,8 +31,6 @@ export interface GenericReminderConfig {
   reminderTime: string;
   actionGuide: string;
   priority: 'high' | 'medium' | 'low';
-  amountCents?: number | null;
-  currency?: string;
 }
 
 export interface ReminderCycle {

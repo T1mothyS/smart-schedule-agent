@@ -17,8 +17,6 @@ interface ActionItem {
   completionId: string | null;
   proof: {
     note: string | null;
-    amountCents: number | null;
-    currency: string;
     billDate: string | null;
     attachments: Array<{ id: string; originalName: string; mimeType: string; sizeBytes: number }>;
   } | null;
@@ -85,7 +83,6 @@ export function ActionCenterPage() {
   const [loading, setLoading] = useState(true);
   const [target, setTarget] = useState<ActionItem | null>(null);
   const [note, setNote] = useState('');
-  const [amount, setAmount] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
@@ -146,8 +143,6 @@ export function ActionCenterPage() {
           sourceId: target.sourceId,
           instanceId: target.instanceId,
           note,
-          amountCents: amount ? Math.round(Number(amount) * 100) : null,
-          currency: 'CNY',
         }),
       });
       const result = await response.json();
@@ -159,7 +154,7 @@ export function ActionCenterPage() {
         });
         if (!upload.ok) { const error = await upload.json(); throw new Error(error.error || '完成已登记，但附件上传失败'); }
       }
-      setTarget(null); setNote(''); setAmount(''); setFiles([]);
+      setTarget(null); setNote(''); setFiles([]);
       await loadActions();
     } catch (error) { window.alert(error instanceof Error ? error.message : '登记完成失败'); }
     finally { setSaving(false); }
@@ -198,9 +193,9 @@ export function ActionCenterPage() {
       <div className="action-section-head standalone"><div><h2>即将到期</h2><span>提前留出准备时间</span></div><select value={days} onChange={event => setDays(Number(event.target.value))}><option value={3}>未来 3 天</option><option value={7}>未来 7 天</option><option value={14}>未来 14 天</option></select></div>
       <ActionList title="" hint="" items={data.upcoming} tone="warning" onComplete={setTarget} />
       <ActionList title="已经逾期" hint="逾期周期仍可手动完成，不会消失" items={data.overdue} tone="danger" onComplete={setTarget} />
-      <section className="completed-section"><button onClick={() => setShowCompleted(value => !value)}><CheckCircle2 size={17} /> 今天已完成 {data.completedToday.length} 项 <ChevronDown size={15} className={showCompleted ? 'rotated' : ''} /></button>{showCompleted && <div className="action-list">{data.completedToday.map(item => <div className="action-row completed" key={item.id}><CheckCircle2 size={16} /><div className="action-row-main"><div className="action-row-title">{item.title}</div><div className="action-row-meta">{item.nextAction && <span>{item.nextAction}</span>}{item.proof?.note && <span>备注：{item.proof.note}</span>}{item.proof?.amountCents !== null && item.proof?.amountCents !== undefined && <span>金额：{item.proof.currency} {(item.proof.amountCents / 100).toFixed(2)}</span>}</div>{item.proof?.attachments.length ? <div className="proof-files">{item.proof.attachments.map(file => <button key={file.id} onClick={() => openAttachment(file)}><Paperclip size={13} />{file.originalName}</button>)}</div> : null}</div></div>)}</div>}</section>
+      <section className="completed-section"><button onClick={() => setShowCompleted(value => !value)}><CheckCircle2 size={17} /> 今天已完成 {data.completedToday.length} 项 <ChevronDown size={15} className={showCompleted ? 'rotated' : ''} /></button>{showCompleted && <div className="action-list">{data.completedToday.map(item => <div className="action-row completed" key={item.id}><CheckCircle2 size={16} /><div className="action-row-main"><div className="action-row-title">{item.title}</div><div className="action-row-meta">{item.nextAction && <span>{item.nextAction}</span>}{item.proof?.note && <span>备注：{item.proof.note}</span>}</div>{item.proof?.attachments.length ? <div className="proof-files">{item.proof.attachments.map(file => <button key={file.id} onClick={() => openAttachment(file)}><Paperclip size={13} />{file.originalName}</button>)}</div> : null}</div></div>)}</div>}</section>
     </>}
 
-    {target && <div className="modal-backdrop" onMouseDown={() => setTarget(null)}><div className="complete-modal" onMouseDown={event => event.stopPropagation()}><button className="icon-button modal-close" onClick={() => setTarget(null)}><X size={16} /></button><div className="complete-icon"><CheckCircle2 size={24} /></div><h2>完成“{target.title}”</h2><p>完成后仍可从历史中重新打开，不会丢失证明。</p><label className="form-label">备注<textarea rows={3} value={note} onChange={event => setNote(event.target.value)} placeholder="记录处理结果、账单编号或注意事项" /></label><label className="form-label">金额（可选，CNY）<input type="number" min="0" step="0.01" value={amount} onChange={event => setAmount(event.target.value)} /></label><label className="form-label attachment-picker"><Paperclip size={15} /> 上传证明（最多 5 个，每个 10MB）<input type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" onChange={chooseFiles} /><small>{files.length ? files.map(file => file.name).join('、') : '支持图片和 PDF'}</small></label><div className="modal-foot"><button className="secondary-button" onClick={() => setTarget(null)}>取消</button><button className="primary-button" onClick={complete} disabled={saving}>{saving ? '保存中…' : '确认完成'}</button></div></div></div>}
+    {target && <div className="modal-backdrop" onMouseDown={() => setTarget(null)}><div className="complete-modal" onMouseDown={event => event.stopPropagation()}><button className="icon-button modal-close" onClick={() => setTarget(null)}><X size={16} /></button><div className="complete-icon"><CheckCircle2 size={24} /></div><h2>完成“{target.title}”</h2><p>完成后仍可从历史中重新打开，不会丢失证明。</p><label className="form-label">备注<textarea rows={3} value={note} onChange={event => setNote(event.target.value)} placeholder="记录处理结果、金额、账单编号或注意事项" /></label><label className="form-label attachment-picker"><Paperclip size={15} /> 上传证明（最多 5 个，每个 10MB）<input type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" onChange={chooseFiles} /><small>{files.length ? files.map(file => file.name).join('、') : '支持图片和 PDF'}</small></label><div className="modal-foot"><button className="secondary-button" onClick={() => setTarget(null)}>取消</button><button className="primary-button" onClick={complete} disabled={saving}>{saving ? '保存中…' : '确认完成'}</button></div></div></div>}
   </div>;
 }

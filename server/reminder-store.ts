@@ -42,8 +42,6 @@ export interface GenericReminderConfig {
   reminderTime: string;
   actionGuide: string;
   priority: 'high' | 'medium' | 'low';
-  amountCents?: number | null;
-  currency?: string;
 }
 
 export type ReminderConfig = CreditCardConfig | SimConfig | GenericReminderConfig;
@@ -358,18 +356,9 @@ function cycleReminderDates(task: ReminderTask, cycle: ReminderCycle): Array<{ t
   return [{ type: 'statement_issued', date: statementReminder }, ...paymentReminders];
 }
 
-function genericInitialCycle(config: GenericReminderConfig, today: string): { key: string; start: string; due: string } {
+function genericInitialCycle(config: GenericReminderConfig): { key: string; start: string; due: string } {
   const rule = config.rule;
-  if (rule.frequency === 'once' || rule.frequency === 'interval') {
-    return { key: rule.anchorDate, start: rule.anchorDate, due: rule.anchorDate };
-  }
-  const [year, month] = today.split('-').map(Number);
-  if (rule.frequency === 'monthly') {
-    const due = monthDate(year, month - 1, rule.dayOfMonth);
-    return { key: due.slice(0, 7), start: due, due };
-  }
-  const due = monthDate(year, rule.month - 1, rule.dayOfMonth);
-  return { key: String(year), start: due, due };
+  return { key: rule.anchorDate, start: rule.anchorDate, due: rule.anchorDate };
 }
 
 function nextGenericCycle(config: GenericReminderConfig, cycle: ReminderCycle, completedDate: string): { key: string; start: string; due: string } | null {
@@ -412,13 +401,36 @@ function createCycle(task: ReminderTask, cycleKey: string, periodStart: string, 
   return cycle;
 }
 
+function resetOpenGenericCycle(task: ReminderTask, cycle: ReminderCycle, dueDate: string): ReminderCycle {
+  const status: ReminderCycleStatus = dueDate < todayInTimezone(task.timezone) ? 'expired' : 'pending';
+  const updatedAt = nowIso();
+  run('DELETE FROM reminder_deliveries WHERE cycle_id = ?', [cycle.id]);
+  run(
+    'UPDATE reminder_cycles SET period_start = ?, due_date = ?, status = ?, updated_at = ? WHERE id = ?',
+    [dueDate, dueDate, status, updatedAt, cycle.id],
+  );
+  const updated = { ...cycle, periodStart: dueDate, dueDate, status, updatedAt };
+  for (const item of cycleReminderDates(task, updated)) createDelivery(task, updated, item.type, item.date);
+  return updated;
+}
+
 function ensureCurrentCycle(task: ReminderTask, today = todayInTimezone(task.timezone)): ReminderCycle {
   const latest = queryOne<any>(
     `SELECT * FROM reminder_cycles WHERE task_id = ? ORDER BY created_at DESC LIMIT 1`,
     [task.id],
   );
   if (latest) {
-    const cycle = rowToCycle(latest);
+    let cycle = rowToCycle(latest);
+    if (task.type === 'generic' && (cycle.status === 'pending' || cycle.status === 'expired')) {
+      const completedCount = queryOne<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM reminder_cycles WHERE task_id = ? AND status = 'completed'",
+        [task.id],
+      )?.count || 0;
+      const anchorDate = (task.config as GenericReminderConfig).rule.anchorDate;
+      if (completedCount === 0 && cycle.dueDate !== anchorDate) {
+        cycle = resetOpenGenericCycle(task, cycle, anchorDate);
+      }
+    }
     if (cycle.status === 'pending' && cycle.dueDate < today) {
       run('UPDATE reminder_cycles SET status = \'expired\', updated_at = ? WHERE id = ?', [nowIso(), cycle.id]);
       cycle.status = 'expired';
@@ -435,7 +447,7 @@ function ensureCurrentCycle(task: ReminderTask, today = todayInTimezone(task.tim
 
   if (task.type === 'generic') {
     const generic = task.config as GenericReminderConfig;
-    const next = genericInitialCycle(generic, today);
+    const next = genericInitialCycle(generic);
     return createCycle(task, next.key, next.start, next.due);
   }
 
@@ -522,6 +534,19 @@ export function updateReminderTask(
     `UPDATE reminder_tasks SET name = ?, enabled = ?, timezone = ?, config = ?, updated_at = ? WHERE id = ?`,
     [next.name, next.enabled ? 1 : 0, next.timezone, JSON.stringify(next.config), next.updatedAt, id],
   );
+  if (updates.config && next.type === 'generic') {
+    const latest = queryOne<any>(
+      `SELECT * FROM reminder_cycles WHERE task_id = ? ORDER BY created_at DESC LIMIT 1`,
+      [id],
+    );
+    if (latest) {
+      const cycle = rowToCycle(latest);
+      if (cycle.status === 'pending' || cycle.status === 'expired') {
+        const anchorDate = (next.config as GenericReminderConfig).rule.anchorDate;
+        if (cycle.dueDate !== anchorDate) resetOpenGenericCycle(next, cycle, anchorDate);
+      }
+    }
+  }
   return getReminderTask(id, userId);
 }
 

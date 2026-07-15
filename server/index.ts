@@ -998,8 +998,6 @@ app.post("/api/completions", authenticate, (req, res) => {
       instanceId,
       completedAt: req.body.completedAt,
       note: req.body.note,
-      amountCents: req.body.amountCents,
-      currency: req.body.currency,
       billDate: req.body.billDate,
     });
     res.json({ completion });
@@ -1026,14 +1024,9 @@ app.post("/api/completions/:id/reopen", authenticate, (req, res) => {
 
 app.put("/api/completions/:id", authenticate, (req, res) => {
   try {
-    if (req.body.amountCents !== undefined && req.body.amountCents !== null && (!Number.isFinite(Number(req.body.amountCents)) || Number(req.body.amountCents) < 0)) {
-      return res.status(400).json({ error: '金额不正确' });
-    }
     const completion = activityStore.updateCompletion(req.params.id, (req as any).user.userId, {
       completedAt: req.body.completedAt ? String(req.body.completedAt) : undefined,
       note: req.body.note === undefined ? undefined : String(req.body.note),
-      amountCents: req.body.amountCents === undefined || req.body.amountCents === null ? req.body.amountCents : Number(req.body.amountCents),
-      currency: req.body.currency ? String(req.body.currency) : undefined,
       billDate: req.body.billDate === undefined ? undefined : String(req.body.billDate),
     });
     if (!completion) return res.status(404).json({ error: '完成记录不存在' });
@@ -1236,8 +1229,6 @@ function normaliseReminderConfig(type: reminderStore.ReminderTaskType, input: an
       reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(input?.reminderTime) ? input.reminderTime : '09:00',
       actionGuide: String(input?.actionGuide || '完成本周期事务并登记证明').trim(),
       priority: ['high', 'medium', 'low'].includes(input?.priority) ? input.priority : 'medium',
-      amountCents: input?.amountCents === null || input?.amountCents === undefined ? null : Math.max(0, Math.round(Number(input.amountCents))),
-      currency: String(input?.currency || 'CNY').toUpperCase().slice(0, 3),
     };
   }
 
@@ -1361,8 +1352,6 @@ app.post("/api/cycle-reminders/:id/complete", authenticate, (req, res) => {
       instanceId: String(req.body.cycleId || ''),
       completedAt: new Date(completedDate + 'T12:00:00+08:00').toISOString(),
       note: req.body.note,
-      amountCents: req.body.amountCents,
-      currency: req.body.currency,
       billDate: req.body.billDate,
     });
     addLog('info', 'reminder', '标记周期提醒完成: ' + task.name, { taskId: task.id, completedDate });
@@ -1455,8 +1444,6 @@ app.post("/api/ai/imports/:id/confirm", authenticate, (req, res) => {
           reminderOffsets: draft.reminderOffsets,
           reminderTime: draft.dueTime || '09:00',
           actionGuide: draft.actionGuide,
-          amountCents: draft.amountCents,
-          currency: draft.currency,
           priority: 'medium',
         }),
       });
@@ -2260,19 +2247,11 @@ app.post("/api/ai-chat", async (req, res) => {
 
   // 简化日期的上下文日程
   const existingSchedules = contextSchedules;
-  const CATEGORY_MAP: Record<string, string> = {
-    travel: '🚗出行', work: '💼工作', social: '👥社交',
-    life: '🏠生活', health: '❤️健康', other: '📌其他'
-  };
-  const PRIORITY_MAP: Record<string, string> = {
-    high: '🔴高', medium: '🟡中', low: '🟢低'
-  };
+
   const PRIORITY_COLORS: Record<string, string> = {
     high: '#EF4444', medium: '#F59E0B', low: '#10B981'
   };
-  const CATEGORY_ICONS: Record<string, string> = {
-    travel: '🚗', work: '💼', social: '👥', life: '🏠', health: '❤️', other: '📌'
-  };
+
   const CATEGORY_LABELS_CN: Record<string, string> = {
     travel: '出行', work: '工作', social: '社交', life: '生活', health: '健康', other: '其他'
   };
@@ -2285,32 +2264,27 @@ app.post("/api/ai-chat", async (req, res) => {
   // 生成日程卡片HTML（模拟主日历视图样式）
   const scheduleCards = sortedSchedules.length > 0
     ? sortedSchedules.map((s: any, idx: number) => {
-        const catIcon = CATEGORY_ICONS[s.category] || '📌';
-        const timeStr = s.all_day ? '📅 全天' : `🕐 ${s.start_time.slice(11, 16)}${s.end_time ? ' ~ ' + s.end_time.slice(11, 16) : ''}`;
-        const statusStr = s.is_completed ? '✅' : '⏳';
-        const locStr = s.location ? `<div style="font-size:11px;opacity:0.75;margin-top:2px;">📍 ${s.location}</div>` : '';
-        const notesStr = s.notes ? `<div style="font-size:11px;opacity:0.75;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">💡 ${s.notes}</div>` : '';
+        const timeStr = s.all_day ? '全天' : `${s.start_time.slice(11, 16)}${s.end_time ? ' ~ ' + s.end_time.slice(11, 16) : ''}`;
+        const statusStr = s.is_completed ? '已完成 · ' : '';
+        const locStr = s.location ? `<div style="font-size:11px;opacity:0.75;margin-top:2px;">地点: ${s.location}</div>` : '';
+        const notesStr = s.notes ? `<div style="font-size:11px;opacity:0.75;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">备注: ${s.notes}</div>` : '';
         const catLabel = CATEGORY_LABELS_CN[s.category] || '其他';
         const priColor = PRIORITY_COLORS[s.priority] || '#F59E0B';
         const completedStyle = s.is_completed ? 'opacity:0.6;text-decoration:line-through;' : '';
         
         return `<div style="background:${priColor}15;border-left:3px solid ${priColor};border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;${completedStyle}">
   <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
-    <span style="font-size:12px;">${catIcon}</span>
     <span style="font-size:10px;padding:1px 5px;background:${priColor}25;color:${priColor};border-radius:4px;font-weight:500;">${catLabel}</span>
-    <span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${statusStr} ${s.title}</span>
+    <span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${statusStr}${s.title}</span>
   </div>
   <div style="font-size:11px;opacity:0.8;margin-top:2px;">${timeStr}</div>
   ${locStr}${notesStr}
-  <div style="font-size:10px;opacity:0.5;margin-top:4px;color:#6B7280;">ID: ${s.id}</div>
 </div>`;
       }).join('')
     : '<div style="text-align:center;padding:20px;color:#9CA3AF;">（该日期暂无日程）</div>';
   
   // 纯文本版（用于AI上下文）- 显示完整日期
-  const CATEGORY_EMOJI: Record<string, string> = {
-    travel: '🚗', work: '💼', social: '👥', life: '🏠', health: '❤️', other: '📌'
-  };
+
   const formatDateForAI = (dateStr: string) => {
     const d = new Date(dateStr);
     const month = dateStr.slice(5, 7);
@@ -2320,15 +2294,15 @@ app.post("/api/ai-chat", async (req, res) => {
   };
   const scheduleList = sortedSchedules.length > 0
     ? sortedSchedules.map((s: any, idx: number) => {
-        const catEmoji = CATEGORY_EMOJI[s.category] || '📌';
+        const categoryLabel = CATEGORY_LABELS_CN[s.category] || '其他';
         const dateLabel = formatDateForAI(s.start_time.slice(0, 10));
-        const timeLabel = s.all_day ? '📅 全天' : `🕐 ${s.start_time.slice(11, 16)}${s.end_time ? '~' + s.end_time.slice(11, 16) : ''}`;
-        const status = s.is_completed ? '✅ 已完成' : '⏳ 进行中';
-        const loc = s.location ? `\n   📍 地点: ${s.location}` : '';
-        const notes = s.notes ? `\n   💡 备注: ${s.notes}` : '';
+        const timeLabel = s.all_day ? '全天' : `${s.start_time.slice(11, 16)}${s.end_time ? '~' + s.end_time.slice(11, 16) : ''}`;
+        const status = s.is_completed ? '已完成' : '进行中';
+        const loc = s.location ? `\n   地点: ${s.location}` : '';
+        const notes = s.notes ? `\n   备注: ${s.notes}` : '';
         const cat = s.category || 'other';
         const pri = s.priority || 'medium';
-        return `${idx + 1}. ${catEmoji} "${s.title}" ${status}\n   日期时间: ${dateLabel} ${timeLabel}${loc}${notes}\n   分类: ${cat} | 优先级: ${pri}\n   [ID: ${s.id}]`;
+        return `${idx + 1}. ${categoryLabel} "${s.title}" ${status}\n   日期时间: ${dateLabel} ${timeLabel}${loc}${notes}\n   分类: ${cat} | 优先级: ${pri}\n   [ID: ${s.id}]`;
       }).join('\n\n')
     : '（该日期暂无日程）';
 
@@ -2351,8 +2325,9 @@ ${scheduleList || '（暂无日程）'}
 - **已完成** 和 **进行中 / 待办** 这两个分类标题前后各空一行
 - 每一条日程条目后面必须加一个换行（即条目之间有空行）
 - 最后的总结/提醒文字前后各空一行
+- 回复中禁止使用 emoji 或图标字符，保持简洁专业
 - 示例格式（reply 字段内用 \\n 表示换行）：
-  "今天共有 N 项安排，以下是详情：\\n\\n✅ **已完成**\\n\\n1. 事项A — 时间\\n\\n2. 事项B — 时间\\n\\n⏳ **进行中 / 待办**\\n\\n3. 事项C — 时间\\n\\n4. 事项D — 时间\\n\\n总结提醒文字"
+  "今天共有 N 项安排，以下是详情：\\n\\n**已完成**\\n\\n1. 事项A — 时间\\n\\n2. 事项B — 时间\\n\\n**进行中 / 待办**\\n\\n3. 事项C — 时间\\n\\n4. 事项D — 时间\\n\\n总结提醒文字"
 
 可用日程分类：
 - travel/出行：交通、接送、旅途相关
@@ -2572,8 +2547,8 @@ priority 识别：
       
       finalScheduleCards = sortedFinal.length > 0
         ? sortedFinal.map((s: any, idx: number) => {
-            const timeStr = s.all_day ? '[全天]' : `${s.start_time.slice(11, 16)}${s.end_time ? ' ~ ' + s.end_time.slice(11, 16) : ''}`;
-            const statusStr = s.is_completed ? '[V]' : '[ ]';
+            const timeStr = s.all_day ? '全天' : `${s.start_time.slice(11, 16)}${s.end_time ? ' ~ ' + s.end_time.slice(11, 16) : ''}`;
+            const statusStr = s.is_completed ? '已完成 · ' : '';
             const locStr = s.location ? `<div style="font-size:11px;opacity:0.75;margin-top:2px;">地点: ${s.location}</div>` : '';
             const notesStr = s.notes ? `<div style="font-size:11px;opacity:0.75;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">备注: ${s.notes}</div>` : '';
             const catLabel = CATEGORY_LABELS_CN[s.category] || '其他';
@@ -2583,11 +2558,10 @@ priority 识别：
             return `<div style="background:${priColor}15;border-left:3px solid ${priColor};border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;${completedStyle}">
   <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
     <span style="font-size:10px;padding:1px 5px;background:${priColor}25;color:${priColor};border-radius:4px;font-weight:500;">${catLabel}</span>
-    <span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${statusStr} ${s.title}</span>
+    <span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${statusStr}${s.title}</span>
   </div>
   <div style="font-size:11px;opacity:0.8;margin-top:2px;">${timeStr}</div>
   ${locStr}${notesStr}
-  <div style="font-size:10px;opacity:0.5;margin-top:4px;color:#6B7280;">ID: ${s.id}</div>
 </div>`;
           }).join('')
         : '<div style="text-align:center;padding:20px;color:#9CA3AF;">（暂无日程）</div>';
@@ -2774,14 +2748,14 @@ app.post("/api/chat", async (req, res) => {
 ### 当用户请求创建日程时：
 用友好的方式确认日程详情，格式如下：
 \`\`\`
-📅 日程已创建！
+日程已创建
 
 【任务名称】
-🕐 时间：YYYY年MM月DD日 HH:MM - HH:MM
-📍 地点：[地点]
-🏷️ 分类：[分类]
-⭐ 优先级：[高/中/低]
-🔔 提醒：[提前X分钟]
+时间：YYYY年MM月DD日 HH:MM - HH:MM
+地点：[地点]
+分类：[分类]
+优先级：[高/中/低]
+提醒：[提前X分钟]
 
 是否需要调整？
 \`\`\`
@@ -2795,8 +2769,9 @@ app.post("/api/chat", async (req, res) => {
 - **已完成** 和 **进行中 / 待办** 分类标题前后各空一行
 - 每一条日程条目列举完后也要加一个空行（条目之间用空行分隔）
 - 最后的总结/提醒文字前后各空一行
+- 回复中禁止使用 emoji 或图标字符，保持简洁专业
 - 格式示例：
-  今天共有 N 项安排：\n\n✅ **已完成**\n\n1. 事项A...\n\n2. 事项B...\n\n⏳ **进行中 / 待办**\n\n3. 事项C...\n\n总结提醒
+  今天共有 N 项安排：\n\n**已完成**\n\n1. 事项A...\n\n2. 事项B...\n\n**进行中 / 待办**\n\n3. 事项C...\n\n总结提醒
 
 ### 当用户要修改/调整日程时：
 **【关键】你必须根据对话上下文确定正确的 scheduleId（UUID 格式）！**

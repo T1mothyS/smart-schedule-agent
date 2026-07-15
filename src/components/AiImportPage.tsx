@@ -7,8 +7,6 @@ interface Draft {
   title: string;
   dueDate: string;
   dueTime: string | null;
-  amountCents: number | null;
-  currency: string;
   templateKey: string;
   recurrence: { frequency: string; interval: number; unit: string; advancePolicy: string };
   reminderOffsets: number[];
@@ -129,7 +127,7 @@ export function AiImportPage() {
   const lowConfidence = (field: string) => (draft?.confidence?.[field] ?? 0) < .7;
 
   return <div className="ai-import-page">
-    <header className="ai-import-header"><div><div className="eyebrow">AI INBOX</div><h1>智能导入</h1><p>从自然语言或账单截图提取日期、金额和周期；确认前不会写入正式日历。</p></div><WandSparkles size={34} /></header>
+    <header className="ai-import-header"><div><div className="eyebrow">AI INBOX</div><h1>智能导入</h1><p>从自然语言或截图提取日期和周期；确认前不会写入正式日历。</p></div><WandSparkles size={34} /></header>
     {notice && <div className={'notice ' + notice.type}>{notice.type === 'success' ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}{notice.message}</div>}
     <div className="ai-import-layout">
       <section className="ai-import-card">
@@ -149,7 +147,6 @@ export function AiImportPage() {
             <label>创建为<select value={draft.kind} onChange={event => update('kind', event.target.value)}><option value="schedule">待办日程</option><option value="recurring">周期事务</option></select></label>
             <label className={lowConfidence('dueDate') ? 'low-confidence' : ''}>到期日期<input type="date" value={draft.dueDate} onChange={event => update('dueDate', event.target.value)} /></label>
             <label>时间<input type="time" value={draft.dueTime || ''} onChange={event => update('dueTime', event.target.value || null)} /></label>
-            <label className={lowConfidence('amountCents') ? 'low-confidence' : ''}>金额（CNY）<input type="number" step=".01" min="0" value={draft.amountCents === null ? '' : draft.amountCents / 100} onChange={event => update('amountCents', event.target.value ? Math.round(Number(event.target.value) * 100) : null)} /></label>
             {draft.kind === 'recurring' && <><label>事务类型<select value={draft.templateKey} onChange={event => update('templateKey', event.target.value)}><option value="subscription">订阅续费</option><option value="insurance">保险</option><option value="document">证件</option><option value="membership">会员</option><option value="rent">房租</option><option value="utilities">水电账单</option><option value="vehicle_inspection">车辆年检</option><option value="custom">自定义</option></select></label><label>周期<select value={draft.recurrence.frequency} onChange={event => update('recurrence', { ...draft.recurrence, frequency: event.target.value })}><option value="once">单次</option><option value="monthly">每月</option><option value="yearly">每年</option><option value="interval">固定间隔</option></select></label></>}
             <label className="full">提醒提前天数<input value={draft.reminderOffsets.join(',')} onChange={event => update('reminderOffsets', event.target.value.split(/[,，\s]+/).map(Number).filter(Number.isFinite))} /></label>
             <label className="full">下一步操作<input value={draft.actionGuide} onChange={event => update('actionGuide', event.target.value)} /></label>
