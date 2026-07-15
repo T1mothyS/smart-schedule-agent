@@ -1,5 +1,5 @@
 #!/bin/bash
-# 部署脚本 - 在腾讯云服务器上执行
+# 部署脚本 - 在阿里云 Ubuntu/Debian 服务器上执行
 
 set -e
 

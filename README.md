@@ -1,6 +1,6 @@
 # 智能日程表 Agent
 
-跨平台智能日程管理 Agent 应用，基于 CodeBuddy Agent SDK 构建，支持自然语言创建日程、智能排期和跨平台提醒。
+个人周期事务与行动管理中心。保留 AI 日程对话，并统一管理今日行动、日历、周期事务、可靠提醒和完成证明。
 
 ## 功能特性
 
@@ -15,10 +15,19 @@
 - 优先级设置（高、中、低）
 - 标记完成/未完成状态
 
-### 🔔 提醒通知
-- 自定义提醒时间
-- 系统通知支持
-- 桌面弹窗提醒
+### ✅ 今日行动与周期事务
+- 登录后默认进入今日行动中心，聚合下一步、今天、临期、逾期和今日完成
+- 内置订阅、保险、证件、会员、房租、水电、车辆年检和自定义模板
+- 不提供跳过；逾期周期保留手动完成；不存在的月度日期自动落到月末
+
+### 🔔 可靠提醒与完成证明
+- 邮件、站内和浏览器通知，持久化队列、幂等去重、免打扰和失败重试
+- 完成记录支持备注、金额、账单日期和鉴权附件
+- 用户加密导出/恢复、全站快照和阿里云 OSS 离机备份
+
+### ✨ 智能导入
+- 自然语言和最多 3 张截图只生成待确认草稿
+- 可选 163 官方邮箱 IMAP 转发导入，按令牌和 Message-ID 去重
 
 ### 💻 跨平台支持
 - **Web 端**：浏览器访问
@@ -28,14 +37,14 @@
 ## 快速开始
 
 ### 环境要求
-- Node.js 18+
-- npm 或 yarn
+- Node.js 20+
+- npm
 - CodeBuddy API Key
 
 ### 安装依赖
 
 ```bash
-npm install
+npm ci
 ```
 
 ### 配置环境变量
@@ -74,6 +83,14 @@ npm run dev:electron
 
 ```bash
 npm run build:client
+```
+
+**完整验证**
+
+```bash
+npm run typecheck
+npm test
+npm run build
 ```
 
 **构建 Electron 应用**
@@ -118,8 +135,11 @@ smart-schedule-agent/
 │   ├── main.ts        # 主进程入口
 │   └── preload.ts     # Preload 脚本
 ├── server/            # 后端服务
-│   ├── index.ts       # Express + SSE 服务器
-│   └── schedule-store.ts  # 日程数据存储
+│   ├── index.ts              # Express + SSE 服务器
+│   ├── action-center.ts      # 今日行动聚合
+│   ├── activity-store.ts     # 完成、附件、通知和 AI 草稿
+│   ├── reminder-store.ts     # 通用周期规则
+│   └── backup-service.ts     # 加密备份与 OSS
 ├── src/               # 前端 React 应用
 │   ├── components/    # UI 组件
 │   │   ├── ScheduleView.tsx  # 日程视图

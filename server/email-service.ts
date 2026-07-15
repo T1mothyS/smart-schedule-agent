@@ -5,7 +5,7 @@
 
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
-import type { ReminderCycle, ReminderTask, SimConfig, CreditCardConfig } from './reminder-store.js';
+import type { ReminderCycle, ReminderTask, SimConfig, CreditCardConfig, GenericReminderConfig } from './reminder-store.js';
 
 const OFFICIAL_SENDER_EMAIL = 'aicalendarofficial@163.com';
 
@@ -143,7 +143,7 @@ export async function sendCycleReminderEmail(input: {
       最晚还款日：${safeDueDate}<br>
       还款规则：每月 ${config.paymentDay} 日（${config.paymentMonthOffset === 1 ? '次月' : '当月'}）</p>
     `;
-  } else {
+  } else if (task.type === 'sim') {
     const config = task.config as SimConfig;
     subject = `【SIM 卡提醒】${task.name} 距离保号截止还有 ${Math.max(remainingDays, 0)} 天`;
     body = `
@@ -153,6 +153,16 @@ export async function sendCycleReminderEmail(input: {
       上次有效操作：${escapeHtml(config.lastOperationDate)}<br>
       本次截止日期：${safeDueDate}</p>
       <p>建议操作：${escapeHtml(config.actionGuide)}</p>
+    `;
+  } else {
+    const config = task.config as GenericReminderConfig;
+    subject = `【事务提醒】${task.name} · ${safeDueDate} 到期`;
+    body = `
+      <p>${safeName} 即将到期，请按计划处理。</p>
+      <p>到期日期：${safeDueDate}<br>
+      事务类型：${escapeHtml(config.templateKey)}<br>
+      ${config.amountCents ? `参考金额：${escapeHtml((config.amountCents / 100).toFixed(2))} ${escapeHtml(config.currency || 'CNY')}<br>` : ''}
+      建议操作：${escapeHtml(config.actionGuide || '完成本周期事务并登记')}</p>
     `;
   }
 
@@ -169,6 +179,25 @@ export async function sendCycleReminderEmail(input: {
           ${delayed ? '<p style="color:#b45309;background:#fff7ed;padding:10px;border-radius:8px">本提醒因服务中断而延迟发送。</p>' : ''}
           <a href="${escapeHtml(appUrl)}" style="display:inline-block;margin-top:12px;background:#2563eb;color:#fff;padding:11px 18px;border-radius:10px;text-decoration:none">打开日历并标记完成</a>
           <p style="font-size:12px;color:#94a3b8;margin-top:22px">周期编号：${escapeHtml(cycle.id)}</p>
+        </div>
+      </div>
+    `,
+  });
+}
+
+export async function sendQueuedNotificationEmail(to: string, title: string, body: string): Promise<void> {
+  const appUrl = process.env.APP_URL || 'http://localhost:3000/today';
+  await transporter.sendMail({
+    from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
+    to,
+    subject: title,
+    html: `
+      <div style="font-family:Arial,'PingFang SC','Microsoft YaHei',sans-serif;max-width:600px;margin:0 auto;padding:24px;background:#f4f7fb;color:#182230">
+        <div style="background:#fff;border:1px solid #e5eaf1;border-radius:18px;padding:28px">
+          <div style="font-size:13px;color:#6b7280;margin-bottom:10px">AI Calendar · 行动提醒</div>
+          <h2 style="margin:0 0 16px;color:#14213d">${escapeHtml(title)}</h2>
+          <p style="line-height:1.7">${escapeHtml(body).replace(/\n/g, '<br>')}</p>
+          <a href="${escapeHtml(appUrl)}" style="display:inline-block;margin-top:12px;background:#2563eb;color:#fff;padding:11px 18px;border-radius:10px;text-decoration:none">打开今日行动中心</a>
         </div>
       </div>
     `,

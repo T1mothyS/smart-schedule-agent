@@ -239,28 +239,59 @@ export function SettingsPage() {
   const [reminderHour, setReminderHour] = useState(8);
   const [reminderMinute, setReminderMinute] = useState(0);
   const [reminderEmail, setReminderEmail] = useState('');
+  const [emailEnabled, setEmailEnabled] = useState(true);
+  const [inAppEnabled, setInAppEnabled] = useState(true);
+  const [browserEnabled, setBrowserEnabled] = useState(true);
+  const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
+  const [quietStart, setQuietStart] = useState('22:00');
+  const [quietEnd, setQuietEnd] = useState('08:00');
   const [loadingReminder, setLoadingReminder] = useState(false);
+  const [backupPassword, setBackupPassword] = useState('');
+  const [backupFile, setBackupFile] = useState<File | null>(null);
+  const [backupPreview, setBackupPreview] = useState<any>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
 
   const loadReminder = useCallback(async () => {
     try {
-      const res = await fetch('/api/reminders', { headers: authHeaders() });
+      const res = await fetch('/api/notification-preferences', { headers: authHeaders() });
       if (res.ok) {
         const data = await res.json();
-        setReminderEnabled(data.reminder?.enabled ?? false);
-        setReminderHour(data.reminder?.hour ?? 8);
-        setReminderMinute(data.reminder?.minute ?? 0);
-        setReminderEmail(data.reminder?.reminderEmail || user?.email || '');
+        const preference = data.preference || {};
+        setReminderEnabled(preference.enabled ?? false);
+        setReminderHour(preference.hour ?? 8);
+        setReminderMinute(preference.minute ?? 0);
+        setReminderEmail(preference.reminderEmail || user?.email || '');
+        setEmailEnabled(preference.emailEnabled !== false);
+        setInAppEnabled(preference.inAppEnabled !== false);
+        setBrowserEnabled(preference.browserEnabled !== false);
+        setQuietHoursEnabled(!!preference.quietHoursEnabled);
+        setQuietStart(preference.quietStart || '22:00');
+        setQuietEnd(preference.quietEnd || '08:00');
       }
     } catch {}
   }, [authHeaders]);
 
+  const notificationPayload = (overrides: Record<string, unknown> = {}) => ({
+    enabled: reminderEnabled,
+    hour: reminderHour,
+    minute: reminderMinute,
+    reminderEmail: reminderEmail.trim(),
+    emailEnabled,
+    inAppEnabled,
+    browserEnabled,
+    quietHoursEnabled,
+    quietStart,
+    quietEnd,
+    ...overrides,
+  });
+
   const saveReminderEmail = async () => {
     setLoadingReminder(true);
     try {
-      const response = await fetch('/api/reminders', {
+      const response = await fetch('/api/notification-preferences', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ enabled: reminderEnabled, hour: reminderHour, minute: reminderMinute, reminderEmail: reminderEmail.trim() }),
+        body: JSON.stringify(notificationPayload()),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || '保存失败');
@@ -271,6 +302,70 @@ export function SettingsPage() {
     } finally {
       setLoadingReminder(false);
     }
+  };
+
+  const encodedBackupPassword = () => {
+    const bytes = new TextEncoder().encode(backupPassword);
+    let binary = '';
+    bytes.forEach(value => { binary += String.fromCharCode(value); });
+    return btoa(binary);
+  };
+
+  const exportBackup = async () => {
+    if (backupPassword.length < 8) return MessagePlugin.warning('备份密码至少需要 8 个字符');
+    setBackupBusy(true);
+    try {
+      const response = await fetch('/api/backups/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ password: backupPassword }),
+      });
+      if (!response.ok) { const data = await response.json(); throw new Error(data.error || '导出失败'); }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'ai-calendar-' + new Date().toISOString().slice(0, 10) + '.aicalendar-backup';
+      anchor.click();
+      URL.revokeObjectURL(url);
+      MessagePlugin.success('加密备份已生成');
+    } catch (error: any) { MessagePlugin.error(error?.message || '导出失败'); }
+    finally { setBackupBusy(false); }
+  };
+
+  const inspectBackup = async (file: File) => {
+    if (backupPassword.length < 8) return MessagePlugin.warning('请先输入该备份的密码');
+    setBackupBusy(true);
+    setBackupFile(file);
+    try {
+      const response = await fetch('/api/backups/inspect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Backup-Password': encodedBackupPassword(), ...authHeaders() },
+        body: await file.arrayBuffer(),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '检查备份失败');
+      setBackupPreview(data.backup);
+    } catch (error: any) { setBackupPreview(null); MessagePlugin.error(error?.message || '检查备份失败'); }
+    finally { setBackupBusy(false); }
+  };
+
+  const restoreBackup = async (mode: 'merge' | 'replace') => {
+    if (!backupFile || !backupPreview) return;
+    if (mode === 'replace' && !window.confirm('替换模式会先备份当前数据，然后替换当前账号的日历、周期事务和历史。是否继续？')) return;
+    setBackupBusy(true);
+    try {
+      const response = await fetch('/api/backups/restore?mode=' + mode, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', 'X-Backup-Password': encodedBackupPassword(), ...authHeaders() },
+        body: await backupFile.arrayBuffer(),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || '恢复失败');
+      MessagePlugin.success('数据恢复完成，刷新页面后生效');
+      setBackupFile(null); setBackupPreview(null);
+    } catch (error: any) { MessagePlugin.error(error?.message || '恢复失败'); }
+    finally { setBackupBusy(false); }
   };
   useEffect(() => {
     if (isAuthenticated) loadReminder();
@@ -517,10 +612,10 @@ export function SettingsPage() {
                   setReminderEnabled(newVal);
                   setLoadingReminder(true);
                   try {
-                    await fetch('/api/reminders', {
+                    await fetch('/api/notification-preferences', {
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                      body: JSON.stringify({ enabled: newVal, hour: reminderHour, minute: reminderMinute, reminderEmail: reminderEmail.trim() }),
+                      body: JSON.stringify(notificationPayload({ enabled: newVal })),
                     });
                     MessagePlugin.success(newVal ? '提醒已开启' : '提醒已关闭');
                   } catch {
@@ -558,10 +653,10 @@ export function SettingsPage() {
                   onClick={async () => {
                     setLoadingReminder(true);
                     try {
-                      await fetch('/api/reminders', {
+                      await fetch('/api/notification-preferences', {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                        body: JSON.stringify({ enabled: reminderEnabled, hour: reminderHour, minute: reminderMinute, reminderEmail: reminderEmail.trim() }),
+                        body: JSON.stringify(notificationPayload()),
                       });
                       MessagePlugin.success('提醒时间已更新');
                     } catch {
@@ -576,9 +671,47 @@ export function SettingsPage() {
               </div>
             )}
 
+            <div className="mt-5 pt-4 space-y-3" style={{ borderTop: '1px solid var(--td-component-stroke)' }}>
+              <div className="flex items-center gap-5 flex-wrap">
+                <label className="flex items-center gap-2 text-sm"><Switch value={emailEnabled} onChange={v => setEmailEnabled(v as boolean)} /> 邮件</label>
+                <label className="flex items-center gap-2 text-sm"><Switch value={inAppEnabled} onChange={v => setInAppEnabled(v as boolean)} /> 站内通知</label>
+                <label className="flex items-center gap-2 text-sm"><Switch value={browserEnabled} onChange={async v => { const enabled = v as boolean; if (enabled && 'Notification' in window && Notification.permission === 'default') await Notification.requestPermission(); setBrowserEnabled(enabled); }} /> 浏览器前台通知</label>
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <label className="flex items-center gap-2 text-sm"><Switch value={quietHoursEnabled} onChange={v => setQuietHoursEnabled(v as boolean)} /> 免打扰时段</label>
+                {quietHoursEnabled && <><input className="settings-time-input" type="time" value={quietStart} onChange={event => setQuietStart(event.target.value)} /><span>至</span><input className="settings-time-input" type="time" value={quietEnd} onChange={event => setQuietEnd(event.target.value)} /></>}
+                <Button size="small" loading={loadingReminder} onClick={saveReminderEmail}>保存通知设置</Button>
+              </div>
+              <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>免打扰期间的提醒会延迟到结束时间，不会被删除。</div>
+            </div>
+
             <div className="mt-2 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
               每日提醒和周期提醒都会发送到这里；官方发件邮箱：aicalendarofficial@163.com
             </div>
+          </div>
+        </div>
+
+        <div style={{ height: '1px', backgroundColor: 'var(--td-component-border)' }} />
+
+        <div>
+          <h2 className="text-lg font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>数据备份与恢复</h2>
+          <p className="text-sm mb-4" style={{ color: 'var(--td-text-color-secondary)' }}>备份包含当前账号的日历、周期事务、完成历史和附件，不包含密码、角色或 API Key。</p>
+          <div className="space-y-4 px-4 py-4 rounded-lg" style={{ backgroundColor: 'var(--td-bg-color-container)', border: '1px solid var(--td-component-stroke)' }}>
+            <div className="flex items-center gap-3 flex-wrap">
+              <Input type="password" value={backupPassword} onChange={value => { setBackupPassword(value as string); setBackupPreview(null); }} placeholder="设置或输入备份密码（至少 8 位）" style={{ width: 300 }} />
+              <Button loading={backupBusy} onClick={exportBackup}>导出加密备份</Button>
+              <label className="tdesign-upload-button">
+                <span>选择备份文件</span>
+                <input type="file" accept=".aicalendar-backup,application/octet-stream" onChange={event => { const file = event.target.files?.[0]; if (file) inspectBackup(file); }} />
+              </label>
+            </div>
+            <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>请妥善保存备份密码；密码遗失后无法解密，服务器也不会保存该密码。</div>
+            {backupPreview && <div className="backup-preview">
+              <div><strong>备份时间</strong><span>{new Date(backupPreview.exportedAt).toLocaleString('zh-CN')}</span></div>
+              <div><strong>来源账号</strong><span>{backupPreview.sourceEmail || '未知'}</span></div>
+              <div><strong>内容</strong><span>日程 {backupPreview.counts.schedules} · 周期事务 {backupPreview.counts.reminderTasks} · 完成记录 {backupPreview.counts.completions} · 附件 {backupPreview.counts.attachments}</span></div>
+              <div className="flex gap-2 mt-2"><Button variant="outline" loading={backupBusy} onClick={() => restoreBackup('merge')}>合并恢复</Button><Button theme="danger" variant="outline" loading={backupBusy} onClick={() => restoreBackup('replace')}>替换当前数据</Button></div>
+            </div>}
           </div>
         </div>
 

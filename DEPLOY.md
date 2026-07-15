@@ -1,314 +1,153 @@
-# 🚀 服务器部署指南
+# 阿里云轻量服务器部署指南
 
-## 腾讯云轻量应用服务器部署
+当前 2 核 2 GB、40 GB 系统盘可以运行个人/小规模使用的本项目。AI 图片识别限制为单任务并发，附件和备份会消耗磁盘与内存，需要持续监控。
 
-### 服务器配置要求
-| 参数 | 最低配置 | 推荐配置 |
-|------|---------|---------|
-| CPU | 1核 | 2核 |
-| 内存 | 1G | 2G |
-| 带宽 | 1Mbps | 3Mbps |
-| 系统盘 | 20GB | 40GB |
+## 1. 部署前保护现有数据
 
-你的 **2核2G3M** 完全够用！
+首次替换旧应用前先创建阿里云快照，并在服务器备份应用数据：
 
----
-
-## 第一步：本地准备工作
-
-### 1.1 构建前端
 ```bash
-cd smart-schedule-agent
-npm run build:client
+cd /root/smart-schedule-agent
+pm2 stop smart-schedule || true
+tar -czf /root/ai-calendar-data-before-upgrade-$(date +%F-%H%M).tar.gz data .env
 ```
 
-### 1.2 上传代码到服务器
+不要把 `.env`、`data/` 或备份文件提交到 Git。
+
+## 2. 运行环境
+
+阿里云旧 Node.js 14 镜像不满足要求，请升级到 Node.js 20：
+
 ```bash
-# 方法1：SCP 上传（本地执行）
-scp -r ./smart-schedule-agent root@你的服务器IP:/root/
-
-# 方法2：使用 Git
-# 在服务器上安装 git，克隆你的代码仓库
-ssh root@你的服务器IP
-git clone https://your-repo/smart-schedule-agent.git
-```
-
----
-
-## 第二步：服务器初始化
-
-### 2.1 连接服务器
-```bash
-ssh root@你的服务器IP
-```
-
-### 2.2 安装 Node.js 20
-```bash
-# Ubuntu/Debian 系统
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# 验证安装
-node --version  # 应该显示 v20.x.x
+sudo apt-get install -y nodejs nginx
+sudo npm install -g pm2
+node --version
 npm --version
 ```
 
-### 2.3 安装 PM2（进程管理器）
+期望 Node.js 显示 `v20.x`。
+
+## 3. 安装、配置与构建
+
+将仓库放到 `/root/smart-schedule-agent` 后执行：
+
 ```bash
-sudo npm install -g pm2
+cd /root/smart-schedule-agent
+npm ci
+cp .env.example .env
+chmod 600 .env
+mkdir -p data server/public
 ```
 
-PM2 的作用：
-- 保持应用持续运行（崩溃后自动重启）
-- 服务器重启后自动启动
-- 查看日志方便
+编辑 `.env`，至少填写：
 
----
+- 独立随机的 `JWT_SECRET` 与 `BACKUP_ENCRYPTION_KEY`；
+- `ADMIN_INVITE_CODE`、`USER_INVITE_CODE`；
+- 官方 163 邮箱的 `SMTP_PASS` 授权码；
+- `CODEBUDDY_API_KEY`；
+- 正式域名对应的 `APP_URL`。
 
-## 第三步：配置应用
+邮箱自动识别是可选能力。启用时再填写 `IMAP_PASS`，并在 163 邮箱后台开启 IMAP/SMTP；SMTP 和 IMAP 可以使用同一官方邮箱，但授权码应按邮箱后台实际配置为准。
 
-### 3.1 进入项目目录
+构建并复制静态文件：
+
 ```bash
-cd ~/smart-schedule-agent
+npm run typecheck
+npm test
+npm run build
+cp -r dist/. server/public/
 ```
 
-### 3.2 安装依赖
+## 4. PM2 启动
+
 ```bash
-npm install
-```
-
-### 3.3 创建 .env 配置文件
-```bash
-cat > .env << 'EOF'
-# JWT 密钥（务必修改为随机字符串！）
-JWT_SECRET=your-super-secret-jwt-key-change-this
-
-# 163 邮箱 SMTP
-SMTP_HOST=smtp.163.com
-SMTP_PORT=465
-SMTP_USER=your-email@163.com
-SMTP_PASS=your-email-auth-code
-
-# 邀请码（自定义）
-ADMIN_INVITE_CODE=YourAdminCode123
-USER_INVITE_CODE=YourUserCode456
-
-# CodeBuddy AI API Key（必须）
-CODEBUDDY_API_KEY=your-actual-codebuddy-api-key
-
-# 服务器配置
-PORT=3000
-NODE_ENV=production
-CODEBUDDY_INTERNET_ENVIRONMENT=internal
-EOF
-```
-
-### 3.4 创建数据目录
-```bash
-mkdir -p data
-```
-
----
-
-## 第四步：构建并启动
-
-### 4.1 构建前端
-```bash
-npm run build:client
-```
-
-### 4.2 复制前端文件到 server/public
-```bash
-mkdir -p server/public
-cp -r dist/* server/public/
-```
-
-### 4.3 启动服务
-```bash
-pm2 start server/index.ts --name "smart-schedule" --interpreter tsx
-```
-
-### 4.4 保存 PM2 进程列表（开机自启）
-```bash
+pm2 start npm --name smart-schedule -- run server
 pm2 save
 pm2 startup
 ```
 
-### 4.5 查看状态
+执行 `pm2 startup` 输出的那条 `sudo ...` 命令，然后检查：
+
 ```bash
 pm2 status
-pm2 logs smart-schedule
+pm2 logs smart-schedule --lines 100
+curl http://127.0.0.1:3000/api/health
 ```
 
----
+## 5. Nginx 与防火墙
 
-## 第五步：开放防火墙端口
-
-### 腾讯云控制台操作
-1. 登录 [腾讯云控制台](https://console.cloud.tencent.com/)
-2. 进入 **轻量应用服务器**
-3. 点击你的服务器 → **防火墙**
-4. 添加规则：允许 **3000** 端口
-
----
-
-## 第六步：访问应用
-
-打开浏览器访问：
-```
-http://你的服务器IP:3000
-```
-
----
-
-## 常用运维命令
-
-```bash
-# 查看日志
-pm2 logs smart-schedule
-
-# 重启服务
-pm2 restart smart-schedule
-
-# 停止服务
-pm2 stop smart-schedule
-
-# 删除服务
-pm2 delete smart-schedule
-
-# 查看实时日志
-pm2 logs smart-schedule --lines 100 --follow
-
-# 监控资源使用
-pm2 monit
-```
-
----
-
-## 更新部署（后续维护）
-
-### 方法1：手动更新
-```bash
-# 1. 进入目录
-cd ~/smart-schedule-agent
-
-# 2. 拉取最新代码（或上传新代码）
-
-# 3. 重新安装依赖（如有更新）
-npm install
-
-# 4. 重新构建
-npm run build:client
-cp -r dist/* server/public/
-
-# 5. 重启服务
-pm2 restart smart-schedule
-```
-
-### 方法2：自动化脚本
-```bash
-#!/bin/bash
-cd ~/smart-schedule-agent
-git pull
-npm install
-npm run build:client
-cp -r dist/* server/public/
-pm2 restart smart-schedule
-```
-
----
-
-## HTTPS 配置（可选但推荐）
-
-如果需要 HTTPS（微信小程序必须），使用 Nginx 反向代理：
+应用只监听服务器本机的 3000 端口，由 Nginx 对外提供 HTTPS：
 
 ```nginx
-# /etc/nginx/conf.d/smart-schedule.conf
 server {
     listen 80;
-    server_name your-domain.com;
-    return 301 https://$server_name$request_uri;
+    server_name calendar.example.com;
+    return 301 https://$host$request_uri;
 }
 
 server {
-    listen 443 ssl;
-    server_name your-domain.com;
+    listen 443 ssl http2;
+    server_name calendar.example.com;
 
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-
-    client_max_body_size 10M;
+    ssl_certificate /etc/letsencrypt/live/calendar.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/calendar.example.com/privkey.pem;
+    client_max_body_size 650m;
 
     location / {
-        root /root/smart-schedule-agent/server/public;
-        try_files $uri $uri/ /index.html;
-    }
-
-    location /api/ {
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
     }
 }
 ```
 
----
+阿里云防火墙只对公网保留 `80`、`443`，并把 `22` 限制为你的固定公网 IP。关闭截图中向 `0.0.0.0/0` 开放的 `3000/3001`、`465` 和 ICMP；应用主动连接 163 SMTP/IMAP 与 OSS 不需要入站开放 465/993。
 
-## 常见问题排查
+## 6. OSS 私有灾备
 
-### 1. 端口被占用
+创建与服务器同地域的私有 Bucket，开启“阻止公共访问”，使用内网 Endpoint。为专用 RAM 用户仅授予该 Bucket 备份目录的 `PutObject` 和 `DeleteObject` 权限，不授予公共读权限。
+
+`.env` 示例：
+
+```dotenv
+OSS_BUCKET=your-private-bucket
+OSS_ENDPOINT=oss-cn-beijing-internal.aliyuncs.com
+OSS_ACCESS_KEY_ID=replace-me
+OSS_ACCESS_KEY_SECRET=replace-me
+```
+
+应用每天 03:30 创建一致性加密快照，本机至少保留最近 7 份；上传失败的快照不会被轮换掉，并每 30 分钟重试。OSS 中每日对象保留 30 天，每月 1 日对象保留 12 个月。
+
+## 7. 恢复演练
+
+用户恢复应先在设置页“检查备份”，确认数据计数后选择合并或替换。替换前应用会自动保存该用户当前数据。
+
+全站恢复必须：
+
+1. 先停止外部访问并设置 `MAINTENANCE_MODE=true`；
+2. 由管理员上传全站备份并输入确认文字 `RESTORE AI CALENDAR`；
+3. 服务自动生成恢复前快照并退出；
+4. 将 `MAINTENANCE_MODE=false` 后重新启动并执行登录、日历、周期、附件和通知回归。
+
 ```bash
-# 查看端口占用
-lsof -i :3000
-
-# 杀死占用进程
-kill -9 <PID>
+pm2 restart smart-schedule --update-env
 ```
 
-### 2. PM2 无法启动
+## 8. 更新与回滚
+
 ```bash
-# 查看详细错误
-pm2 logs --err
-
-# 检查 Node 版本
-node --version
+cd /root/smart-schedule-agent
+git pull --ff-only
+npm ci
+npm test
+npm run build
+cp -r dist/. server/public/
+pm2 restart smart-schedule --update-env
 ```
 
-### 3. 前端页面空白
-```bash
-# 检查静态文件是否存在
-ls -la server/public/
-```
-
-### 4. 数据库错误
-```bash
-# 检查数据目录权限
-chmod 777 data
-```
-
----
-
-## 架构说明
-
-```
-用户浏览器
-    │
-    │ HTTP 请求
-    ▼
-Express 服务器 (:3000)
-    │
-    ├── /api/* → API 路由（处理数据）
-    │
-    └── /* → 静态文件 + SPA 路由
-              │
-              ▼
-         server/public/
-              │
-              ├── index.html
-              └── assets/
-```
-
-后端改动时，只需要：
-1. 重启 PM2：`pm2 restart smart-schedule`
-2. 前端用户刷新浏览器即可
+若升级失败，恢复升级前阿里云快照或数据压缩包，再切回上一个 Git 提交。不要直接复制运行中的 sql.js 数据文件作为备份，应优先使用应用生成的一致性快照。

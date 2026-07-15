@@ -6,10 +6,10 @@ import { v4 as uuidv4 } from 'uuid';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'reminder.db');
 
-export type ReminderTaskType = 'credit_card' | 'sim';
+export type ReminderTaskType = 'credit_card' | 'sim' | 'generic';
 export type ReminderCycleStatus = 'pending' | 'completed' | 'expired' | 'cancelled';
 
 export interface CreditCardConfig {
@@ -29,7 +29,24 @@ export interface SimConfig {
   reminderOffsets: number[];
 }
 
-export type ReminderConfig = CreditCardConfig | SimConfig;
+export type RecurrenceRule =
+  | { frequency: 'once'; anchorDate: string; advancePolicy: 'calendar' }
+  | { frequency: 'monthly'; anchorDate: string; dayOfMonth: number; interval: number; advancePolicy: 'calendar' | 'completion' }
+  | { frequency: 'yearly'; anchorDate: string; month: number; dayOfMonth: number; interval: number; advancePolicy: 'calendar' | 'completion' }
+  | { frequency: 'interval'; anchorDate: string; unit: 'day' | 'month' | 'year'; interval: number; advancePolicy: 'calendar' | 'completion' };
+
+export interface GenericReminderConfig {
+  templateKey: 'subscription' | 'insurance' | 'document' | 'membership' | 'rent' | 'utilities' | 'vehicle_inspection' | 'custom';
+  rule: RecurrenceRule;
+  reminderOffsets: number[];
+  reminderTime: string;
+  actionGuide: string;
+  priority: 'high' | 'medium' | 'low';
+  amountCents?: number | null;
+  currency?: string;
+}
+
+export type ReminderConfig = CreditCardConfig | SimConfig | GenericReminderConfig;
 
 export interface ReminderTask {
   id: string;
@@ -119,9 +136,18 @@ function addMonths(date: string, months: number): string {
   );
 }
 
+function advanceDate(date: string, unit: 'day' | 'month' | 'year', amount: number): string {
+  if (unit === 'day') return addDays(date, amount);
+  return addMonths(date, unit === 'year' ? amount * 12 : amount);
+}
+
 function monthDate(year: number, monthIndex: number, day: number): string {
   const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
   return dateFromParts(year, monthIndex + 1, Math.min(Math.max(day, 1), lastDay));
+}
+
+export function clampDateForMonth(year: number, month: number, day: number): string {
+  return monthDate(year, month - 1, day);
 }
 
 export function todayInTimezone(timezone = process.env.APP_TIMEZONE || 'Asia/Shanghai'): string {
@@ -208,11 +234,34 @@ export async function initReminderDb(): Promise<void> {
   const SQL = await initSqlJs();
   db = fs.existsSync(DB_PATH) ? new SQL.Database(fs.readFileSync(DB_PATH)) : new SQL.Database();
 
+  const taskSql = queryOne<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reminder_tasks'");
+  if (taskSql?.sql && !taskSql.sql.includes("'generic'")) {
+    const backupDir = path.join(DATA_DIR, 'migration-backups');
+    fs.mkdirSync(backupDir, { recursive: true });
+    fs.copyFileSync(DB_PATH, path.join(backupDir, 'reminder-generic-' + new Date().toISOString().replace(/[:.]/g, '-') + '.db'));
+    db.run(`
+      CREATE TABLE reminder_tasks_v2 (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        name TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+        config TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO reminder_tasks_v2 SELECT id, user_id, type, name, enabled, timezone, config, created_at, updated_at FROM reminder_tasks;
+      DROP TABLE reminder_tasks;
+      ALTER TABLE reminder_tasks_v2 RENAME TO reminder_tasks;
+    `);
+  }
+
   db.run(`
     CREATE TABLE IF NOT EXISTS reminder_tasks (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('credit_card', 'sim')),
+      type TEXT NOT NULL,
       name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
@@ -295,6 +344,11 @@ function cycleReminderDates(task: ReminderTask, cycle: ReminderCycle): Array<{ t
     }));
   }
 
+  if (task.type === 'generic') {
+    const generic = config as GenericReminderConfig;
+    return generic.reminderOffsets.map(offset => ({ type: `due_minus_${offset}`, date: addDays(cycle.dueDate, -offset) }));
+  }
+
   const card = config as CreditCardConfig;
   const statementReminder = addDays(cycle.periodStart, 1);
   const paymentReminders = card.reminderOffsets.map(offset => ({
@@ -302,6 +356,31 @@ function cycleReminderDates(task: ReminderTask, cycle: ReminderCycle): Array<{ t
     date: addDays(cycle.dueDate, -offset),
   }));
   return [{ type: 'statement_issued', date: statementReminder }, ...paymentReminders];
+}
+
+function genericInitialCycle(config: GenericReminderConfig, today: string): { key: string; start: string; due: string } {
+  const rule = config.rule;
+  if (rule.frequency === 'once' || rule.frequency === 'interval') {
+    return { key: rule.anchorDate, start: rule.anchorDate, due: rule.anchorDate };
+  }
+  const [year, month] = today.split('-').map(Number);
+  if (rule.frequency === 'monthly') {
+    const due = monthDate(year, month - 1, rule.dayOfMonth);
+    return { key: due.slice(0, 7), start: due, due };
+  }
+  const due = monthDate(year, rule.month - 1, rule.dayOfMonth);
+  return { key: String(year), start: due, due };
+}
+
+function nextGenericCycle(config: GenericReminderConfig, cycle: ReminderCycle, completedDate: string): { key: string; start: string; due: string } | null {
+  const rule = config.rule;
+  if (rule.frequency === 'once') return null;
+  const base = rule.advancePolicy === 'completion' ? completedDate : cycle.dueDate;
+  let due: string;
+  if (rule.frequency === 'monthly') due = addMonths(base, rule.interval);
+  else if (rule.frequency === 'yearly') due = addMonths(base, rule.interval * 12);
+  else due = advanceDate(base, rule.unit, rule.interval);
+  return { key: due, start: base, due };
 }
 
 function createCycle(task: ReminderTask, cycleKey: string, periodStart: string, dueDate: string): ReminderCycle {
@@ -351,6 +430,13 @@ function ensureCurrentCycle(task: ReminderTask, today = todayInTimezone(task.tim
     const sim = task.config as SimConfig;
     const dueDate = addDays(sim.lastOperationDate, sim.intervalDays);
     return createCycle(task, `${sim.lastOperationDate}:${dueDate}`, sim.lastOperationDate, dueDate);
+  }
+
+
+  if (task.type === 'generic') {
+    const generic = task.config as GenericReminderConfig;
+    const next = genericInitialCycle(generic, today);
+    return createCycle(task, next.key, next.start, next.due);
   }
 
   const card = task.config as CreditCardConfig;
@@ -479,6 +565,9 @@ export function completeReminderCycle(
       const sim = task.config as SimConfig;
       const dueDate = addDays(completedDate, sim.intervalDays);
       createCycle(task, `${completedDate}:${dueDate}`, completedDate, dueDate);
+    } else if (task.type === 'generic') {
+      const next = nextGenericCycle(task.config as GenericReminderConfig, cycle, completedDate);
+      if (next) createCycle(task, next.key, next.start, next.due);
     } else {
       const card = task.config as CreditCardConfig;
       const nextPeriodStart = addMonths(cycle.periodStart, 1);
@@ -488,6 +577,22 @@ export function completeReminderCycle(
       createCycle(task, `${nextDate.getUTCFullYear()}-${String(nextDate.getUTCMonth() + 1).padStart(2, '0')}`, nextPeriodStart, dueDate);
     }
   }
+  return getReminderTask(taskId, userId);
+}
+
+export function reopenReminderCycle(taskId: string, userId: string, cycleId: string): ReminderTaskSummary | null {
+  const task = getTaskInternal(taskId);
+  const cycle = getCycleInternal(cycleId);
+  if (!task || task.userId !== userId || !cycle || cycle.taskId !== taskId) return null;
+  const status: ReminderCycleStatus = cycle.dueDate < todayInTimezone(task.timezone) ? 'expired' : 'pending';
+  run(
+    `UPDATE reminder_cycles SET status = ?, completed_at = NULL, completed_note = NULL, updated_at = ? WHERE id = ?`,
+    [status, nowIso(), cycleId],
+  );
+  run(
+    `INSERT INTO reminder_audit_logs (id, task_id, cycle_id, action, note, created_at) VALUES (?, ?, ?, 'reopened', NULL, ?)`,
+    [uuidv4(), taskId, cycleId, nowIso()],
+  );
   return getReminderTask(taskId, userId);
 }
 
@@ -552,4 +657,62 @@ export function getReminderStats(userId: string): { total: number; active: numbe
     dueSoon: items.filter(item => item.enabled && !!item.currentCycle && item.currentCycle.dueDate >= today && item.currentCycle.dueDate <= soon).length,
     expired: items.filter(item => item.currentCycle?.status === 'expired').length,
   };
+}
+
+export function exportUserReminderData(userId: string): { tasks: ReminderTask[]; cycles: ReminderCycle[] } {
+  const tasks = queryAll<any>('SELECT * FROM reminder_tasks WHERE user_id = ?', [userId]).map(rowToTask);
+  const taskIds = new Set(tasks.map(task => task.id));
+  const cycles = queryAll<any>('SELECT * FROM reminder_cycles ORDER BY created_at').map(rowToCycle).filter(cycle => taskIds.has(cycle.taskId));
+  return { tasks, cycles };
+}
+
+export function exportReminderDb(): Buffer {
+  return Buffer.from(db.export());
+}
+
+export function restoreUserReminderData(
+  userId: string,
+  data: { tasks?: ReminderTask[]; cycles?: ReminderCycle[] },
+  mode: 'merge' | 'replace',
+): { tasks: number; cycles: number } {
+  if (mode === 'replace') deleteReminderTasksByUser(userId);
+  const acceptedTaskIds = new Set<string>();
+  let tasks = 0;
+  let cycles = 0;
+  for (const task of data.tasks || []) {
+    const id = String(task.id);
+    if (!id) continue;
+    const existing = getTaskInternal(id);
+    if (existing) {
+      if (existing.userId === userId) acceptedTaskIds.add(id);
+      continue;
+    }
+    db.run(
+      `INSERT INTO reminder_tasks (id, user_id, type, name, enabled, timezone, config, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, userId, task.type, task.name, task.enabled ? 1 : 0, task.timezone || 'Asia/Shanghai',
+        JSON.stringify(task.config), task.createdAt || nowIso(), task.updatedAt || nowIso()],
+    );
+    acceptedTaskIds.add(id);
+    tasks++;
+  }
+  for (const cycle of data.cycles || []) {
+    if (!acceptedTaskIds.has(cycle.taskId) || queryOne('SELECT id FROM reminder_cycles WHERE id = ?', [cycle.id])) continue;
+    db.run(
+      `INSERT INTO reminder_cycles (id, task_id, cycle_key, period_start, due_date, status, completed_at, completed_note, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [cycle.id, cycle.taskId, cycle.cycleKey, cycle.periodStart, cycle.dueDate, cycle.status, cycle.completedAt,
+        cycle.completedNote, cycle.createdAt || nowIso(), cycle.updatedAt || nowIso()],
+    );
+    cycles++;
+  }
+  persist();
+  for (const taskId of acceptedTaskIds) {
+    const task = getTaskInternal(taskId);
+    if (task) {
+      const current = ensureCurrentCycle(task);
+      for (const item of cycleReminderDates(task, current)) createDelivery(task, current, item.type, item.date);
+    }
+  }
+  return { tasks, cycles };
 }

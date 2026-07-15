@@ -7,6 +7,9 @@ dist-electron/
 release/
 data/*.db
 data/*.db-*
+data/attachments/
+data/backups/
+data/migration-backups/
 *.log
 *.zip
 

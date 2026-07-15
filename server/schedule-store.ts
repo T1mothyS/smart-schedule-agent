@@ -12,7 +12,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // 数据库文件路径
-const DB_PATH = path.join(__dirname, '..', 'data', 'schedule.db');
+const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, '..', 'data');
+const DB_PATH = path.join(DATA_DIR, 'schedule.db');
+
+function snapshotBeforeMigration(label: string): void {
+  if (!fs.existsSync(DB_PATH)) return;
+  const dir = path.join(DATA_DIR, 'migration-backups');
+  fs.mkdirSync(dir, { recursive: true });
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  fs.copyFileSync(DB_PATH, path.join(dir, 'schedule-' + label + '-' + timestamp + '.db'));
+}
 
 // 确保 data 目录存在
 const dataDir = path.join(__dirname, '..', 'data');
@@ -39,6 +48,7 @@ async function initScheduleDb(): Promise<void> {
   db.run(`
     CREATE TABLE IF NOT EXISTS calendars (
       id TEXT PRIMARY KEY,
+      user_id TEXT,
       name TEXT NOT NULL,
       color TEXT DEFAULT '#3B82F6',
       icon TEXT DEFAULT '📅',
@@ -101,12 +111,23 @@ async function initScheduleDb(): Promise<void> {
   db.run(`
     CREATE TABLE IF NOT EXISTS categories (
       id TEXT PRIMARY KEY,
+      user_id TEXT,
       name TEXT NOT NULL,
       color TEXT DEFAULT '#3B82F6',
       icon TEXT DEFAULT '📌',
       created_at TEXT NOT NULL
     )
   `);
+
+  const calendarColumns = queryAll<{ name: string }>('PRAGMA table_info(calendars)');
+  const categoryColumns = queryAll<{ name: string }>('PRAGMA table_info(categories)');
+  if (!calendarColumns.some(column => column.name === 'user_id') || !categoryColumns.some(column => column.name === 'user_id')) {
+    snapshotBeforeMigration('user-ownership');
+  }
+  if (!calendarColumns.some(column => column.name === 'user_id')) db.run('ALTER TABLE calendars ADD COLUMN user_id TEXT');
+  if (!categoryColumns.some(column => column.name === 'user_id')) db.run('ALTER TABLE categories ADD COLUMN user_id TEXT');
+  db.run('CREATE INDEX IF NOT EXISTS idx_calendars_user ON calendars(user_id, created_at)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_categories_user ON categories(user_id, created_at)');
 
   // 插入默认分类
   const defaultCategories = [
@@ -167,6 +188,7 @@ function run(sql: string, params: any[] = []): { changes: number } {
 // 日程表（Calendar）接口
 export interface Calendar {
   id: string;
+  user_id?: string | null;
   name: string;
   color: string;
   icon: string;
@@ -202,6 +224,7 @@ export interface Schedule {
 // 分类接口
 export interface Category {
   id: string;
+  user_id?: string | null;
   name: string;
   color: string;
   icon: string;
@@ -273,6 +296,12 @@ function safeNull(val: any): any {
 // 创建日程
 export function createSchedule(schedule: Omit<Schedule, 'created_at' | 'updated_at'>): Schedule {
   const now = new Date().toISOString();
+  const calendars = schedule.user_id ? getAllCalendars(schedule.user_id) : [];
+  const requestedCalendar = schedule.calendar_id || 'personal';
+  const calendarId = calendars.find(item => item.id === requestedCalendar)?.id
+    || calendars.find(item => item.id.endsWith(':' + requestedCalendar))?.id
+    || calendars.find(item => item.is_default)?.id
+    || requestedCalendar;
 
   // 【关键修复】全天日程的 end_time 不能为 null，设置为 start_time（同一天结束）
   const endTimeValue = safeNull(schedule.end_time) || (schedule.all_day ? schedule.start_time : null);
@@ -283,7 +312,7 @@ export function createSchedule(schedule: Omit<Schedule, 'created_at' | 'updated_
     [
       schedule.id,
       schedule.user_id || 'default',
-      schedule.calendar_id || 'personal',
+      calendarId,
       schedule.type || 'event',
       schedule.title,
       safeNull(schedule.description),
@@ -382,23 +411,26 @@ export function toggleScheduleComplete(id: string): Schedule | null {
 }
 
 // 获取所有分类
-export function getAllCategories(): Category[] {
-  return queryAll<Category>('SELECT * FROM categories ORDER BY name ASC');
+export function getAllCategories(userId?: string): Category[] {
+  if (!userId) return queryAll<Category>('SELECT * FROM categories WHERE user_id IS NULL ORDER BY name ASC');
+  return queryAll<Category>('SELECT * FROM categories WHERE user_id IS NULL OR user_id = ? ORDER BY name ASC', [userId]);
 }
 
 // 创建分类
 export function createCategory(category: Category): Category {
   run(
-    'INSERT INTO categories (id, name, color, icon, created_at) VALUES (?, ?, ?, ?, ?)',
-    [category.id, category.name, category.color, category.icon, new Date().toISOString()]
+    'INSERT INTO categories (id, user_id, name, color, icon, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    [category.id, category.user_id || null, category.name, category.color, category.icon, new Date().toISOString()]
   );
   return category;
 }
 
 // 删除分类
-export function deleteCategory(id: string): boolean {
+export function deleteCategory(id: string, userId?: string): boolean {
   if (id === 'other') return false;
-  const result = run('DELETE FROM categories WHERE id = ?', [id]);
+  const result = userId
+    ? run('DELETE FROM categories WHERE id = ? AND user_id = ?', [id, userId])
+    : run('DELETE FROM categories WHERE id = ? AND user_id IS NULL', [id]);
   return result.changes > 0;
 }
 
@@ -413,13 +445,38 @@ function rowToCalendar(row: any): Calendar {
 }
 
 // 获取所有日程表
-export function getAllCalendars(): Calendar[] {
-  return queryAll<any>('SELECT * FROM calendars ORDER BY is_default DESC, created_at ASC').map(rowToCalendar);
+function ensureUserCalendars(userId: string): void {
+  const existing = queryAll<any>('SELECT * FROM calendars WHERE user_id = ?', [userId]);
+  if (existing.length > 0) return;
+  const legacy = queryAll<any>('SELECT * FROM calendars WHERE user_id IS NULL ORDER BY is_default DESC, created_at ASC');
+  const defaults = legacy.length ? legacy : [
+    { id: 'personal', name: '个人', color: '#3B82F6', icon: '👤', is_visible: 1, is_default: 1 },
+    { id: 'work', name: '工作', color: '#8B5CF6', icon: '💼', is_visible: 1, is_default: 0 },
+    { id: 'family', name: '家庭', color: '#10B981', icon: '🏠', is_visible: 1, is_default: 0 },
+  ];
+  const now = new Date().toISOString();
+  for (const item of defaults) {
+    const id = userId + ':' + item.id;
+    db.run(
+      'INSERT OR IGNORE INTO calendars (id, user_id, name, color, icon, is_visible, is_default, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, userId, item.name, item.color, item.icon, item.is_visible ?? 1, item.is_default ?? 0, now],
+    );
+    db.run('UPDATE schedules SET calendar_id = ? WHERE user_id = ? AND calendar_id = ?', [id, userId, item.id]);
+  }
+  saveScheduleDb();
+}
+
+export function getAllCalendars(userId?: string): Calendar[] {
+  if (!userId) return [];
+  ensureUserCalendars(userId);
+  return queryAll<any>('SELECT * FROM calendars WHERE user_id = ? ORDER BY is_default DESC, created_at ASC', [userId]).map(rowToCalendar);
 }
 
 // 获取单个日程表
-export function getCalendar(id: string): Calendar | null {
-  const row = queryOne<any>('SELECT * FROM calendars WHERE id = ?', [id]);
+export function getCalendar(id: string, userId?: string): Calendar | null {
+  const row = userId
+    ? queryOne<any>('SELECT * FROM calendars WHERE id = ? AND user_id = ?', [id, userId])
+    : queryOne<any>('SELECT * FROM calendars WHERE id = ?', [id]);
   if (!row) return null;
   return rowToCalendar(row);
 }
@@ -428,29 +485,33 @@ export function getCalendar(id: string): Calendar | null {
 export function createCalendar(calendar: Omit<Calendar, 'created_at'>): Calendar {
   const now = new Date().toISOString();
   run(
-    'INSERT INTO calendars (id, name, color, icon, is_visible, is_default, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [calendar.id, calendar.name, calendar.color, calendar.icon, calendar.is_visible ? 1 : 0, calendar.is_default ? 1 : 0, now]
+    'INSERT INTO calendars (id, user_id, name, color, icon, is_visible, is_default, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [calendar.id, calendar.user_id || null, calendar.name, calendar.color, calendar.icon, calendar.is_visible ? 1 : 0, calendar.is_default ? 1 : 0, now]
   );
   return getCalendar(calendar.id)!;
 }
 
 // 更新日程表
-export function updateCalendar(id: string, updates: Partial<Omit<Calendar, 'id' | 'created_at'>>): Calendar | null {
-  const existing = getCalendar(id);
+export function updateCalendar(id: string, updates: Partial<Omit<Calendar, 'id' | 'created_at'>>, userId?: string): Calendar | null {
+  const existing = getCalendar(id, userId);
   if (!existing) return null;
   const merged = { ...existing, ...updates };
   run(
     'UPDATE calendars SET name = ?, color = ?, icon = ?, is_visible = ?, is_default = ? WHERE id = ?',
     [merged.name, merged.color, merged.icon, merged.is_visible ? 1 : 0, merged.is_default ? 1 : 0, id]
   );
-  return getCalendar(id);
+  return getCalendar(id, userId);
 }
 
 // 删除日程表（同时删除该日程表下所有日程）
-export function deleteCalendar(id: string): boolean {
-  if (id === 'personal') return false;
-  run('DELETE FROM schedules WHERE calendar_id = ?', [id]);
-  const result = run('DELETE FROM calendars WHERE id = ?', [id]);
+export function deleteCalendar(id: string, userId?: string): boolean {
+  const calendar = getCalendar(id, userId);
+  if (!calendar || calendar.is_default) return false;
+  if (userId) run('DELETE FROM schedules WHERE calendar_id = ? AND user_id = ?', [id, userId]);
+  else run('DELETE FROM schedules WHERE calendar_id = ?', [id]);
+  const result = userId
+    ? run('DELETE FROM calendars WHERE id = ? AND user_id = ?', [id, userId])
+    : run('DELETE FROM calendars WHERE id = ?', [id]);
   return result.changes > 0;
 }
 
@@ -458,6 +519,67 @@ export function deleteCalendar(id: string): boolean {
 export function deleteSchedulesByUser(userId: string): number {
   const result = run('DELETE FROM schedules WHERE user_id = ?', [userId]);
   return result.changes;
+}
+
+export function exportUserScheduleData(userId: string): { schedules: Schedule[]; calendars: Calendar[]; categories: Category[] } {
+  return { schedules: getAllSchedules(userId), calendars: getAllCalendars(userId), categories: getAllCategories(userId) };
+}
+
+export function exportScheduleDb(): Buffer {
+  return Buffer.from(db.export());
+}
+
+export function restoreUserScheduleData(
+  userId: string,
+  data: { schedules?: Schedule[]; calendars?: Calendar[]; categories?: Category[] },
+  mode: 'merge' | 'replace',
+): { schedules: number; calendars: number; categories: number } {
+  if (mode === 'replace') {
+    db.run('DELETE FROM schedules WHERE user_id = ?', [userId]);
+    db.run('DELETE FROM calendars WHERE user_id = ?', [userId]);
+    db.run('DELETE FROM categories WHERE user_id = ?', [userId]);
+  }
+  let schedules = 0;
+  let calendars = 0;
+  let categories = 0;
+  for (const calendar of data.calendars || []) {
+    const id = String(calendar.id);
+    if (!id || queryOne('SELECT id FROM calendars WHERE id = ?', [id])) continue;
+    db.run(
+      'INSERT INTO calendars (id, user_id, name, color, icon, is_visible, is_default, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, userId, String(calendar.name || '日历'), calendar.color || '#3B82F6', calendar.icon || '📅',
+        calendar.is_visible ? 1 : 0, calendar.is_default ? 1 : 0, calendar.created_at || new Date().toISOString()],
+    );
+    calendars++;
+  }
+  for (const category of data.categories || []) {
+    if (!category.user_id) continue;
+    const id = String(category.id);
+    if (!id || queryOne('SELECT id FROM categories WHERE id = ?', [id])) continue;
+    db.run(
+      'INSERT INTO categories (id, user_id, name, color, icon, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+      [id, userId, String(category.name || '分类'), category.color || '#3B82F6', category.icon || '📌', category.created_at || new Date().toISOString()],
+    );
+    categories++;
+  }
+  for (const schedule of data.schedules || []) {
+    const id = String(schedule.id);
+    if (!id || queryOne('SELECT id FROM schedules WHERE id = ?', [id])) continue;
+    db.run(
+      `INSERT INTO schedules (id, user_id, calendar_id, type, title, description, start_time, end_time, all_day, location, notes, category,
+       priority, is_completed, is_repeated, repeat_rule, reminders, is_high_risk, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, userId, schedule.calendar_id, schedule.type, schedule.title, schedule.description || null, schedule.start_time,
+        schedule.end_time || null, schedule.all_day ? 1 : 0, schedule.location || null, schedule.notes || null,
+        schedule.category || 'other', schedule.priority || 'medium', schedule.is_completed ? 1 : 0, schedule.is_repeated ? 1 : 0,
+        schedule.repeat_rule || null, JSON.stringify(schedule.reminders || []), schedule.is_high_risk ? 1 : 0,
+        schedule.created_at || new Date().toISOString(), schedule.updated_at || new Date().toISOString()],
+    );
+    schedules++;
+  }
+  saveScheduleDb();
+  ensureUserCalendars(userId);
+  return { schedules, calendars, categories };
 }
 
 // 导出数据库初始化函数

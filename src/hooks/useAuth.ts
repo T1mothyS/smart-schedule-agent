@@ -99,9 +99,9 @@ export function useAuth() {
   };
 
   // 获取带 token 的 fetch 选项
-  const authHeaders = (): Record<string, string> => ({
+  const authHeaders = useCallback((): Record<string, string> => ({
     ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-  });
+  }), [state.token]);
 
   return { ...state, login, register, sendRegisterCode, logout, checkAuth, authHeaders };
 }

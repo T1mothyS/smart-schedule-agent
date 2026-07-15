@@ -27,7 +27,7 @@ export function LoginPage() {
   // 监听 isAuthenticated 变化，App 路由会同步切换，无需手动 navigate
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/schedule', { replace: true });
+      navigate('/today', { replace: true });
     }
   }, [isAuthenticated, navigate]);
 
@@ -77,7 +77,7 @@ export function LoginPage() {
         await login(email, password);
         MessagePlugin.success('登录成功！');
         // 强制刷新确保所有全局状态重置
-        window.location.href = '/schedule';
+        window.location.href = '/today';
       } catch (e: any) {
         MessagePlugin.error(e.message);
       } finally {

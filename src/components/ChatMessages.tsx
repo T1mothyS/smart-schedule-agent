@@ -1,5 +1,4 @@
 import { Loading } from 'tdesign-react';
-import { ChatMarkdown } from '@tdesign-react/chat';
 import { User, Bot } from 'lucide-react';
 import { Message, Model, PermissionRequest, ContentBlock } from '../types';
 import { ToolCallsCollapse } from './ToolCallsCollapse';
@@ -13,6 +12,10 @@ interface ChatMessagesProps {
   permissionRequest?: PermissionRequest | null;
   onPermissionAllow?: () => void;
   onPermissionDeny?: () => void;
+}
+
+function SafeChatContent({ content }: { content: string }) {
+  return <div style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{content}</div>;
 }
 
 export function ChatMessages({ 
@@ -46,7 +49,7 @@ export function ChatMessages({
           }}
         >
           <div className="chat-markdown">
-            <ChatMarkdown content={block.text} />
+            <SafeChatContent content={block.text} />
           </div>
           {isStreaming && isLast && (
             <span 
@@ -98,7 +101,7 @@ export function ChatMessages({
             }}
           >
             <div className="chat-markdown">
-              <ChatMarkdown content={message.content} />
+              <SafeChatContent content={message.content} />
             </div>
             {message.isStreaming && (
               <span 

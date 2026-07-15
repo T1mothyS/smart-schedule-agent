@@ -1,6 +1,5 @@
-import { useRef, useCallback } from 'react';
+import { useCallback } from 'react';
 import { Select, Tooltip } from 'tdesign-react';
-import { ChatSender } from '@tdesign-react/chat';
 import { ChevronDownIcon, LockOnIcon, LockOffIcon, EditIcon, TaskIcon } from 'tdesign-icons-react';
 import { Model, PermissionMode } from '../types';
 
@@ -67,23 +66,11 @@ export function ChatInput({
   onModelChange,
   onPermissionModeChange,
 }: ChatInputProps) {
-  const chatSenderRef = useRef<any>(null);
-
-  const handleSend = useCallback((e: any) => {
-    console.log('ChatSender send event:', e);
-    const content = e?.detail?.message || e?.detail || e?.message || inputValue;
-    if (content && typeof content === 'string' && content.trim() && selectedModel) {
-      onSend(content.trim());
-    } else if (inputValue.trim() && selectedModel) {
+  const handleSend = useCallback(() => {
+    if (inputValue.trim() && selectedModel) {
       onSend(inputValue.trim());
     }
   }, [inputValue, selectedModel, onSend]);
-
-  const handleChange = useCallback((e: any) => {
-    console.log('ChatSender change event:', e);
-    const value = e?.detail ?? e ?? '';
-    onChange(typeof value === 'string' ? value : '');
-  }, [onChange]);
 
   const currentModeConfig = PERMISSION_MODE_CONFIG[permissionMode];
 
@@ -95,20 +82,22 @@ export function ChatInput({
       }}
     >
       <div className="max-w-3xl mx-auto">
-        <ChatSender
-          ref={chatSenderRef}
-          value={inputValue}
-          placeholder="输入消息..."
-          disabled={!selectedModel}
-          loading={isLoading}
-          autosize={{ minRows: 1, maxRows: 6 }}
-          actions={['send']}
-          onSend={handleSend}
-          onStop={onStop}
-          onChange={handleChange}
-        >
-          {/* 模型选择器和权限模式选择器放在 footer-prefix 插槽 */}
-          <div slot="footer-prefix" className="flex items-center gap-2">
+        <form className="safe-chat-sender" onSubmit={event => { event.preventDefault(); handleSend(); }}>
+          <textarea
+            value={inputValue}
+            placeholder="输入消息..."
+            disabled={!selectedModel}
+            rows={3}
+            onChange={event => onChange(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                handleSend();
+              }
+            }}
+          />
+          <div className="safe-chat-sender-footer">
+            <div className="flex items-center gap-2">
             {/* 模型选择器 */}
             <Select
               value={selectedModel}
@@ -166,8 +155,12 @@ export function ChatInput({
                 })}
               </Select>
             </Tooltip>
+            </div>
+            <button type={isLoading ? 'button' : 'submit'} onClick={isLoading ? onStop : undefined} disabled={!isLoading && (!selectedModel || !inputValue.trim())}>
+              {isLoading ? '停止' : '发送'}
+            </button>
           </div>
-        </ChatSender>
+        </form>
       </div>
     </div>
   );

@@ -6,11 +6,9 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// 数据库文件路径
-const dbPath = path.join(__dirname, '..', 'data', 'chat.db');
-
-// 确保 data 目录存在
-const dataDir = path.dirname(dbPath);
+// 数据库文件路径；测试可通过 DATA_DIR 使用隔离目录。
+const dataDir = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, '..', 'data');
+const dbPath = path.join(dataDir, 'chat.db');
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
@@ -90,6 +88,13 @@ async function initDb(): Promise<void> {
       hour INTEGER NOT NULL DEFAULT 8,
       minute INTEGER NOT NULL DEFAULT 0,
       reminder_email TEXT,
+      email_enabled INTEGER NOT NULL DEFAULT 1,
+      in_app_enabled INTEGER NOT NULL DEFAULT 1,
+      browser_enabled INTEGER NOT NULL DEFAULT 1,
+      timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
+      quiet_hours_enabled INTEGER NOT NULL DEFAULT 0,
+      quiet_start TEXT NOT NULL DEFAULT '22:00',
+      quiet_end TEXT NOT NULL DEFAULT '08:00',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -99,6 +104,18 @@ async function initDb(): Promise<void> {
   const reminderColumns = queryAll<{ name: string }>('PRAGMA table_info(reminders)');
   if (!reminderColumns.some(column => column.name === 'reminder_email')) {
     db.run('ALTER TABLE reminders ADD COLUMN reminder_email TEXT');
+  }
+  const reminderMigrations: Array<[string, string]> = [
+    ['email_enabled', "INTEGER NOT NULL DEFAULT 1"],
+    ['in_app_enabled', "INTEGER NOT NULL DEFAULT 1"],
+    ['browser_enabled', "INTEGER NOT NULL DEFAULT 1"],
+    ['timezone', "TEXT NOT NULL DEFAULT 'Asia/Shanghai'"],
+    ['quiet_hours_enabled', "INTEGER NOT NULL DEFAULT 0"],
+    ['quiet_start', "TEXT NOT NULL DEFAULT '22:00'"],
+    ['quiet_end', "TEXT NOT NULL DEFAULT '08:00'"],
+  ];
+  for (const [name, definition] of reminderMigrations) {
+    if (!reminderColumns.some(column => column.name === name)) db.run(`ALTER TABLE reminders ADD COLUMN ${name} ${definition}`);
   }
   db.run(`
     CREATE TABLE IF NOT EXISTS user_api_keys (
@@ -202,6 +219,13 @@ export interface DbReminder {
   hour: number;
   minute: number;
   reminder_email?: string | null;
+  email_enabled?: number;
+  in_app_enabled?: number;
+  browser_enabled?: number;
+  timezone?: string;
+  quiet_hours_enabled?: number;
+  quiet_start?: string;
+  quiet_end?: string;
   created_at: string;
   updated_at: string;
 }
@@ -436,16 +460,36 @@ export function upsertReminder(reminder: DbReminder): DbReminder {
   const reminderEmail = reminder.reminder_email ?? existing?.reminder_email ?? null;
   if (existing) {
     run(
-      'UPDATE reminders SET enabled = ?, hour = ?, minute = ?, reminder_email = ?, updated_at = ? WHERE user_id = ?',
-      [reminder.enabled, reminder.hour, reminder.minute, reminderEmail, reminder.updated_at, reminder.user_id]
+      `UPDATE reminders SET enabled = ?, hour = ?, minute = ?, reminder_email = ?, email_enabled = ?,
+       in_app_enabled = ?, browser_enabled = ?, timezone = ?, quiet_hours_enabled = ?, quiet_start = ?, quiet_end = ?, updated_at = ? WHERE user_id = ?`,
+      [reminder.enabled, reminder.hour, reminder.minute, reminderEmail, reminder.email_enabled ?? existing.email_enabled ?? 1,
+        reminder.in_app_enabled ?? existing.in_app_enabled ?? 1, reminder.browser_enabled ?? existing.browser_enabled ?? 1,
+        reminder.timezone || existing.timezone || 'Asia/Shanghai', reminder.quiet_hours_enabled ?? existing.quiet_hours_enabled ?? 0,
+        reminder.quiet_start || existing.quiet_start || '22:00', reminder.quiet_end || existing.quiet_end || '08:00',
+        reminder.updated_at, reminder.user_id]
     );
   } else {
     run(
-      'INSERT INTO reminders (id, user_id, enabled, hour, minute, reminder_email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-      [reminder.id, reminder.user_id, reminder.enabled, reminder.hour, reminder.minute, reminderEmail, reminder.created_at, reminder.updated_at]
+      `INSERT INTO reminders (id, user_id, enabled, hour, minute, reminder_email, email_enabled, in_app_enabled,
+       browser_enabled, timezone, quiet_hours_enabled, quiet_start, quiet_end, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [reminder.id, reminder.user_id, reminder.enabled, reminder.hour, reminder.minute, reminderEmail,
+        reminder.email_enabled ?? 1, reminder.in_app_enabled ?? 1, reminder.browser_enabled ?? 1,
+        reminder.timezone || 'Asia/Shanghai', reminder.quiet_hours_enabled ?? 0, reminder.quiet_start || '22:00',
+        reminder.quiet_end || '08:00', reminder.created_at, reminder.updated_at]
     );
   }
   return { ...reminder, reminder_email: reminderEmail };
+}
+
+export function exportUserAccountData(userId: string): { user: Omit<DbUser, 'password_hash'> | null; reminder: DbReminder | null } {
+  const user = getUserById(userId) || null;
+  const reminder = getReminder(userId) || null;
+  return { user, reminder };
+}
+
+export function exportChatDb(): Buffer {
+  return Buffer.from(db.export());
 }
 export function getAllEnabledReminders(): (DbReminder & { email: string })[] {
   return queryAll<DbReminder & { email: string }>(

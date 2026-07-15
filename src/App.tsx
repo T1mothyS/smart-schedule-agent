@@ -1,7 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Routes, Route, useNavigate, useParams, useLocation, Navigate } from 'react-router-dom';
-import '@tdesign-react/chat/es/style/index.js';
-
 import { useTheme } from './hooks/useTheme';
 import { useSessions } from './hooks/useSessions';
 import { useModels } from './hooks/useModels';
@@ -16,6 +14,8 @@ import { ScheduleSidebar } from './components/ScheduleSidebar';
 import { LoginPage } from './pages/LoginPage';
 import { ReminderPage } from './components/ReminderPage';
 import { AppShell } from './components/AppShell';
+import { ActionCenterPage } from './components/ActionCenterPage';
+import { AiImportPage } from './components/AiImportPage';
 
 // ==================== 日程主页（三栏布局） ====================
 
@@ -141,8 +141,11 @@ function App() {
         </>
       ) : (
         <>
+          <Route path="/today" element={<AppContent />} />
           <Route path="/schedule" element={<AppContent />} />
-          <Route path="*" element={<Navigate to="/schedule" replace />} />
+          <Route path="/reminders" element={<AppContent />} />
+          <Route path="/import" element={<AppContent />} />
+          <Route path="*" element={<Navigate to="/today" replace />} />
         </>
       )}
     </Routes>
@@ -155,7 +158,10 @@ function AppContent() {
   const { user, logout } = useAuth();
   const [showSettings, setShowSettings] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
-  const [activeSection, setActiveSection] = useState<'schedule' | 'reminders'>('schedule');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activeSection = location.pathname === '/schedule' ? 'schedule' : location.pathname === '/reminders' ? 'reminders' : location.pathname === '/import' ? 'import' : 'today';
+  const changeSection = (section: 'today' | 'schedule' | 'reminders' | 'import') => navigate(section === 'schedule' ? '/schedule' : section === 'reminders' ? '/reminders' : section === 'import' ? '/import' : '/today');
 
   // 设置弹窗打开/关闭时更新 Tab 标题
   useEffect(() => {
@@ -170,7 +176,7 @@ function AppContent() {
     <>
       <AppShell
         activeSection={activeSection}
-        onSectionChange={setActiveSection}
+        onSectionChange={changeSection}
         theme={theme}
         onToggleTheme={toggleTheme}
         onOpenSettings={() => setShowSettings(true)}
@@ -178,14 +184,14 @@ function AppContent() {
         user={user}
         onLogout={logout}
       >
-        {activeSection === 'schedule' ? (
+        {activeSection === 'today' ? <ActionCenterPage /> : activeSection === 'schedule' ? (
           <SchedulePage
             models={models}
             onRefreshModels={fetchModels}
           />
-        ) : (
+        ) : activeSection === 'reminders' ? (
           <ReminderPage />
-        )}
+        ) : <AiImportPage />}
       </AppShell>
 
       {/* 设置弹层 */}

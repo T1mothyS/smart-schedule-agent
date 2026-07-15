@@ -1,7 +1,7 @@
 import { ReactNode } from 'react';
-import { BellRing, CalendarDays, Mail, Moon, Settings, Shield, Sun } from 'lucide-react';
+import { BellRing, CalendarDays, LayoutDashboard, Mail, Moon, Settings, Shield, Sparkles, Sun } from 'lucide-react';
 
-type Section = 'schedule' | 'reminders';
+type Section = 'today' | 'schedule' | 'reminders' | 'import';
 
 interface AppShellProps {
   activeSection: Section;
@@ -39,6 +39,12 @@ export function AppShell({
 
         <nav className="product-nav" aria-label="产品导航">
           <button
+            className={activeSection === 'today' ? 'product-nav-item active' : 'product-nav-item'}
+            onClick={() => onSectionChange('today')}
+          >
+            <LayoutDashboard size={14} /> 今日
+          </button>
+          <button
             className={activeSection === 'schedule' ? 'product-nav-item active' : 'product-nav-item'}
             onClick={() => onSectionChange('schedule')}
           >
@@ -49,6 +55,12 @@ export function AppShell({
             onClick={() => onSectionChange('reminders')}
           >
             <BellRing size={14} /> 周期提醒
+          </button>
+          <button
+            className={activeSection === 'import' ? 'product-nav-item active' : 'product-nav-item'}
+            onClick={() => onSectionChange('import')}
+          >
+            <Sparkles size={14} /> 智能导入
           </button>
         </nav>
 

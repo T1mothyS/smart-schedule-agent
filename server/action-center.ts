@@ -1,0 +1,195 @@
+import * as scheduleStore from './schedule-store.js';
+import * as reminderStore from './reminder-store.js';
+import * as activityStore from './activity-store.js';
+
+export type ActionItemStatus = 'upcoming' | 'today' | 'overdue' | 'completed';
+
+export interface ActionItem {
+  id: string;
+  sourceType: 'schedule' | 'reminder';
+  sourceId: string;
+  instanceId: string | null;
+  title: string;
+  dueAt: string;
+  status: ActionItemStatus;
+  priority: 'high' | 'medium' | 'low';
+  nextAction: string;
+  itemType: 'event' | 'todo' | 'recurring';
+  completedAt: string | null;
+  completionId: string | null;
+  proof: {
+    note: string | null;
+    amountCents: number | null;
+    currency: string;
+    billDate: string | null;
+    attachments: Array<{ id: string; originalName: string; mimeType: string; sizeBytes: number }>;
+  } | null;
+}
+
+export interface ActionCenterResult {
+  next: ActionItem | null;
+  today: ActionItem[];
+  upcoming: ActionItem[];
+  overdue: ActionItem[];
+  completedToday: ActionItem[];
+  generatedAt: string;
+  upcomingDays: number;
+}
+
+function dateOnly(value: string): string {
+  return value.slice(0, 10);
+}
+
+function endOfWindow(today: string, days: number): string {
+  return reminderStore.addDays(today, days);
+}
+
+function priorityScore(priority: string): number {
+  return priority === 'high' ? 3 : priority === 'medium' ? 2 : 1;
+}
+
+function chooseNext(items: ActionItem[], now: Date): ActionItem | null {
+  const twoHours = new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString();
+  return [...items].sort((a, b) => {
+    const aSoonEvent = a.itemType === 'event' && a.dueAt <= twoHours && a.dueAt >= now.toISOString() ? 1 : 0;
+    const bSoonEvent = b.itemType === 'event' && b.dueAt <= twoHours && b.dueAt >= now.toISOString() ? 1 : 0;
+    if (aSoonEvent !== bSoonEvent) return bSoonEvent - aSoonEvent;
+    const statusScore = (item: ActionItem) => item.status === 'overdue' ? 3 : item.status === 'today' ? 2 : 1;
+    const statusDiff = statusScore(b) - statusScore(a);
+    if (statusDiff) return statusDiff;
+    const priorityDiff = priorityScore(b.priority) - priorityScore(a.priority);
+    if (priorityDiff) return priorityDiff;
+    return a.dueAt.localeCompare(b.dueAt);
+  })[0] || null;
+}
+
+export function getActionCenter(userId: string, upcomingDays = 7, now = new Date()): ActionCenterResult {
+  const safeDays = [3, 7, 14].includes(upcomingDays) ? upcomingDays : 7;
+  const timezone = process.env.APP_TIMEZONE || 'Asia/Shanghai';
+  const today = reminderStore.todayInTimezone(timezone);
+  const windowEnd = endOfWindow(today, safeDays);
+  const completions = activityStore.listCompletions(userId);
+  const latestCompletion = new Map<string, activityStore.CompletionRecord>();
+  for (const completion of completions) {
+    if (completion.reopenedAt) continue;
+    const key = `${completion.sourceType}:${completion.sourceId}:${completion.instanceId || ''}`;
+    if (!latestCompletion.has(key)) latestCompletion.set(key, completion);
+  }
+
+  const proofFor = (completion?: activityStore.CompletionRecord | null): ActionItem['proof'] => completion ? {
+    note: completion.note,
+    amountCents: completion.amountCents,
+    currency: completion.currency,
+    billDate: completion.billDate,
+    attachments: activityStore.listAttachments(userId, completion.id).map(file => ({
+      id: file.id,
+      originalName: file.originalName,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+    })),
+  } : null;
+
+  const items: ActionItem[] = [];
+  for (const schedule of scheduleStore.getAllSchedules(userId)) {
+    const dueDate = dateOnly(schedule.start_time);
+    const completion = latestCompletion.get(`schedule:${schedule.id}:`);
+    const completed = schedule.is_completed || !!completion;
+    let status: ActionItemStatus | null = null;
+    if (completed && dateOnly(completion?.completedAt || schedule.updated_at) === today) status = 'completed';
+    else if (completed) continue;
+    else if (schedule.type === 'todo' && dueDate < today) status = 'overdue';
+    else if (dueDate === today) status = 'today';
+    else if (dueDate > today && dueDate <= windowEnd) status = 'upcoming';
+    if (!status) continue;
+    items.push({
+      id: `schedule:${schedule.id}`,
+      sourceType: 'schedule',
+      sourceId: schedule.id,
+      instanceId: null,
+      title: schedule.title,
+      dueAt: schedule.start_time,
+      status,
+      priority: schedule.priority,
+      nextAction: schedule.type === 'todo' ? '完成这项待办' : '按时参加或处理该日程',
+      itemType: schedule.type === 'todo' ? 'todo' : 'event',
+      completedAt: completion?.completedAt || (completed ? schedule.updated_at : null),
+      completionId: completion?.id || null,
+      proof: proofFor(completion),
+    });
+  }
+
+  const reminderTasks = reminderStore.listReminderTasks(userId);
+  const reminderTaskMap = new Map(reminderTasks.map(task => [task.id, task]));
+  for (const task of reminderTasks) {
+    const cycle = task.currentCycle;
+    if (!cycle) continue;
+    const completion = latestCompletion.get(`reminder:${task.id}:${cycle.id}`);
+    const completed = cycle.status === 'completed' || !!completion;
+    let status: ActionItemStatus | null = null;
+    if (completed && dateOnly(completion?.completedAt || cycle.completedAt || cycle.updatedAt) === today) status = 'completed';
+    else if (completed || !task.enabled) continue;
+    else if (cycle.status === 'expired' || cycle.dueDate < today) status = 'overdue';
+    else if (cycle.dueDate === today) status = 'today';
+    else if (cycle.dueDate <= windowEnd) status = 'upcoming';
+    if (!status) continue;
+    const config = task.config as any;
+    items.push({
+      id: `reminder:${task.id}:${cycle.id}`,
+      sourceType: 'reminder',
+      sourceId: task.id,
+      instanceId: cycle.id,
+      title: task.name,
+      dueAt: `${cycle.dueDate}T23:59:59`,
+      status,
+      priority: config.priority || 'medium',
+      nextAction: config.actionGuide || config.nextAction || '完成本周期事务并登记证明',
+      itemType: 'recurring',
+      completedAt: completion?.completedAt || cycle.completedAt,
+      completionId: completion?.id || null,
+      proof: proofFor(completion),
+    });
+  }
+
+  // 周期事务完成后会立即推进到下一周期，因此从完成记录补回当天已完成的旧周期。
+  for (const completion of completions) {
+    if (completion.sourceType !== 'reminder' || completion.reopenedAt || dateOnly(completion.completedAt) !== today) continue;
+    const id = `reminder:${completion.sourceId}:${completion.instanceId || ''}`;
+    if (items.some(item => item.id === id)) continue;
+    const task = reminderTaskMap.get(completion.sourceId);
+    if (!task) continue;
+    const config = task.config as any;
+    items.push({
+      id,
+      sourceType: 'reminder',
+      sourceId: task.id,
+      instanceId: completion.instanceId,
+      title: task.name,
+      dueAt: completion.completedAt,
+      status: 'completed',
+      priority: config.priority || 'medium',
+      nextAction: config.actionGuide || '本周期已完成',
+      itemType: 'recurring',
+      completedAt: completion.completedAt,
+      completionId: completion.id,
+      proof: proofFor(completion),
+    });
+  }
+
+  const sortItems = (list: ActionItem[]) => list.sort((a, b) => {
+    const priorityDiff = priorityScore(b.priority) - priorityScore(a.priority);
+    return priorityDiff || a.dueAt.localeCompare(b.dueAt);
+  });
+  const todayItems = sortItems(items.filter(item => item.status === 'today'));
+  const upcoming = sortItems(items.filter(item => item.status === 'upcoming'));
+  const overdue = sortItems(items.filter(item => item.status === 'overdue'));
+  const completedToday = items.filter(item => item.status === 'completed').sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
+  return {
+    next: chooseNext([...todayItems, ...upcoming, ...overdue], now),
+    today: todayItems,
+    upcoming,
+    overdue,
+    completedToday,
+    generatedAt: now.toISOString(),
+    upcomingDays: safeDays,
+  };
+}
