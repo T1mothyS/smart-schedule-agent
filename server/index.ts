@@ -1498,12 +1498,32 @@ app.delete("/api/ai/imports/:id", authenticate, (req, res) => {
 });
 
 app.get("/api/email-import/settings", authenticate, (req, res) => {
-  res.json({ setting: activityStore.getEmailImportSetting((req as any).user.userId) });
+  res.json({
+    setting: activityStore.getEmailImportSetting((req as any).user.userId),
+    imapConfigured: !!process.env.IMAP_USER && !!process.env.IMAP_PASS,
+  });
 });
 
 app.put("/api/email-import/settings", authenticate, (req, res) => {
   const setting = activityStore.updateEmailImportSetting((req as any).user.userId, !!req.body.enabled, !!req.body.regenerate);
   res.json({ setting });
+});
+
+app.post("/api/email-import/check", authenticate, async (req, res) => {
+  const userId = (req as any).user.userId;
+  const setting = activityStore.getEmailImportSetting(userId);
+  if (!setting.enabled) return res.status(400).json({ error: '请先开启邮箱自动识别' });
+
+  const result = await pollEmailImports({
+    model: scheduleModel,
+    onlyUserId: userId,
+    resolveApiKey: targetUserId => db.getUserApiKey(targetUserId)?.api_key || process.env.CODEBUDDY_API_KEY || null,
+    log: (message, error) => error
+      ? addLog('error', 'ai', message, { error: error instanceof Error ? error.message : String(error) })
+      : addLog('info', 'ai', message),
+  });
+  const statusCode = result.status === 'error' ? 502 : result.status === 'busy' ? 409 : 200;
+  res.status(statusCode).json({ result });
 });
 
 // 更新会话

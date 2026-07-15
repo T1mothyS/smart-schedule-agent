@@ -1,5 +1,5 @@
-import { ChangeEvent, useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, FileImage, Mail, Sparkles, Trash2, WandSparkles } from 'lucide-react';
+import { ChangeEvent, useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, CheckCircle2, FileImage, Mail, RefreshCw, Sparkles, Trash2, WandSparkles } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
 interface Draft {
@@ -37,11 +37,23 @@ export function AiImportPage() {
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [emailSetting, setEmailSetting] = useState<{ enabled: boolean; importToken: string } | null>(null);
   const [pendingImports, setPendingImports] = useState<ImportRecord[]>([]);
+  const [imapConfigured, setImapConfigured] = useState(false);
+  const [checkingEmail, setCheckingEmail] = useState(false);
+
+  const loadPendingImports = useCallback(() => {
+    return fetch('/api/ai/imports?status=draft', { headers: authHeaders() })
+      .then(response => response.json())
+      .then(data => setPendingImports(data.imports || []))
+      .catch(() => undefined);
+  }, [authHeaders]);
 
   useEffect(() => {
-    fetch('/api/email-import/settings', { headers: authHeaders() }).then(response => response.json()).then(data => setEmailSetting(data.setting)).catch(() => undefined);
-    fetch('/api/ai/imports?status=draft', { headers: authHeaders() }).then(response => response.json()).then(data => setPendingImports(data.imports || [])).catch(() => undefined);
-  }, [authHeaders]);
+    fetch('/api/email-import/settings', { headers: authHeaders() }).then(response => response.json()).then(data => {
+      setEmailSetting(data.setting);
+      setImapConfigured(!!data.imapConfigured);
+    }).catch(() => undefined);
+    loadPendingImports();
+  }, [authHeaders, loadPendingImports]);
 
   const chooseImages = (event: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.target.files || []).filter(file => ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)).slice(0, 3);
@@ -97,6 +109,23 @@ export function AiImportPage() {
     if (response.ok) setEmailSetting(data.setting);
   };
 
+  const checkEmailNow = async () => {
+    setCheckingEmail(true);
+    setNotice(null);
+    try {
+      const response = await fetch('/api/email-import/check', { method: 'POST', headers: authHeaders() });
+      const data = await response.json();
+      const message = data.result?.message || data.error || '邮箱检查失败';
+      if (!response.ok) throw new Error(message);
+      await loadPendingImports();
+      setNotice({ type: 'success', message });
+    } catch (error) {
+      setNotice({ type: 'error', message: error instanceof Error ? error.message : '邮箱检查失败' });
+    } finally {
+      setCheckingEmail(false);
+    }
+  };
+
   const lowConfidence = (field: string) => (draft?.confidence?.[field] ?? 0) < .7;
 
   return <div className="ai-import-page">
@@ -132,6 +161,6 @@ export function AiImportPage() {
 
     {pendingImports.length > 0 && <section className="email-import-card"><div className="ai-card-title"><Sparkles size={18} /><div><h2>待确认草稿</h2><span>包含网页识别和邮箱自动生成的草稿</span></div></div><div className="pending-imports">{pendingImports.map(item => <button key={item.id} onClick={() => { setRecord(item); setDraft(item.draft); }}><strong>{item.draft.title}</strong><span>{item.draft.dueDate} · {item.draft.kind === 'recurring' ? '周期事务' : '待办日程'}</span><small>{new Date(item.expiresAt).toLocaleString('zh-CN')} 前有效</small></button>)}</div></section>}
 
-    <section className="email-import-card"><div className="ai-card-title"><Mail size={18} /><div><h2>邮箱自动识别</h2><span>转发邮件只生成草稿，仍需登录确认</span></div></div>{emailSetting && <div className="email-import-setting"><div><span>主题导入令牌</span><code>[AI-IMPORT {emailSetting.importToken}]</code><small>把令牌放在转发邮件主题中。服务端未配置 IMAP 时不会读取邮箱。</small></div><div><button className={emailSetting.enabled ? 'secondary-button' : 'primary-button'} onClick={() => updateEmailSetting(!emailSetting.enabled)}>{emailSetting.enabled ? '关闭邮箱导入' : '开启邮箱导入'}</button><button className="secondary-button" onClick={() => updateEmailSetting(emailSetting.enabled, true)}>重新生成令牌</button></div></div>}</section>
+    <section className="email-import-card"><div className="ai-card-title"><Mail size={18} /><div><h2>邮箱自动识别</h2><span>转发邮件只生成草稿，仍需登录确认</span></div></div>{emailSetting && <div className="email-import-setting"><div><span>主题导入令牌</span><code>[AI-IMPORT {emailSetting.importToken}]</code><small>{imapConfigured ? 'IMAP 已配置。将令牌放入邮件主题，定时任务每 5 分钟检查一次。' : '服务端尚未配置 IMAP，暂时无法读取邮箱。'}</small></div><div><button className="primary-button" onClick={checkEmailNow} disabled={!emailSetting.enabled || !imapConfigured || checkingEmail}><RefreshCw size={15} className={checkingEmail ? 'spin' : ''} />{checkingEmail ? '正在检查…' : '立即检查邮箱'}</button><button className={emailSetting.enabled ? 'secondary-button' : 'primary-button'} onClick={() => updateEmailSetting(!emailSetting.enabled)}>{emailSetting.enabled ? '关闭邮箱导入' : '开启邮箱导入'}</button><button className="secondary-button" onClick={() => updateEmailSetting(emailSetting.enabled, true)}>重新生成令牌</button></div></div>}</section>
   </div>;
 }

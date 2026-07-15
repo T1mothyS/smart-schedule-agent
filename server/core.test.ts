@@ -18,6 +18,7 @@ const backups = await import('./backup-service.js');
 const actionCenter = await import('./action-center.js');
 const scheduleCompletion = await import('./schedule-completion-service.js');
 const email = await import('./email-service.js');
+const emailImport = await import('./email-import-service.js');
 
 await db.initDb();
 await schedules.initScheduleDb();
@@ -46,6 +47,14 @@ test('邮件测试时间按 GMT+8 输出', () => {
     email.formatDateTimeInTimezone(new Date('2026-07-15T15:11:00.000Z'), 'Asia/Shanghai'),
     '2026-07-15 23:11:00 GMT+8',
   );
+});
+
+test('邮箱导入令牌只接受完整的 32 位十六进制格式', () => {
+  assert.equal(
+    emailImport.extractEmailImportToken('[AI-IMPORT 0123456789abcdef0123456789abcdef] 测试'),
+    '0123456789abcdef0123456789abcdef',
+  );
+  assert.equal(emailImport.extractEmailImportToken('[AI-IMPORT short-token] 测试'), null);
 });
 
 test('日历按用户隔离并自动迁移默认日历', () => {
