@@ -258,31 +258,14 @@ app.get("/api/check-login", authenticate, async (req, res) => {
 // 【修复数据隔离】获取模型列表 - 需要用户认证
 app.get("/api/models", authenticate, async (req, res) => {
   try {
-    // 获取当前用户的 API Key
-    let userCredential: dbModule.DbUserApiKey | undefined;
-    let debugInfo: any = { hasAuthHeader: !!req.headers.authorization };
-    const authHeader = req.headers.authorization;
-    
-    if (authHeader?.startsWith('Bearer ')) {
-      try {
-        const payload = jwt.verify(authHeader.slice(7), JWT_SECRET) as JwtPayload;
-        debugInfo.userId = payload.userId;
-        debugInfo.email = payload.email;
-        const userKey = db.getUserApiKey(payload.userId);
-        debugInfo.hasUserKey = !!userKey;
-        userCredential = userKey || undefined;
-        debugInfo.hasApiKey = !!userCredential?.api_key;
-      } catch (e: any) {
-        debugInfo.jwtError = e.message;
-      }
-    }
-
-    console.log("[Models] Debug:", JSON.stringify(debugInfo));
+    // authenticate 已完成 JWT 校验，直接读取当前用户的凭据，避免重复解析和生产日志泄露账号信息。
+    const currentUser = (req as any).user as JwtPayload;
+    const userCredential: dbModule.DbUserApiKey | undefined =
+      db.getUserApiKey(currentUser.userId) || undefined;
 
     if (!userCredential) {
       return res.status(401).json({ 
         error: '请先在设置页输入 API Key',
-        debug: debugInfo 
       });
     }
 
