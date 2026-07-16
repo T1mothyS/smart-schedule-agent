@@ -49,7 +49,7 @@ function CalendarFormModal({
       >
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
-            {editing ? '编辑日程表' : '新建日程表'}
+            {editing ? '编辑分类' : '增加分类'}
           </h3>
           <button onClick={onClose}>
             <X className="w-4 h-4" style={{ color: 'var(--td-text-color-secondary)' }} />
@@ -59,7 +59,7 @@ function CalendarFormModal({
         {/* 名称 */}
         <input
           type="text"
-          placeholder="日程表名称"
+          placeholder="分类名称"
           value={name}
           onChange={e => setName(e.target.value)}
           autoFocus
@@ -94,7 +94,7 @@ function CalendarFormModal({
           style={{ backgroundColor: `${color}15`, border: `1px solid ${color}30` }}
         >
           <span className="calendar-color-dot large" style={{ backgroundColor: color }} />
-          <span className="text-sm font-medium" style={{ color }}>{name || '日程表名称'}</span>
+          <span className="text-sm font-medium" style={{ color }}>{name || '分类名称'}</span>
         </div>
 
         <div className="flex gap-2">
@@ -204,11 +204,6 @@ export function ScheduleSidebar({ activeCalendarIds, onActiveChange, onCalendars
     } catch {}
   };
 
-  // 当前激活的日程表名称（用于标题显示）
-  const activeTitles = calendars
-    .filter(c => activeCalendarIds.includes(c.id))
-    .map(c => c.name);
-
   const allSelected = calendars.length > 0 && activeCalendarIds.length === calendars.length;
 
   return (
@@ -216,37 +211,15 @@ export function ScheduleSidebar({ activeCalendarIds, onActiveChange, onCalendars
       className="flex flex-col h-full"
       style={{ backgroundColor: 'var(--td-bg-color-container)' }}
     >
-      {/* 日程表标题区 */}
-      <div
-        className="px-3 pt-4 pb-3 flex-shrink-0"
-        style={{ borderBottom: '1px solid var(--td-component-stroke)' }}
-      >
-        <div className="text-xs font-medium mb-1" style={{ color: 'var(--td-text-color-secondary)' }}>
-          我的日程表
-        </div>
-        {/* 当前显示的日程表叠加标题 */}
-        <div className="flex flex-wrap gap-1 min-h-[24px]">
-          {activeTitles.length === calendars.length ? (
-            <span className="text-xs font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
-              全部日程
-            </span>
-          ) : (
-            activeTitles.map((t, i) => (
-              <span key={i}>
-                {i > 0 && <span className="text-xs mx-0.5" style={{ color: 'var(--td-text-color-placeholder)' }}>+</span>}
-                <span
-                  className="text-xs font-semibold px-1.5 py-0.5 rounded"
-                  style={{
-                    backgroundColor: `${calendars.find(c => c.name === t)?.color || '#3B82F6'}18`,
-                    color: calendars.find(c => c.name === t)?.color || '#3B82F6',
-                  }}
-                >
-                  {t}
-                </span>
-              </span>
-            ))
-          )}
-        </div>
+      <div className="px-3 pt-3 flex-shrink-0">
+        <button
+          onClick={() => setShowForm(true)}
+          className="w-full flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg text-xs font-semibold transition-all hover:opacity-85"
+          style={{ backgroundColor: 'var(--td-brand-color)', color: '#fff' }}
+        >
+          <Plus className="w-3.5 h-3.5" />
+          增加分类
+        </button>
       </div>
 
       {/* 全选 */}
@@ -344,23 +317,7 @@ export function ScheduleSidebar({ activeCalendarIds, onActiveChange, onCalendars
         })}
       </div>
 
-      {/* 新建日程表按钮 */}
-      <div className="px-3 py-3 flex-shrink-0" style={{ borderTop: '1px solid var(--td-component-stroke)' }}>
-        <button
-          onClick={() => setShowForm(true)}
-          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs transition-all hover:opacity-80"
-          style={{
-            backgroundColor: 'var(--td-bg-color-component)',
-            color: 'var(--td-text-color-secondary)',
-            border: '1px dashed var(--td-component-stroke)',
-          }}
-        >
-          <Plus className="w-3 h-3" />
-          新建日程表
-        </button>
-      </div>
-
-      {/* 新建弹窗 */}
+      {/* 增加分类弹窗 */}
       {showForm && (
         <CalendarFormModal
           onSave={handleCreate}

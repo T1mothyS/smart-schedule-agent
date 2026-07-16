@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Send, Sparkles, Loader2, CheckCircle2, MapPin, Clock, Trash2, Calendar, RotateCcw } from 'lucide-react';
+import { Send, Sparkles, Loader2, CheckCircle2, MapPin, Clock, Calendar, RotateCcw } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
 // ==================== 类型 ====================
@@ -35,16 +35,14 @@ interface ChatMessage {
   type: MessageType;
   text?: string;
   intent?: string;
-  schedules?: Schedule[];
-  updatedSchedules?: Schedule[];
-  deletedIds?: string[];
-  scheduleCards?: string;  // HTML格式的日程卡片
+  scheduleItems?: Schedule[];
   timestamp: string;
 }
 
 interface AiSchedulePanelProps {
   onSchedulesCreated?: (schedules: Schedule[]) => void;
   activeCalendarIds?: string[];
+  onOpenSchedule?: (id: string) => void;
 }
 
 // ==================== 常量 ====================
@@ -93,10 +91,10 @@ function formatDate(isoStr: string): string {
 
 // ==================== 日程卡片 ====================
 
-function ScheduleMiniCard({ schedule, calendars, onDelete }: {
+function ScheduleMiniCard({ schedule, calendars, onOpen }: {
   schedule: Schedule;
   calendars: CalendarItem[];
-  onDelete?: (id: string) => void;
+  onOpen?: (id: string) => void;
 }) {
   const color = CATEGORY_COLORS[schedule.category] || '#6B7280';
   const pColor = PRIORITY_COLORS[schedule.priority] || '#F59E0B';
@@ -106,81 +104,63 @@ function ScheduleMiniCard({ schedule, calendars, onDelete }: {
   const endStr = schedule.end_time && !schedule.all_day ? ` - ${formatTime(schedule.end_time)}` : '';
 
   return (
-    <div
-      className="rounded-xl p-3 mb-2 relative group"
+    <button
+      type="button"
+      className="ai-schedule-card w-full rounded-xl p-3 mb-2 text-left transition-all"
       style={{
         background: `linear-gradient(135deg, ${pColor}10, ${color}06)`,
         border: `1px solid ${pColor}30`,
         borderLeft: `3px solid ${pColor}`,
       }}
+      onClick={() => onOpen?.(schedule.id)}
+      aria-label={`打开日程详情：${schedule.title}`}
     >
-      <div className="flex items-start justify-between gap-1 mb-1.5">
-        <div className="flex items-center gap-1.5 flex-wrap flex-1 min-w-0">
-          {/* 日程表来源标识 */}
-          {cal && (
-            <span
-              className="text-xs px-1.5 py-0.5 rounded font-medium flex items-center gap-0.5"
-              style={{ backgroundColor: `${cal.color}20`, color: cal.color }}
-            >
-              <span className="text-xs">{cal.icon}</span>
-              {cal.name.slice(0, 2)}
-            </span>
-          )}
-          {/* 分类标签 */}
-          <span className="text-xs px-1.5 py-0.5 rounded-full font-medium"
-            style={{ backgroundColor: `${color}20`, color }}>
-            {schedule.type === 'todo' ? '待办' : CATEGORY_LABELS[schedule.category] || '其他'}
-          </span>
-          <span
-            className="text-xs px-1.5 py-0.5 rounded-full font-medium"
-            style={{ backgroundColor: `${pColor}15`, color: pColor }}
-          >
-            {schedule.priority === 'high' ? '高' : schedule.priority === 'low' ? '低' : '中'}
-          </span>
-          <span className="text-sm font-semibold truncate" style={{ color: 'var(--td-text-color-primary)' }}>
-            {schedule.title}
-          </span>
-        </div>
-        {onDelete && (
-          <button
-            onClick={() => onDelete(schedule.id)}
-            className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded flex-shrink-0"
-            style={{ color: '#EF4444' }}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-        )}
+      <div className="flex items-center gap-1.5 mb-1.5 min-w-0">
+        <span
+          className="text-xs px-1.5 py-0.5 rounded font-medium flex-shrink-0"
+          style={{ backgroundColor: `${color}18`, color }}
+        >
+          {schedule.type === 'todo' ? '待办' : CATEGORY_LABELS[schedule.category] || '其他'}
+        </span>
+        <span className="schedule-title-primary truncate">
+          {schedule.is_completed ? '已完成 · ' : ''}{schedule.title}
+        </span>
       </div>
 
-      <div className="flex items-center gap-3">
-        <div className="flex items-center gap-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+      <div className="flex items-center gap-3 min-w-0" style={{ color: 'var(--td-text-color-secondary)' }}>
+        <span className="flex items-center gap-1 text-xs flex-shrink-0">
           <Clock className="w-3 h-3" />
-          <span className="text-xs">{dateStr} {startStr}{endStr}</span>
-        </div>
+          {dateStr} {startStr}{endStr}
+        </span>
         {schedule.location && (
-          <div className="flex items-center gap-1" style={{ color: 'var(--td-text-color-secondary)' }}>
-            <MapPin className="w-3 h-3" />
-            <span className="text-xs truncate max-w-[100px]">{schedule.location}</span>
-          </div>
+          <span className="flex items-center gap-1 text-xs truncate">
+            <MapPin className="w-3 h-3 flex-shrink-0" />
+            {schedule.location}
+          </span>
         )}
       </div>
 
       {schedule.notes && (
-        <div className="mt-1.5 text-xs rounded-lg px-2 py-1"
-          style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-secondary)' }}>
+        <div className="mt-1.5 text-xs truncate" style={{ color: 'var(--td-text-color-secondary)' }}>
           备注：{schedule.notes}
         </div>
       )}
-    </div>
+      {cal && (
+        <div className="mt-1.5 flex items-center gap-1 text-[10px]" style={{ color: 'var(--td-text-color-placeholder)' }}>
+          <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />
+          {cal.name}
+        </div>
+      )}
+    </button>
   );
 }
 
 // ==================== 消息气泡 ====================
 
-function MessageBubble({ msg, calendars, onDeleteSchedule }: {
+function MessageBubble({ msg, calendars, onOpenSchedule }: {
   msg: ChatMessage;
   calendars: CalendarItem[];
-  onDeleteSchedule?: (id: string) => void;
+  onOpenSchedule?: (id: string) => void;
 }) {
   const isUser = msg.role === 'user';
 
@@ -240,12 +220,18 @@ function MessageBubble({ msg, calendars, onDeleteSchedule }: {
               </div>
             )}
 
-            {/* 日程卡片展示（HTML格式）- 后端已统一生成，避免重复渲染 */}
-            {msg.scheduleCards && (
-              <div 
-                className="mt-2"
-                dangerouslySetInnerHTML={{ __html: msg.scheduleCards }}
-              />
+            {/* 使用结构化数据渲染可点击日程卡片 */}
+            {msg.scheduleItems && msg.scheduleItems.length > 0 && (
+              <div className="mt-2">
+                {msg.scheduleItems.map(schedule => (
+                  <ScheduleMiniCard
+                    key={schedule.id}
+                    schedule={schedule}
+                    calendars={calendars}
+                    onOpen={onOpenSchedule}
+                  />
+                ))}
+              </div>
             )}
           </div>
         )}
@@ -256,7 +242,7 @@ function MessageBubble({ msg, calendars, onDeleteSchedule }: {
 
 // ==================== 主组件 ====================
 
-export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds }: AiSchedulePanelProps) {
+export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds, onOpenSchedule }: AiSchedulePanelProps) {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -338,17 +324,14 @@ export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds }: AiSch
               data.intent === 'update' || data.intent === 'delete' ? 'update' : 'schedules',
         intent: data.intent,
         text: data.reply,
-        schedules: data.created?.length > 0 ? data.created : undefined,
-        updatedSchedules: data.updated?.length > 0 ? data.updated : undefined,
-        deletedIds: data.deletedIds?.length > 0 ? data.deletedIds : undefined,
-        scheduleCards: data.scheduleCards,
+        scheduleItems: data.scheduleItems || [],
         timestamp: new Date().toISOString(),
       };
       setMessages(prev => [...prev, aiMsg]);
 
       // 如果有日程变更，通知父组件刷新
       if (data.changed) {
-        onSchedulesCreated?.(data.created || []);
+        onSchedulesCreated?.(data.changedDetails?.created || []);
       }
     } catch (err: any) {
       // 检查是否是未登录错误
@@ -376,19 +359,6 @@ export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds }: AiSch
       handleSubmit();
     }
   };
-
-  const handleDeleteFromMsg = useCallback(async (scheduleId: string) => {
-    try {
-      await fetch(`/api/schedules/${scheduleId}`, { method: 'DELETE', headers: authHeaders() });
-      setMessages(prev => prev.map(m => {
-        if (m.schedules) {
-          return { ...m, schedules: m.schedules.filter(s => s.id !== scheduleId) };
-        }
-        return m;
-      }));
-      onSchedulesCreated?.([]);
-    } catch {}
-  }, [onSchedulesCreated]);
 
   const clearHistory = () => setMessages([]);
 
@@ -483,7 +453,7 @@ export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds }: AiSch
             key={msg.id}
             msg={msg}
             calendars={calendars}
-            onDeleteSchedule={handleDeleteFromMsg}
+            onOpenSchedule={onOpenSchedule}
           />
         ))}
 

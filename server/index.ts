@@ -2161,6 +2161,62 @@ async function checkLoginStatus(): Promise<{ isLoggedIn: boolean; error?: string
   }
 }
 
+const AI_CATEGORY_LABELS_CN: Record<string, string> = {
+  travel: '出行', work: '工作', social: '社交', life: '生活', health: '健康', other: '其他'
+};
+
+function formatAiQueryDateLabel(dateStr: string) {
+  const date = new Date(`${dateStr}T12:00:00`);
+  const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getDay()];
+  return `${date.getMonth() + 1}月${date.getDate()}日（${weekday}）`;
+}
+
+function joinAiLabels(labels: string[]) {
+  if (labels.length <= 1) return labels.join('');
+  if (labels.length === 2) return labels.join('和');
+  return labels.slice(0, -1).join('、') + '和' + labels[labels.length - 1];
+}
+
+function buildCompactScheduleQueryReply(items: any[], queryDates: string[], today: string) {
+  const subject = queryDates.length === 1 && queryDates[0] === today
+    ? '今天'
+    : queryDates.map(formatAiQueryDateLabel).join('、') || '所选日期';
+  if (items.length === 0) return `${subject}暂无安排。`;
+
+  const describePeriod = (label: string, periodItems: any[]) => {
+    if (periodItems.length === 0) return '';
+    const categories = [...new Set(periodItems.map(item => AI_CATEGORY_LABELS_CN[item.category] || '其他'))];
+    return `${label}有${joinAiLabels(categories)}安排`;
+  };
+  const allDayItems = items.filter(item => item.all_day);
+  const timedItems = items.filter(item => !item.all_day);
+  const morning = timedItems.filter(item => Number(item.start_time.slice(11, 13)) < 12);
+  const afternoon = timedItems.filter(item => {
+    const hour = Number(item.start_time.slice(11, 13));
+    return hour >= 12 && hour < 18;
+  });
+  const evening = timedItems.filter(item => Number(item.start_time.slice(11, 13)) >= 18);
+  const details = [
+    describePeriod('上午', morning),
+    describePeriod('下午', afternoon),
+    describePeriod('晚上', evening),
+    allDayItems.length > 0 ? `另有 ${allDayItems.length} 项全天安排` : '',
+  ].filter(Boolean);
+  const density = items.length >= 4 ? '日程较满' : '已有安排';
+  const summary = details.length > 0
+    ? `${subject}${density}，${details.join('，')}，请注意合理安排时间。`
+    : `${subject}${density}，请注意合理安排时间。`;
+  return `${subject}共有 ${items.length} 项安排，以下是详情：\n\n${summary}`;
+}
+
+function isReadOnlyScheduleQuery(text: string) {
+  const normalized = text.replace(/\s+/g, '');
+  if (/(添加|新建|创建|修改|改成|推迟|提前|取消|删除|删掉|标记完成|帮我安排|给我安排|提醒我)/.test(normalized)) {
+    return false;
+  }
+  return /(有什么安排|有哪些安排|什么安排|有什么日程|有哪些日程|查看.*(?:安排|日程)|查询.*(?:安排|日程)|几点有会)/.test(normalized);
+}
+
 app.post("/api/ai-chat", async (req, res) => {
   const { text, targetDate, model: reqModel, calendarId, scheduleContext } = req.body;
   if (!text) return res.status(400).json({ error: "请输入内容" });
@@ -2171,15 +2227,44 @@ app.post("/api/ai-chat", async (req, res) => {
   // 【修复数据隔离】先提取用户ID和API Key
   let userId = 'default';
   let userApiKey: string | undefined;
+  let authenticatedUser = false;
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
     try {
       const payload = jwt.verify(authHeader.slice(7), JWT_SECRET) as JwtPayload;
       userId = payload.userId;
+      authenticatedUser = true;
       // 获取该用户的 API Key
       const userKey = db.getUserApiKey(userId);
       userApiKey = userKey?.api_key;
     } catch {}
+  }
+
+  // 只读日程查询直接使用本地数据，不依赖外部 AI 或 API Key。
+  if (authenticatedUser && isReadOnlyScheduleQuery(text)) {
+    const today = targetDate || getLocalDateString();
+    const queryDates = parseQueryDatesForCards(text, today);
+    const scheduleItems: any[] = [];
+    const seenScheduleIds = new Set<string>();
+    for (const dateStr of queryDates) {
+      const schedules = scheduleStore.getSchedulesByDate(dateStr, userId);
+      for (const schedule of schedules) {
+        if (!seenScheduleIds.has(schedule.id)) {
+          seenScheduleIds.add(schedule.id);
+          scheduleItems.push(schedule);
+        }
+      }
+    }
+    scheduleItems.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
+    addLog('info', 'ai', `本地完成日程查询，共 ${scheduleItems.length} 项`, { userId, queryDates });
+    return res.json({
+      success: true,
+      intent: 'query',
+      reply: buildCompactScheduleQueryReply(scheduleItems, queryDates, today),
+      scheduleItems,
+      changed: false,
+      changedDetails: { created: [], updated: [], deleted: [] },
+    });
   }
 
   // 检查用户是否有 API Key
@@ -2248,42 +2333,14 @@ app.post("/api/ai-chat", async (req, res) => {
   // 简化日期的上下文日程
   const existingSchedules = contextSchedules;
 
-  const PRIORITY_COLORS: Record<string, string> = {
-    high: '#EF4444', medium: '#F59E0B', low: '#10B981'
-  };
-
-  const CATEGORY_LABELS_CN: Record<string, string> = {
-    travel: '出行', work: '工作', social: '社交', life: '生活', health: '健康', other: '其他'
-  };
+  const CATEGORY_LABELS_CN = AI_CATEGORY_LABELS_CN;
   
   // 按时间排序日程，格式化更清晰的卡片展示（无emoji）
   const sortedSchedules = [...existingSchedules].sort((a, b) => 
     new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
   );
   
-  // 生成日程卡片HTML（模拟主日历视图样式）
-  const scheduleCards = sortedSchedules.length > 0
-    ? sortedSchedules.map((s: any, idx: number) => {
-        const timeStr = s.all_day ? '全天' : `${s.start_time.slice(11, 16)}${s.end_time ? ' ~ ' + s.end_time.slice(11, 16) : ''}`;
-        const statusStr = s.is_completed ? '已完成 · ' : '';
-        const locStr = s.location ? `<div style="font-size:11px;opacity:0.75;margin-top:2px;">地点: ${s.location}</div>` : '';
-        const notesStr = s.notes ? `<div style="font-size:11px;opacity:0.75;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">备注: ${s.notes}</div>` : '';
-        const catLabel = CATEGORY_LABELS_CN[s.category] || '其他';
-        const priColor = PRIORITY_COLORS[s.priority] || '#F59E0B';
-        const completedStyle = s.is_completed ? 'opacity:0.6;text-decoration:line-through;' : '';
-        
-        return `<div style="background:${priColor}15;border-left:3px solid ${priColor};border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;${completedStyle}">
-  <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
-    <span style="font-size:10px;padding:1px 5px;background:${priColor}25;color:${priColor};border-radius:4px;font-weight:500;">${catLabel}</span>
-    <span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${statusStr}${s.title}</span>
-  </div>
-  <div style="font-size:11px;opacity:0.8;margin-top:2px;">${timeStr}</div>
-  ${locStr}${notesStr}
-</div>`;
-      }).join('')
-    : '<div style="text-align:center;padding:20px;color:#9CA3AF;">（该日期暂无日程）</div>';
-  
-  // 纯文本版（用于AI上下文）- 显示完整日期
+  // 纯文本版（用于 AI 上下文）- 显示完整日期
 
   const formatDateForAI = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -2314,20 +2371,11 @@ ${queryDateInfo}当前日期：${today}
 ${scheduleList || '（暂无日程）'}
 
 【回复规则 - 非常重要】
-1. 如果上面的日程列表有内容，reply 必须引用这些日程的具体信息（标题、时间等）
-2. 如果用户问"今天有什么安排"，reply 应该列出上面列表中的日程
-3. 如果上面列表显示"（该日期暂无日程）"，reply 应该告诉用户该日期没有安排
-4. 不要凭空捏造日程信息，必须基于上面提供的日程列表
-
-【回复格式规则 - 必须严格遵守】
-当列举多项日程时，格式要求如下：
-- 标题行（如"今天共有X项安排..."）后必须空一行
-- **已完成** 和 **进行中 / 待办** 这两个分类标题前后各空一行
-- 每一条日程条目后面必须加一个换行（即条目之间有空行）
-- 最后的总结/提醒文字前后各空一行
-- 回复中禁止使用 emoji 或图标字符，保持简洁专业
-- 示例格式（reply 字段内用 \\n 表示换行）：
-  "今天共有 N 项安排，以下是详情：\\n\\n**已完成**\\n\\n1. 事项A — 时间\\n\\n2. 事项B — 时间\\n\\n**进行中 / 待办**\\n\\n3. 事项C — 时间\\n\\n4. 事项D — 时间\\n\\n总结提醒文字"
+1. 必须基于上面的真实日程数据回复，不得凭空捏造
+2. query 意图不要在 reply 中逐项罗列标题、时间、地点或备注，详情由下方日程卡片展示
+3. query 意图只输出两段：第一段说明共有几项，第二段概括上午、下午、晚上和全天安排
+4. 回复中禁止使用 emoji 或图标字符，保持简洁专业
+5. create、update、delete 意图只简洁说明操作结果
 
 可用日程分类：
 - travel/出行：交通、接送、旅途相关
@@ -2524,57 +2572,37 @@ priority 识别：
 
     console.log('[AI Chat] Summary - created:', createdSchedules.length, 'updated:', updatedSchedules.length, 'deleted:', deletedIds.length);
     
-    // 最终日程卡片已在上方通过 contextSchedules 生成，此处直接使用
-    // 如果有新建/修改的日程，重新生成卡片以包含最新数据
-    let finalScheduleCards = scheduleCards;
-    if (createdSchedules.length > 0 || updatedSchedules.length > 0) {
-      // 重新获取所有相关日期的日程（包含新建/修改的）
+    const changed = createdSchedules.length + updatedSchedules.length + deletedIds.length > 0;
+    let finalScheduleItems = sortedSchedules;
+    if (changed) {
       const allSchedules: any[] = [];
       const seenFinalIds = new Set<string>();
       for (const dateStr of queryDates) {
         const schedules = scheduleStore.getSchedulesByDate(dateStr, userId);
-        for (const s of schedules) {
-          if (!seenFinalIds.has(s.id)) {
-            seenFinalIds.add(s.id);
-            allSchedules.push(s);
+        for (const schedule of schedules) {
+          if (!seenFinalIds.has(schedule.id)) {
+            seenFinalIds.add(schedule.id);
+            allSchedules.push(schedule);
           }
         }
       }
-      const sortedFinal = [...allSchedules].sort((a, b) => 
+      finalScheduleItems = allSchedules.sort((a, b) =>
         new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
       );
-      const PRIORITY_COLORS_FINAL: Record<string, string> = { high: '#EF4444', medium: '#F59E0B', low: '#10B981' };
-      
-      finalScheduleCards = sortedFinal.length > 0
-        ? sortedFinal.map((s: any, idx: number) => {
-            const timeStr = s.all_day ? '全天' : `${s.start_time.slice(11, 16)}${s.end_time ? ' ~ ' + s.end_time.slice(11, 16) : ''}`;
-            const statusStr = s.is_completed ? '已完成 · ' : '';
-            const locStr = s.location ? `<div style="font-size:11px;opacity:0.75;margin-top:2px;">地点: ${s.location}</div>` : '';
-            const notesStr = s.notes ? `<div style="font-size:11px;opacity:0.75;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">备注: ${s.notes}</div>` : '';
-            const catLabel = CATEGORY_LABELS_CN[s.category] || '其他';
-            const priColor = PRIORITY_COLORS_FINAL[s.priority] || '#F59E0B';
-            const completedStyle = s.is_completed ? 'opacity:0.6;text-decoration:line-through;' : '';
-            
-            return `<div style="background:${priColor}15;border-left:3px solid ${priColor};border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12px;${completedStyle}">
-  <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
-    <span style="font-size:10px;padding:1px 5px;background:${priColor}25;color:${priColor};border-radius:4px;font-weight:500;">${catLabel}</span>
-    <span style="font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${statusStr}${s.title}</span>
-  </div>
-  <div style="font-size:11px;opacity:0.8;margin-top:2px;">${timeStr}</div>
-  ${locStr}${notesStr}
-</div>`;
-          }).join('')
-        : '<div style="text-align:center;padding:20px;color:#9CA3AF;">（暂无日程）</div>';
     }
-    
-    // 只返回 finalScheduleCards，不再同时返回 created/updated（避免前端重复渲染）
+
+    const finalReply = parsed.intent === 'query'
+      ? buildCompactScheduleQueryReply(finalScheduleItems, queryDates, today)
+      : (parsed.reply || '好的');
+
+    // 返回结构化日程，前端渲染为可点击卡片并复用日历详情操作
     res.json({
       success: true,
       intent: parsed.intent || 'chat',
-      reply: parsed.reply || '好的',
-      scheduleCards: finalScheduleCards,
+      reply: finalReply,
+      scheduleItems: finalScheduleItems,
       // 日程变更信息用于前端判断是否需要刷新日历
-      changed: createdSchedules.length + updatedSchedules.length + deletedIds.length > 0,
+      changed,
       changedDetails: {
         created: createdSchedules,
         updated: updatedSchedules,

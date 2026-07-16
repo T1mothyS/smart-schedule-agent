@@ -1019,7 +1019,7 @@ function ScheduleChip({
         />
         {schedule.type === 'todo' && <span className="opacity-70">◇</span>}
         {!schedule.all_day && <span className="opacity-70">{formatTime(schedule.start_time)}</span>}
-        <span className="font-medium truncate">{schedule.title}</span>
+        <span className="schedule-title-primary schedule-title-compact truncate">{schedule.title}</span>
         {/* 日程来源标签 */}
         {calendar && (
           <span
@@ -1065,7 +1065,7 @@ function ScheduleChip({
                 : <Circle className="w-4 h-4" />}
             </button>
             <span
-              className="text-sm font-semibold"
+              className="schedule-title-primary text-sm font-semibold"
               style={{
                 color: schedule.is_completed ? '#9CA3AF' : 'var(--td-text-color-primary)',
                 textDecoration: schedule.is_completed ? 'line-through' : 'none',
@@ -1266,7 +1266,7 @@ function DayView({
                     </button>
                   )}
                   <span 
-                    className="font-medium truncate max-w-[150px]" 
+                    className="schedule-title-primary truncate max-w-[150px]"
                     style={{ color, textDecoration: s.is_completed ? 'line-through' : 'none', opacity: s.is_completed ? 0.6 : 1 }}
                   >
                     {s.title}
@@ -1333,7 +1333,7 @@ function DayView({
                             >
                               {s.is_completed ? <CheckCircle2 className="w-3 h-3 text-green-500" /> : <Circle className="w-3 h-3" style={{ color: pColor.dot }} />}
                             </button>
-                            <span className="text-xs font-medium truncate" style={{ color: s.is_completed ? '#9CA3AF' : pColor.dot }}>
+                            <span className="schedule-title-primary schedule-title-compact truncate" style={{ color: s.is_completed ? '#9CA3AF' : pColor.dot }}>
                               {s.title}
                             </span>
                           </div>
@@ -1432,7 +1432,7 @@ function DayView({
                                   {catLabel}
                                 </span>
                               )}
-                              <span className="truncate">{s.title}</span>
+                              <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
                               {/* 日程来源标签 - 窄卡片时隐藏 */}
                               {!isNarrowCard && (
                                 (() => {
@@ -1619,7 +1619,7 @@ function WeekView({
                         {item.is_completed ? <CheckCircle2 className="w-3 h-3" /> : <Circle className="w-3 h-3" />}
                       </button>
                     )}
-                    <span className="truncate font-medium">{item.title}</span>
+                    <span className="schedule-title-primary schedule-title-compact truncate">{item.title}</span>
                   </div>
                 );
               })}
@@ -1663,7 +1663,7 @@ function WeekView({
                     {s.is_completed ? <CheckCircle2 className="w-3 h-3" /> : <Circle className="w-3 h-3" />}
                   </button>
                   <span className="opacity-70">{formatTime(s.start_time)}</span>
-                  <span className="truncate">{s.title}</span>
+                  <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
                 </div>
               ))}
             </div>
@@ -1721,7 +1721,7 @@ function WeekView({
                               !
                             </span>
                           )}
-                          {formatTime(s.start_time)} {s.title}
+                          <span className="opacity-70">{formatTime(s.start_time)}</span><span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
                           {/* 日程来源标签 */}
                           {(() => {
                             const cal = activeCalendars?.find(c => c.id === s.calendar_id);
@@ -1863,7 +1863,7 @@ function MonthView({
                             {item.is_completed ? <CheckCircle2 className="w-2.5 h-2.5" /> : <Circle className="w-2.5 h-2.5" />}
                           </button>
                         )}
-                        <span className="truncate font-medium">{item.title}</span>
+                        <span className="schedule-title-primary schedule-title-compact truncate">{item.title}</span>
                       </div>
                     );
                   })}
@@ -1895,7 +1895,7 @@ function MonthView({
                         {s.is_completed ? <CheckCircle2 className="w-2.5 h-2.5" /> : <Circle className="w-2.5 h-2.5" />}
                       </button>
                       <span className="opacity-70 text-[10px]">{formatTime(s.start_time)}</span>
-                      <span className="truncate">{s.title}</span>
+                      <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
                     </div>
                   ))}
                   {timedTodos.length > 1 && (
@@ -1987,7 +1987,7 @@ function ScheduleDetailModal({
                 {PRIORITY_COLORS[schedule.priority]?.label || '中优先'}
               </span>
             </div>
-            <h3 className="text-base font-bold" style={{ color: 'var(--td-text-color-primary)' }}>
+            <h3 className="schedule-title-primary text-base font-bold">
               {schedule.title}
               {/* 日程来源标签 */}
               {calendar && (
@@ -2068,9 +2068,10 @@ function ScheduleDetailModal({
 export interface CalendarViewProps {
   refreshKey?: number;
   activeCalendarIds?: string[];  // 当前激活的日程表 ID 列表（空=全部显示）
+  openScheduleRequest?: { id: string; nonce: number } | null;
 }
 
-export function CalendarView({ refreshKey = 0, activeCalendarIds }: CalendarViewProps) {
+export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRequest }: CalendarViewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('day');
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [schedules, setSchedules] = useState<Schedule[]>([]);
@@ -2143,6 +2144,23 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds }: CalendarView
   useEffect(() => {
     fetchSchedules();
   }, [fetchSchedules, refreshKey]);
+
+  useEffect(() => {
+    if (!openScheduleRequest) return;
+    let cancelled = false;
+    fetch(`/api/schedules/${openScheduleRequest.id}`, { headers: authHeaders() })
+      .then(response => response.ok ? response.json() : null)
+      .then(data => {
+        if (cancelled || !data?.schedule) return;
+        const schedule = data.schedule as Schedule;
+        setCurrentDate(new Date(schedule.start_time));
+        setViewMode('day');
+        setEditingSchedule(null);
+        setSelectedSchedule(schedule);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [openScheduleRequest?.nonce]);
 
   // 根据激活的日程表过滤
   const visibleSchedules = (activeCalendarIds && activeCalendarIds.length > 0)
@@ -2292,7 +2310,7 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds }: CalendarView
             className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
             style={{ backgroundColor: 'var(--td-brand-color-light)', color: 'var(--td-brand-color)' }}
           >
-            今天
+            回到今天
           </button>
           <button 
             onClick={navigatePrev} 
@@ -2395,7 +2413,7 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds }: CalendarView
               >
                 <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                 <span className="font-semibold">
-                  <AlertTriangle size={14} /> {conflictingIds.size} 个日程存在时间冲突
+                  {conflictingIds.size} 个日程存在时间冲突
                 </span>
                 <span style={{ color: '#991B1B' }}>
                   {conflictDetails.slice(0, 3).map(({ a, b }, i) => (

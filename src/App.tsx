@@ -38,6 +38,7 @@ function SchedulePage({ theme, onToggleTheme, onOpenSettings, onOpenAdmin, onOpe
   const [calendarNames, setCalendarNames] = useState<Record<string, string>>({});
   const [scheduleTitle, setScheduleTitle] = useState('全部日程');
   const [showCalendarPanel, setShowCalendarPanel] = useState(false);
+  const [openScheduleRequest, setOpenScheduleRequest] = useState<{ id: string; nonce: number } | null>(null);
 
   const handleSchedulesCreated = useCallback(() => {
     setCalendarRefreshKey(prev => prev + 1);
@@ -61,7 +62,11 @@ function SchedulePage({ theme, onToggleTheme, onOpenSettings, onOpenAdmin, onOpe
     <div className="schedule-workspace">
       <div className="flex flex-1 overflow-hidden schedule-workspace-body">
         <aside className="schedule-ai-primary">
-          <AiSchedulePanel onSchedulesCreated={handleSchedulesCreated} activeCalendarIds={activeCalendarIds} />
+          <AiSchedulePanel
+            onSchedulesCreated={handleSchedulesCreated}
+            onOpenSchedule={(id) => setOpenScheduleRequest({ id, nonce: Date.now() })}
+            activeCalendarIds={activeCalendarIds}
+          />
         </aside>
         <section className="schedule-calendar-shell">
           <div className="schedule-workspace-toolbar">
@@ -71,7 +76,11 @@ function SchedulePage({ theme, onToggleTheme, onOpenSettings, onOpenAdmin, onOpe
             <strong>{scheduleTitle}</strong>
           </div>
           <main className="flex-1 overflow-hidden schedule-calendar-main">
-            <CalendarView refreshKey={calendarRefreshKey} activeCalendarIds={activeCalendarIds} />
+            <CalendarView
+              refreshKey={calendarRefreshKey}
+              activeCalendarIds={activeCalendarIds}
+              openScheduleRequest={openScheduleRequest}
+            />
           </main>
         </section>
       </div>

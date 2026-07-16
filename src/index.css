@@ -1085,6 +1085,26 @@ t-chat-sender::part(send-btn):disabled,
 .schedule-calendar-popover-head button { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--td-text-color-secondary); }
 .schedule-calendar-scrim { position: absolute; z-index: 41; inset: 48px 0 0 340px; border: 0; background: rgba(15, 23, 42, .08); }
 .schedule-calendar-main { background: rgb(var(--color-background)); }
+.schedule-title-primary {
+  color: var(--td-text-color-primary) !important;
+  font-size: 14px;
+  font-weight: 760 !important;
+  line-height: 1.25;
+  letter-spacing: -.015em;
+}
+.schedule-title-primary.schedule-title-compact { font-size: 12.5px; }
+.ai-schedule-card {
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
+}
+.ai-schedule-card:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--td-brand-color) 36%, var(--td-border-level-1-color));
+  box-shadow: 0 7px 18px rgba(15, 23, 42, .08);
+}
+.ai-schedule-card:focus-visible {
+  outline: 2px solid var(--td-brand-color);
+  outline-offset: 2px;
+}
 .schedule-ai-composer { border: 1px solid var(--td-component-stroke); box-shadow: 0 3px 12px rgba(15, 23, 42, .04); }
 .schedule-ai-composer:focus-within { border-color: var(--td-brand-color); box-shadow: 0 0 0 3px var(--td-brand-color-light); }
 .schedule-ai-composer textarea { border: 0 !important; outline: 0 !important; box-shadow: none !important; }
