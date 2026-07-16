@@ -318,6 +318,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
 
 // ==================== 调试日志 Tab ====================
 function DebugLogsTab() {
+  const { authHeaders } = useAuth();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [category, setCategory] = useState('all');
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -327,14 +328,14 @@ function DebugLogsTab() {
 
   const fetchLogs = useCallback(async () => {
     try {
-      const res = await fetch(`/api/logs?category=${category}&limit=200`);
+      const res = await fetch(`/api/logs?category=${category}&limit=200`, { headers: authHeaders() });
       const data = await res.json();
       setLogs(data.logs || []);
       setTotal(data.total ?? 0);
     } catch (e) {
       console.error('获取日志失败', e);
     }
-  }, [category]);
+  }, [authHeaders, category]);
 
   useEffect(() => {
     if (autoRefresh) {
@@ -354,7 +355,7 @@ function DebugLogsTab() {
 
   const handleClearLogs = async () => {
     try {
-      await fetch('/api/logs', { method: 'DELETE' });
+      await fetch('/api/logs', { method: 'DELETE', headers: authHeaders() });
       setLogs([]);
       setTotal(0);
       MessagePlugin.success('日志已清空');

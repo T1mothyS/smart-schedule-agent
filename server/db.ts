@@ -35,6 +35,7 @@ async function initDb(): Promise<void> {
   db.run(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
       title TEXT NOT NULL,
       model TEXT NOT NULL,
       sdk_session_id TEXT,
@@ -68,6 +69,17 @@ async function initDb(): Promise<void> {
       last_login_at TEXT
     )
   `);
+
+  const sessionColumns = queryAll<{ name: string }>('PRAGMA table_info(sessions)');
+  if (!sessionColumns.some(column => column.name === 'user_id')) {
+    db.run('ALTER TABLE sessions ADD COLUMN user_id TEXT');
+  }
+  const legacySessionOwner = queryOne<{ id: string }>(
+    "SELECT id FROM users ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, created_at ASC LIMIT 1"
+  );
+  if (legacySessionOwner) {
+    db.run("UPDATE sessions SET user_id = ? WHERE user_id IS NULL OR user_id = ''", [legacySessionOwner.id]);
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS email_codes (
@@ -131,6 +143,7 @@ async function initDb(): Promise<void> {
 
   // 创建索引
   db.run('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email)');
 
   // 保存到文件
@@ -175,6 +188,7 @@ function run(sql: string, params: any[] = []): { changes: number } {
 // 类型定义
 export interface DbSession {
   id: string;
+  user_id: string;
   title: string;
   model: string;
   sdk_session_id: string | null;
@@ -241,23 +255,23 @@ export interface DbUserApiKey {
 
 // ============= 会话操作 =============
 
-export function getAllSessions(): DbSession[] {
-  return queryAll<DbSession>('SELECT * FROM sessions ORDER BY updated_at DESC');
+export function getAllSessions(userId: string): DbSession[] {
+  return queryAll<DbSession>('SELECT * FROM sessions WHERE user_id = ? ORDER BY updated_at DESC', [userId]);
 }
 
-export function getSession(id: string): DbSession | undefined {
-  return queryOne<DbSession>('SELECT * FROM sessions WHERE id = ?', [id]);
+export function getSession(id: string, userId: string): DbSession | undefined {
+  return queryOne<DbSession>('SELECT * FROM sessions WHERE id = ? AND user_id = ?', [id, userId]);
 }
 
 export function createSession(session: DbSession): DbSession {
   run(
-    'INSERT INTO sessions (id, title, model, sdk_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [session.id, session.title, session.model, session.sdk_session_id, session.created_at, session.updated_at]
+    'INSERT INTO sessions (id, user_id, title, model, sdk_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [session.id, session.user_id, session.title, session.model, session.sdk_session_id, session.created_at, session.updated_at]
   );
   return session;
 }
 
-export function updateSession(id: string, updates: Partial<Pick<DbSession, 'title' | 'model' | 'sdk_session_id'>>): boolean {
+export function updateSession(id: string, userId: string, updates: Partial<Pick<DbSession, 'title' | 'model' | 'sdk_session_id'>>): boolean {
   const fields: string[] = [];
   const values: any[] = [];
 
@@ -279,30 +293,36 @@ export function updateSession(id: string, updates: Partial<Pick<DbSession, 'titl
   fields.push('updated_at = ?');
   values.push(new Date().toISOString());
   values.push(id);
+  values.push(userId);
 
-  const result = run(`UPDATE sessions SET ${fields.join(', ')} WHERE id = ?`, values);
+  const result = run(`UPDATE sessions SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, values);
   return result.changes > 0;
 }
 
-export function deleteSession(id: string): boolean {
+export function deleteSession(id: string, userId: string): boolean {
+  if (!getSession(id, userId)) return false;
   run('DELETE FROM messages WHERE session_id = ?', [id]);
-  const result = run('DELETE FROM sessions WHERE id = ?', [id]);
+  const result = run('DELETE FROM sessions WHERE id = ? AND user_id = ?', [id, userId]);
   return result.changes > 0;
 }
 
 // ============= 消息操作 =============
 
-export function getMessagesBySession(sessionId: string): DbMessage[] {
-  return queryAll<DbMessage>('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC', [sessionId]);
+export function getMessagesBySession(sessionId: string, userId: string): DbMessage[] {
+  return queryAll<DbMessage>(
+    'SELECT messages.* FROM messages JOIN sessions ON sessions.id = messages.session_id WHERE messages.session_id = ? AND sessions.user_id = ? ORDER BY messages.created_at ASC',
+    [sessionId, userId]
+  );
 }
 
-export function createMessage(message: DbMessage): DbMessage {
+export function createMessage(message: DbMessage, userId: string): DbMessage {
+  if (!getSession(message.session_id, userId)) throw new Error('会话不存在或无权访问');
   run(
     'INSERT INTO messages (id, session_id, role, content, model, created_at, tool_calls) VALUES (?, ?, ?, ?, ?, ?, ?)',
     [message.id, message.session_id, message.role, message.content, message.model, message.created_at, message.tool_calls]
   );
 
-  run('UPDATE sessions SET updated_at = ? WHERE id = ?', [new Date().toISOString(), message.session_id]);
+  run('UPDATE sessions SET updated_at = ? WHERE id = ? AND user_id = ?', [new Date().toISOString(), message.session_id, userId]);
 
   return message;
 }
@@ -333,9 +353,9 @@ export function deleteMessage(id: string): boolean {
   return result.changes > 0;
 }
 
-export function createMessages(messages: DbMessage[]): void {
+export function createMessages(messages: DbMessage[], userId: string): void {
   for (const msg of messages) {
-    createMessage(msg);
+    createMessage(msg, userId);
   }
 }
 
@@ -541,13 +561,11 @@ export function deleteUser(userId: string): boolean {
   try {
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
-    run('DELETE FROM sessions WHERE id IN (SELECT session_id FROM messages WHERE session_id IN (SELECT id FROM sessions WHERE 1=1))', []);
-    // 删除用户的所有会话和消息
-    const sessions = queryAll<{ id: string }>('SELECT id FROM sessions', []);
+    const sessions = queryAll<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', [userId]);
     for (const session of sessions) {
       run('DELETE FROM messages WHERE session_id = ?', [session.id]);
     }
-    run('DELETE FROM sessions', []);
+    run('DELETE FROM sessions WHERE user_id = ?', [userId]);
     const result = run('DELETE FROM users WHERE id = ?', [userId]);
     return result.changes > 0;
   } catch (error) {
@@ -560,7 +578,10 @@ export function clearUserData(userId: string): { schedules: number; sessions: nu
   try {
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
-    return { schedules: 0, sessions: 0 };
+    const sessions = queryAll<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', [userId]);
+    for (const session of sessions) run('DELETE FROM messages WHERE session_id = ?', [session.id]);
+    run('DELETE FROM sessions WHERE user_id = ?', [userId]);
+    return { schedules: 0, sessions: sessions.length };
   } catch (error) {
     console.error('[DB] Clear user data error:', error);
     return { schedules: 0, sessions: 0 };

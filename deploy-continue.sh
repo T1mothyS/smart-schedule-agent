@@ -8,12 +8,12 @@ cd ~/smart-schedule-agent
 echo "=== 安装依赖 ==="
 npm ci
 
-echo "=== 构建前端 ==="
-npm run build
+echo "=== 上线前检查 ==="
+npm run typecheck
+npm test
 
-echo "=== 复制 dist 到 server/public ==="
-mkdir -p server/public
-cp -r dist/* server/public/
+echo "=== 构建生产文件 ==="
+npm run build
 
 if [ ! -f .env ]; then
   cp .env.example .env

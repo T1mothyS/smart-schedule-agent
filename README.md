@@ -92,7 +92,7 @@ CODEBUDDY_API_KEY=你的CodeBuddy_API_Key
 PORT=3000
 APP_TIMEZONE=Asia/Shanghai
 APP_URL=http://localhost:5173/today
-NODE_ENV=development
+APP_ENV=development
 ```
 
 不要把真实密钥、授权码或邀请码写进 `.env.example`，也不要提交 `.env`。
@@ -240,7 +240,7 @@ cp .env.example .env
 | `PORT` | 否 | 后端监听端口，默认 `3000` |
 | `APP_TIMEZONE` | 建议 | 业务时区，当前建议 `Asia/Shanghai` |
 | `APP_URL` | 是 | 邮件按钮跳转地址；生产环境填写 HTTPS 域名，例如 `https://example.com/today` |
-| `NODE_ENV` | 是 | 本地为 `development`，服务器为 `production` |
+| `APP_ENV` | 是 | 本地为 `development`，服务器为 `production`；避免 Vite 读取 `NODE_ENV` 产生构建警告 |
 
 ### 6.4 备份与 OSS
 
@@ -355,8 +355,7 @@ cp .env.example .env
 | `server/ai-import-service.ts` | 自然语言/截图解析、置信度草稿、确认和过期清理 |
 | `server/core.test.ts` | 核心业务测试：月末、逾期完成、附件、用户隔离、备份和 AI 草稿等 |
 | `server/sql-js.d.ts` | 为 `sql.js` 补充项目所需的 TypeScript 类型声明 |
-| `server/public/index.html` | 服务器直接提供的已构建 Web 入口，不是主要源码 |
-| `server/public/assets/*` | 已构建的 CSS/JS 资源；由 `dist` 复制产生，不应手工修改 |
+| `server/public/` | 旧版静态产物目录，仅为兼容历史部署保留；当前生产服务直接读取 `dist/` |
 
 ### 7.4 `electron/` 桌面端
 
@@ -530,7 +529,7 @@ pm2 restart smart-schedule --update-env
 
 ### 能否直接编辑 `server/public/assets` 或 `dist`
 
-不要。它们是构建产物，下一次构建会覆盖。应修改 `src/`，然后重新执行 `npm run build:client` 并按部署文档更新 `server/public`。
+不要。它们是构建产物，下一次构建会覆盖。应修改 `src/`，然后重新执行 `npm run build:client`；生产服务会直接读取最新的 `dist/`。
 
 ## 14. 安全边界
 

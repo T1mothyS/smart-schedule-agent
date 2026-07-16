@@ -34,6 +34,7 @@
     "imapflow": "^1.4.7",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.563.0",
+    "lunar-javascript": "^1.7.7",
     "mailparser": "^3.9.14",
     "node-cron": "^4.2.1",
     "nodemailer": "^9.0.3",

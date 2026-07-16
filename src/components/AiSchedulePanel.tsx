@@ -43,6 +43,7 @@ interface AiSchedulePanelProps {
   onSchedulesCreated?: (schedules: Schedule[]) => void;
   activeCalendarIds?: string[];
   onOpenSchedule?: (id: string) => void;
+  onOpenScheduleMenu?: (id: string, x: number, y: number) => void;
 }
 
 // ==================== 常量 ====================
@@ -91,10 +92,11 @@ function formatDate(isoStr: string): string {
 
 // ==================== 日程卡片 ====================
 
-function ScheduleMiniCard({ schedule, calendars, onOpen }: {
+function ScheduleMiniCard({ schedule, calendars, onOpen, onOpenMenu }: {
   schedule: Schedule;
   calendars: CalendarItem[];
   onOpen?: (id: string) => void;
+  onOpenMenu?: (id: string, x: number, y: number) => void;
 }) {
   const color = CATEGORY_COLORS[schedule.category] || '#6B7280';
   const pColor = PRIORITY_COLORS[schedule.priority] || '#F59E0B';
@@ -113,6 +115,17 @@ function ScheduleMiniCard({ schedule, calendars, onOpen }: {
         borderLeft: `3px solid ${pColor}`,
       }}
       onClick={() => onOpen?.(schedule.id)}
+      onContextMenu={event => {
+        event.preventDefault();
+        onOpenMenu?.(schedule.id, event.clientX, event.clientY);
+      }}
+      onKeyDown={event => {
+        if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+          onOpenMenu?.(schedule.id, rect.left + 24, rect.top + 24);
+        }
+      }}
       aria-label={`打开日程详情：${schedule.title}`}
     >
       <div className="flex items-center gap-1.5 mb-1.5 min-w-0">
@@ -157,10 +170,11 @@ function ScheduleMiniCard({ schedule, calendars, onOpen }: {
 
 // ==================== 消息气泡 ====================
 
-function MessageBubble({ msg, calendars, onOpenSchedule }: {
+function MessageBubble({ msg, calendars, onOpenSchedule, onOpenScheduleMenu }: {
   msg: ChatMessage;
   calendars: CalendarItem[];
   onOpenSchedule?: (id: string) => void;
+  onOpenScheduleMenu?: (id: string, x: number, y: number) => void;
 }) {
   const isUser = msg.role === 'user';
 
@@ -229,6 +243,7 @@ function MessageBubble({ msg, calendars, onOpenSchedule }: {
                     schedule={schedule}
                     calendars={calendars}
                     onOpen={onOpenSchedule}
+                    onOpenMenu={onOpenScheduleMenu}
                   />
                 ))}
               </div>
@@ -242,7 +257,7 @@ function MessageBubble({ msg, calendars, onOpenSchedule }: {
 
 // ==================== 主组件 ====================
 
-export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds, onOpenSchedule }: AiSchedulePanelProps) {
+export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds, onOpenSchedule, onOpenScheduleMenu }: AiSchedulePanelProps) {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -454,6 +469,7 @@ export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds, onOpenS
             msg={msg}
             calendars={calendars}
             onOpenSchedule={onOpenSchedule}
+            onOpenScheduleMenu={onOpenScheduleMenu}
           />
         ))}
 

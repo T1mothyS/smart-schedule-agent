@@ -93,6 +93,31 @@ test('日历按用户隔离并自动迁移默认日历', () => {
   assert.equal(own.some(item => other.some(candidate => candidate.id === item.id)), false);
 });
 
+test('AI 会话和消息按用户隔离', () => {
+  const otherUserId = 'other-session-user';
+  db.createUser({
+    id: otherUserId,
+    email: 'other-session@example.com',
+    password_hash: 'not-a-real-password',
+    role: 'user',
+    disabled: 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+  const now = new Date().toISOString();
+  db.createSession({ id: 'session-user-a', user_id: userId, title: '用户 A', model: 'test', sdk_session_id: null, created_at: now, updated_at: now });
+  db.createSession({ id: 'session-user-b', user_id: otherUserId, title: '用户 B', model: 'test', sdk_session_id: null, created_at: now, updated_at: now });
+  db.createMessage({ id: 'message-user-a', session_id: 'session-user-a', role: 'user', content: 'A 私有消息', model: null, created_at: now, tool_calls: null }, userId);
+
+  assert.equal(db.getAllSessions(userId).some(item => item.id === 'session-user-b'), false);
+  assert.equal(db.getSession('session-user-b', userId), undefined);
+  assert.equal(db.getMessagesBySession('session-user-a', otherUserId).length, 0);
+  assert.throws(
+    () => db.createMessage({ id: 'message-cross-user', session_id: 'session-user-a', role: 'user', content: '越权', model: null, created_at: now, tool_calls: null }, otherUserId),
+    /无权访问/,
+  );
+});
+
 test('通用周期任务、逾期手动完成和下一周期生成', () => {
   const upcomingDueDate = reminders.addDays(reminders.todayInTimezone(), 1);
   const task = reminders.createReminderTask({

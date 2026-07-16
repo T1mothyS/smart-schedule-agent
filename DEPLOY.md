@@ -37,7 +37,7 @@ cd /root/smart-schedule-agent
 npm ci
 cp .env.example .env
 chmod 600 .env
-mkdir -p data server/public
+mkdir -p data
 ```
 
 编辑 `.env`，至少填写：
@@ -50,13 +50,12 @@ mkdir -p data server/public
 
 邮箱自动识别是可选能力。启用时再填写 `IMAP_PASS`，并在 163 邮箱后台开启 IMAP/SMTP；SMTP 和 IMAP 可以使用同一官方邮箱，但授权码应按邮箱后台实际配置为准。
 
-构建并复制静态文件：
+检查并构建生产文件：
 
 ```bash
 npm run typecheck
 npm test
 npm run build
-cp -r dist/. server/public/
 ```
 
 ## 4. PM2 启动
@@ -146,7 +145,6 @@ git pull --ff-only
 npm ci
 npm test
 npm run build
-cp -r dist/. server/public/
 pm2 restart smart-schedule --update-env
 ```
 

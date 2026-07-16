@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ChevronDown, ChevronLeft, ChevronRight, Plus, MapPin, Clock, CheckCircle2,
-  Circle, Trash2, Edit3, Calendar, LayoutList, LayoutGrid, X, Bell, AlertTriangle
+  Circle, Trash2, Edit3, Calendar, CalendarDays, LayoutList, LayoutGrid, X, Bell, AlertTriangle
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { 
   startOfWeek, endOfWeek, startOfMonth, endOfMonth, isWithinInterval 
 } from 'date-fns';
+import { AgendaView } from './calendar/AgendaView';
+import { ScheduleContextMenu } from './calendar/ScheduleContextMenu';
+import { getCalendarDayMeta } from './calendar/calendarMeta';
 
 // ==================== 类型定义 ====================
 
@@ -31,7 +34,7 @@ export interface Schedule {
   updated_at: string;
 }
 
-type ViewMode = 'day' | 'week' | 'month';
+type ViewMode = 'agenda' | 'day' | 'week' | 'month';
 
 // ==================== 常量 ====================
 
@@ -1002,6 +1005,8 @@ function ScheduleChip({
   if (compact) {
     return (
       <div
+        data-schedule-id={schedule.id}
+        tabIndex={0}
         className="rounded px-1.5 py-0.5 text-xs cursor-pointer truncate mb-0.5 flex items-center gap-1"
         style={{
           backgroundColor: `${pColor.dot}20`,
@@ -1039,6 +1044,8 @@ function ScheduleChip({
 
   return (
     <div
+      data-schedule-id={schedule.id}
+      tabIndex={0}
       className="group rounded-xl p-3 cursor-pointer transition-all hover:shadow-sm relative"
       style={{
         background: `linear-gradient(135deg, ${pColor.dot}12, ${catColor}08)`,
@@ -1244,6 +1251,8 @@ function DayView({
               return (
                 <div
                   key={s.id}
+                  data-schedule-id={s.id}
+                  tabIndex={0}
                   className="group px-3 py-1.5 rounded-lg text-xs cursor-pointer transition-all hover:scale-105 flex items-center gap-1.5"
                   style={{
                     backgroundColor: `${color}15`,
@@ -1316,6 +1325,8 @@ function DayView({
                       return (
                         <div
                           key={s.id}
+                          data-schedule-id={s.id}
+                          tabIndex={0}
                           className="rounded-lg px-1.5 py-1 cursor-pointer overflow-hidden group flex-shrink-0"
                           style={{
                             height: '44px',
@@ -1383,6 +1394,8 @@ function DayView({
                     return (
                       <div
                         key={s.id}
+                        data-schedule-id={s.id}
+                        tabIndex={0}
                         className="absolute rounded-lg px-1 py-0.5 cursor-pointer overflow-hidden group"
                         style={{
                           top: `${topPercent}%`,
@@ -1509,7 +1522,7 @@ function DayView({
 // ==================== 周视图 ====================
 
 function WeekView({
-  weekStart, schedules, onToggle, onDelete, onEdit, onClickSchedule, onClickDay, conflictingIds, activeCalendars,
+  weekStart, schedules, onToggle, onDelete, onEdit, onClickSchedule, onClickDay, conflictingIds, activeCalendars, showLunar, showFestivals,
 }: {
   weekStart: Date;
   schedules: Schedule[];
@@ -1520,6 +1533,8 @@ function WeekView({
   onClickDay: (d: Date) => void;
   conflictingIds?: Set<string>;
   activeCalendars?: Array<{ id: string; name: string; color: string; icon: string }>;
+  showLunar?: boolean;
+  showFestivals?: boolean;
 }) {
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(weekStart);
@@ -1545,6 +1560,10 @@ function WeekView({
         {days.map((day, i) => {
           const isToday = isSameDay(day, today);
           const todoCount = getDayTimedTodos(day).length; // 只显示待办的红点
+          const dayMeta = getCalendarDayMeta(day);
+          const dayMetaLabel = showFestivals && (dayMeta.festivals[0] || dayMeta.solarTerm)
+            ? (dayMeta.festivals[0] || dayMeta.solarTerm)
+            : showLunar ? dayMeta.lunarLabel : '';
           return (
             <div
               key={i}
@@ -1570,6 +1589,7 @@ function WeekView({
                   </span>
                 )}
               </div>
+              {dayMetaLabel && <div className="calendar-cell-meta">{dayMetaLabel}</div>}
             </div>
           );
         })}
@@ -1601,6 +1621,8 @@ function WeekView({
                 return (
                   <div
                     key={item.id}
+                    data-schedule-id={item.id}
+                    tabIndex={0}
                     className="rounded-md px-1.5 py-0.5 cursor-pointer text-xs truncate mb-0.5 flex items-center gap-1 transition-all hover:scale-105"
                     style={{
                       backgroundColor: `${color}18`,
@@ -1649,6 +1671,8 @@ function WeekView({
               {timedTodos.map(s => (
                 <div
                   key={s.id}
+                  data-schedule-id={s.id}
+                  tabIndex={0}
                   className="rounded px-1 py-0.5 cursor-pointer text-xs truncate mb-0.5 flex items-center gap-1"
                   style={{
                     backgroundColor: `${PRIORITY_COLORS[s.priority]?.dot || '#F59E0B'}15`,
@@ -1702,6 +1726,8 @@ function WeekView({
                       return (
                         <div
                           key={s.id}
+                          data-schedule-id={s.id}
+                          tabIndex={0}
                           className="rounded px-1 py-0.5 cursor-pointer text-xs truncate mb-0.5 flex items-center gap-1"
                           style={{
                             backgroundColor: `${pColor.dot}22`,
@@ -1756,7 +1782,7 @@ function WeekView({
 // ==================== 月视图 ====================
 
 function MonthView({
-  year, month, schedules, selectedDate, onSelectDate, onToggle, onClickSchedule, conflictingIds, activeCalendars,
+  year, month, schedules, selectedDate, onSelectDate, onToggle, onClickSchedule, conflictingIds, activeCalendars, showLunar, showFestivals,
 }: {
   year: number;
   month: number;
@@ -1767,6 +1793,8 @@ function MonthView({
   onClickSchedule?: (s: Schedule) => void;
   conflictingIds?: Set<string>;
   activeCalendars?: Array<{ id: string; name: string; color: string; icon: string }>;
+  showLunar?: boolean;
+  showFestivals?: boolean;
 }) {
   const dates = getMonthDates(year, month);
   const today = new Date();
@@ -1800,6 +1828,10 @@ function MonthView({
           const timedTodos = getDayTimedTodos(date);
           const timedEvents = getDayTimedEvents(date);
           const maxShow = 2;
+          const dayMeta = getCalendarDayMeta(date);
+          const dayMetaLabel = showFestivals && (dayMeta.festivals[0] || dayMeta.solarTerm)
+            ? (dayMeta.festivals[0] || dayMeta.solarTerm)
+            : showLunar ? dayMeta.lunarLabel : '';
 
           return (
             <div
@@ -1831,6 +1863,7 @@ function MonthView({
               >
                 {date.getDate()}
               </div>
+              {dayMetaLabel && <div className="calendar-cell-meta month">{dayMetaLabel}</div>}
 
               {/* 【改进】全天事件+全天待办悬浮Banner区域 */}
               {allDayItems.length > 0 && (
@@ -1846,13 +1879,15 @@ function MonthView({
                     return (
                       <div
                         key={item.id}
+                        data-schedule-id={item.id}
+                        tabIndex={0}
                         className="rounded px-1 py-0.5 text-xs truncate cursor-pointer flex items-center gap-0.5 transition-all hover:scale-105"
                         style={{
                           backgroundColor: `${color}20`,
                           color: color,
                           border: `1px solid ${color}35`,
                         }}
-                        onClick={() => onSelectDate(date)}
+                        onClick={event => { event.stopPropagation(); onClickSchedule?.(item); }}
                         title={item.title}
                       >
                         {isTodo && (
@@ -1881,12 +1916,14 @@ function MonthView({
                   {timedTodos.slice(0, 1).map(s => (
                     <div
                       key={s.id}
+                      data-schedule-id={s.id}
+                      tabIndex={0}
                       className="rounded px-1 py-0.5 text-xs truncate cursor-pointer flex items-center gap-0.5"
                       style={{
                         backgroundColor: `${PRIORITY_COLORS[s.priority]?.dot || '#F59E0B'}15`,
                         color: PRIORITY_COLORS[s.priority]?.dot || '#F59E0B',
                       }}
-                      onClick={() => onSelectDate(date)}
+                      onClick={event => { event.stopPropagation(); onClickSchedule?.(s); }}
                     >
                       <button
                         onClick={e => { e.stopPropagation(); onToggle?.(s.id); }}
@@ -1922,7 +1959,7 @@ function MonthView({
                           !
                         </span>
                       )}
-                      <ScheduleChip schedule={s} compact calendar={activeCalendars?.find(c => c.id === s.calendar_id)} />
+                      <ScheduleChip schedule={s} compact onClick={onClickSchedule} calendar={activeCalendars?.find(c => c.id === s.calendar_id)} />
                     </div>
                   );
                 })}
@@ -2067,13 +2104,27 @@ function ScheduleDetailModal({
 
 export interface CalendarViewProps {
   refreshKey?: number;
-  activeCalendarIds?: string[];  // 当前激活的日程表 ID 列表（空=全部显示）
+  activeCalendarIds?: string[];
   openScheduleRequest?: { id: string; nonce: number } | null;
+  openScheduleMenuRequest?: { id: string; x: number; y: number; nonce: number } | null;
+  selectedDate?: Date;
+  onSelectedDateChange?: (date: Date) => void;
+  showLunar?: boolean;
+  showFestivals?: boolean;
 }
 
-export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRequest }: CalendarViewProps) {
-  const [viewMode, setViewMode] = useState<ViewMode>('day');
-  const [currentDate, setCurrentDate] = useState<Date>(new Date());
+export function CalendarView({
+  refreshKey = 0,
+  activeCalendarIds,
+  openScheduleRequest,
+  openScheduleMenuRequest,
+  selectedDate,
+  onSelectedDateChange,
+  showLunar = true,
+  showFestivals = true,
+}: CalendarViewProps) {
+  const [viewMode, setViewMode] = useState<ViewMode>('agenda');
+  const [currentDate, setCurrentDate] = useState<Date>(selectedDate || new Date());
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [calendars, setCalendars] = useState<Array<{ id: string; name: string; color: string; icon: string }>>([]);
   const [loading, setLoading] = useState(false);
@@ -2082,6 +2133,18 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
   const [selectedSchedule, setSelectedSchedule] = useState<Schedule | null>(null);
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
   const [notifPermission, setNotifPermission] = useState<string>('default');
+  const [contextMenu, setContextMenu] = useState<{ schedule: Schedule; x: number; y: number } | null>(null);
+
+  const updateCurrentDate = useCallback((date: Date) => {
+    const next = new Date(date);
+    setCurrentDate(next);
+    onSelectedDateChange?.(next);
+  }, [onSelectedDateChange]);
+
+  useEffect(() => {
+    if (!selectedDate || isSameDay(selectedDate, currentDate)) return;
+    setCurrentDate(new Date(selectedDate));
+  }, [selectedDate?.getTime()]);
 
   // 获取日程表列表
   useEffect(() => {
@@ -2153,14 +2216,26 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
       .then(data => {
         if (cancelled || !data?.schedule) return;
         const schedule = data.schedule as Schedule;
-        setCurrentDate(new Date(schedule.start_time));
-        setViewMode('day');
+        updateCurrentDate(new Date(schedule.start_time));
         setEditingSchedule(null);
         setSelectedSchedule(schedule);
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [openScheduleRequest?.nonce]);
+  }, [openScheduleRequest?.nonce, updateCurrentDate]);
+
+  useEffect(() => {
+    if (!openScheduleMenuRequest) return;
+    let cancelled = false;
+    fetch('/api/schedules/' + openScheduleMenuRequest.id, { headers: authHeaders() })
+      .then(response => response.ok ? response.json() : null)
+      .then(data => {
+        if (cancelled || !data?.schedule) return;
+        setContextMenu({ schedule: data.schedule as Schedule, x: openScheduleMenuRequest.x, y: openScheduleMenuRequest.y });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [openScheduleMenuRequest?.nonce]);
 
   // 根据激活的日程表过滤
   const visibleSchedules = (activeCalendarIds && activeCalendarIds.length > 0)
@@ -2172,7 +2247,8 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
     if (viewMode === 'day') d.setDate(d.getDate() - 1);
     else if (viewMode === 'week') d.setDate(d.getDate() - 7);
     else { d.setMonth(d.getMonth() - 1); d.setDate(1); }
-    setCurrentDate(d);
+    updateCurrentDate(d);
+    setContextMenu(null);
   };
 
   const navigateNext = () => {
@@ -2180,13 +2256,17 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
     if (viewMode === 'day') d.setDate(d.getDate() + 1);
     else if (viewMode === 'week') d.setDate(d.getDate() + 7);
     else { d.setMonth(d.getMonth() + 1); d.setDate(1); }
-    setCurrentDate(d);
+    updateCurrentDate(d);
+    setContextMenu(null);
   };
 
-  const goToday = () => setCurrentDate(new Date());
+  const goToday = () => {
+    updateCurrentDate(new Date());
+    setContextMenu(null);
+  };
 
   const headerTitle = () => {
-    if (viewMode === 'day') {
+    if (viewMode === 'agenda' || viewMode === 'day') {
       return currentDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
         + ' · ' + WEEKDAY_LABELS[currentDate.getDay()];
     }
@@ -2259,12 +2339,12 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
   };
 
   const handleMonthDayClick = (day: Date) => {
-    setCurrentDate(day);
+    updateCurrentDate(day);
     setViewMode('day');
   };
 
   const handleWeekDayClick = (day: Date) => {
-    setCurrentDate(day);
+    updateCurrentDate(day);
     setViewMode('day');
   };
 
@@ -2298,7 +2378,26 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
   const todoInfo = getTodoCount();
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
+    <div
+      className="calendar-v2-root flex flex-col h-full overflow-hidden"
+      style={{ backgroundColor: 'var(--td-bg-color-container)' }}
+      onContextMenuCapture={event => {
+        const card = (event.target as HTMLElement).closest<HTMLElement>('[data-schedule-id]');
+        const schedule = card ? schedules.find(item => item.id === card.dataset.scheduleId) : null;
+        if (!schedule) return;
+        event.preventDefault();
+        setContextMenu({ schedule, x: event.clientX, y: event.clientY });
+      }}
+      onKeyDownCapture={event => {
+        if (!((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu')) return;
+        const card = (event.target as HTMLElement).closest<HTMLElement>('[data-schedule-id]');
+        const schedule = card ? schedules.find(item => item.id === card.dataset.scheduleId) : null;
+        if (!schedule || !card) return;
+        event.preventDefault();
+        const rect = card.getBoundingClientRect();
+        setContextMenu({ schedule, x: rect.left + 28, y: rect.top + 28 });
+      }}
+    >
       {/* 顶部工具栏 */}
       <div
         className="flex items-center justify-between px-4 py-3 flex-shrink-0"
@@ -2333,7 +2432,12 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
           <span className="calendar-toolbar-date" style={{ color: 'var(--td-text-color-primary)' }}>
             {headerTitle()}
           </span>
-          {viewMode === 'day' && isToday && <span className="calendar-today-badge">今天</span>}
+          {(viewMode === 'agenda' || viewMode === 'day') && isToday && <span className="calendar-today-badge">今天</span>}
+          {(showLunar || showFestivals) && (() => {
+            const meta = getCalendarDayMeta(currentDate);
+            const label = [showLunar ? meta.lunarFullLabel : '', showFestivals ? (meta.festivals[0] || meta.solarTerm) : ''].filter(Boolean).join(' · ');
+            return label ? <span className="calendar-toolbar-meta">{label}</span> : null;
+          })()}
           {todoInfo && (
             <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#EF444420', color: '#EF4444' }}>
               {todoInfo.label} {todoInfo.count} 项
@@ -2344,9 +2448,10 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--td-component-stroke)' }}>
             {([
+              { key: 'agenda', label: '日程', Icon: LayoutList },
               { key: 'day', label: '日', Icon: Calendar },
-              { key: 'week', label: '周', Icon: LayoutList },
-              { key: 'month', label: '月', Icon: LayoutGrid },
+              { key: 'week', label: '周', Icon: LayoutGrid },
+              { key: 'month', label: '月', Icon: CalendarDays },
             ] as { key: ViewMode; label: string; Icon: any }[]).map(({ key, label, Icon }) => (
               <button
                 key={key}
@@ -2456,6 +2561,22 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
           </div>
         ) : (
           (() => {
+            if (viewMode === 'agenda') {
+              return (
+                <AgendaView
+                  schedules={visibleSchedules}
+                  selectedDate={currentDate}
+                  calendars={calendars}
+                  showLunar={showLunar}
+                  showFestivals={showFestivals}
+                  onSelectDate={updateCurrentDate}
+                  onOpenSchedule={setSelectedSchedule}
+                  onToggleSchedule={handleToggle}
+                  onOpenContextMenu={(schedule, x, y) => setContextMenu({ schedule, x, y })}
+                />
+              );
+            }
+
             // 计算当前视图日期范围的冲突信息（统一计算，供所有视图使用）
             // 日视图：包括待办任务用于冲突排版（但不提示冲突）
             const getViewDateSchedules = () => {
@@ -2514,6 +2635,8 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
                   onClickDay={handleWeekDayClick}
                   conflictingIds={conflictingIds}
                   activeCalendars={calendars}
+                  showLunar={showLunar}
+                  showFestivals={showFestivals}
                 />
               );
             } else {
@@ -2528,6 +2651,8 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
                   onClickSchedule={setSelectedSchedule}
                   conflictingIds={conflictingIds}
                   activeCalendars={calendars}
+                  showLunar={showLunar}
+                  showFestivals={showFestivals}
                 />
               );
             }
@@ -2565,6 +2690,18 @@ export function CalendarView({ refreshKey = 0, activeCalendarIds, openScheduleRe
           onToggle={handleToggle}
           onEdit={(s) => { setSelectedSchedule(null); setEditingSchedule(s); }}
           calendar={calendars.find(c => c.id === selectedSchedule.calendar_id)}
+        />
+      )}
+
+      {contextMenu && (
+        <ScheduleContextMenu
+          schedule={contextMenu.schedule}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+          onEdit={schedule => { setSelectedSchedule(null); setEditingSchedule(schedule); }}
+          onToggle={handleToggle}
+          onDelete={handleDelete}
         />
       )}
     </div>

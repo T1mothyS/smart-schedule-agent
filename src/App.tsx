@@ -5,7 +5,7 @@ import { useSessions } from './hooks/useSessions';
 import { useModels } from './hooks/useModels';
 import { useChat } from './hooks/useChat';
 import { useAuth } from './hooks/useAuth';
-import { CalendarDays, PanelLeft, X } from 'lucide-react';
+import { CalendarDays, Check, MoonStar, PartyPopper } from 'lucide-react';
 
 import { SettingsPage } from './components/SettingsPage';
 import { AdminModal } from './components/AdminModal';
@@ -17,6 +17,7 @@ import { ReminderPage } from './components/ReminderPage';
 import { AppShell } from './components/AppShell';
 import { ActionCenterPage } from './components/ActionCenterPage';
 import { AiImportPage } from './components/AiImportPage';
+import { MiniMonthCalendar } from './components/calendar/MiniMonthCalendar';
 
 // ==================== 日程主页（三栏布局） ====================
 
@@ -32,13 +33,14 @@ interface SchedulePageProps {
   onLogout?: () => void;
 }
 
-function SchedulePage({ theme, onToggleTheme, onOpenSettings, onOpenAdmin, onOpenReminders, user, onLogout }: SchedulePageProps) {
+function SchedulePage({ user }: SchedulePageProps) {
   const [calendarRefreshKey, setCalendarRefreshKey] = useState(0);
   const [activeCalendarIds, setActiveCalendarIds] = useState<string[]>([]);
-  const [calendarNames, setCalendarNames] = useState<Record<string, string>>({});
-  const [scheduleTitle, setScheduleTitle] = useState('全部日程');
-  const [showCalendarPanel, setShowCalendarPanel] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showLunar, setShowLunar] = useState(() => localStorage.getItem(`calendar:show-lunar:${user?.id || 'default'}`) !== 'false');
+  const [showFestivals, setShowFestivals] = useState(() => localStorage.getItem(`calendar:show-festivals:${user?.id || 'default'}`) !== 'false');
   const [openScheduleRequest, setOpenScheduleRequest] = useState<{ id: string; nonce: number } | null>(null);
+  const [openScheduleMenuRequest, setOpenScheduleMenuRequest] = useState<{ id: string; x: number; y: number; nonce: number } | null>(null);
 
   const handleSchedulesCreated = useCallback(() => {
     setCalendarRefreshKey(prev => prev + 1);
@@ -46,55 +48,70 @@ function SchedulePage({ theme, onToggleTheme, onOpenSettings, onOpenAdmin, onOpe
 
   const handleActiveChange = useCallback((ids: string[]) => {
     setActiveCalendarIds(ids);
-    const names = ids.map(id => calendarNames[id]).filter(Boolean);
-    if (names.length === 0 || names.length === Object.keys(calendarNames).length) {
-      setScheduleTitle('全部日程');
-    } else {
-      setScheduleTitle(names.join(' + '));
-    }
-  }, [calendarNames]);
-
-  const handleCalendarsLoaded = useCallback((names: Record<string, string>) => {
-    setCalendarNames(names);
   }, []);
+
+  const updateSystemCalendar = (type: 'lunar' | 'festival') => {
+    if (type === 'lunar') {
+      setShowLunar(value => {
+        localStorage.setItem(`calendar:show-lunar:${user?.id || 'default'}`, String(!value));
+        return !value;
+      });
+    } else {
+      setShowFestivals(value => {
+        localStorage.setItem(`calendar:show-festivals:${user?.id || 'default'}`, String(!value));
+        return !value;
+      });
+    }
+  };
 
   return (
     <div className="schedule-workspace">
-      <div className="flex flex-1 overflow-hidden schedule-workspace-body">
-        <aside className="schedule-ai-primary">
-          <AiSchedulePanel
-            onSchedulesCreated={handleSchedulesCreated}
-            onOpenSchedule={(id) => setOpenScheduleRequest({ id, nonce: Date.now() })}
-            activeCalendarIds={activeCalendarIds}
-          />
+      <div className="schedule-workspace-body">
+        <aside className="schedule-left-rail">
+          <MiniMonthCalendar selectedDate={selectedDate} onSelectDate={setSelectedDate} showLunar={showLunar} />
+          <div className="schedule-calendar-sources">
+            <ScheduleSidebar activeCalendarIds={activeCalendarIds} onActiveChange={handleActiveChange} />
+            <div className="system-calendar-list">
+              <div className="system-calendar-heading">其他日历</div>
+              <button type="button" onClick={() => updateSystemCalendar('lunar')} className={showLunar ? 'active' : ''}>
+                <span className="system-calendar-check">{showLunar && <Check size={11} />}</span>
+                <MoonStar size={15} />
+                <span>农历与节气</span>
+              </button>
+              <button type="button" onClick={() => updateSystemCalendar('festival')} className={showFestivals ? 'active' : ''}>
+                <span className="system-calendar-check">{showFestivals && <Check size={11} />}</span>
+                <PartyPopper size={15} />
+                <span>节日</span>
+              </button>
+            </div>
+          </div>
+          <div className="schedule-left-ai">
+            <AiSchedulePanel
+              onSchedulesCreated={handleSchedulesCreated}
+              onOpenSchedule={(id) => setOpenScheduleRequest({ id, nonce: Date.now() })}
+              onOpenScheduleMenu={(id, x, y) => setOpenScheduleMenuRequest({ id, x, y, nonce: Date.now() })}
+              activeCalendarIds={activeCalendarIds}
+            />
+          </div>
         </aside>
         <section className="schedule-calendar-shell">
-          <div className="schedule-workspace-toolbar">
-            <button className={showCalendarPanel ? 'workspace-tool active' : 'workspace-tool'} onClick={() => setShowCalendarPanel(value => !value)}>
-              <PanelLeft size={16} /> 日程表
-            </button>
-            <strong>{scheduleTitle}</strong>
-          </div>
-          <main className="flex-1 overflow-hidden schedule-calendar-main">
+          <main className="schedule-calendar-main">
             <CalendarView
               refreshKey={calendarRefreshKey}
               activeCalendarIds={activeCalendarIds}
               openScheduleRequest={openScheduleRequest}
+              openScheduleMenuRequest={openScheduleMenuRequest}
+              selectedDate={selectedDate}
+              onSelectedDateChange={setSelectedDate}
+              showLunar={showLunar}
+              showFestivals={showFestivals}
             />
           </main>
         </section>
       </div>
-      {showCalendarPanel && <>
-        <button className="schedule-calendar-scrim" onClick={() => setShowCalendarPanel(false)} aria-label="关闭日程表筛选" />
-        <aside className="schedule-calendar-popover">
-          <div className="schedule-calendar-popover-head"><strong>筛选日程表</strong><button onClick={() => setShowCalendarPanel(false)} aria-label="关闭日程表筛选"><X size={15} /></button></div>
-          <ScheduleSidebar activeCalendarIds={activeCalendarIds} onActiveChange={handleActiveChange} onCalendarsLoaded={handleCalendarsLoaded} />
-        </aside>
-      </>}
     </div>
   );
 }
-
 
 // ==================== App 路由 ====================
 
@@ -189,6 +206,7 @@ function AppContent() {
           <SchedulePage
             models={models}
             onRefreshModels={fetchModels}
+            user={user}
           />
         ) : activeSection === 'reminders' ? (
           <ReminderPage />

@@ -207,18 +207,11 @@ export function ScheduleSidebar({ activeCalendarIds, onActiveChange, onCalendars
   const allSelected = calendars.length > 0 && activeCalendarIds.length === calendars.length;
 
   return (
-    <div
-      className="flex flex-col h-full"
-      style={{ backgroundColor: 'var(--td-bg-color-container)' }}
-    >
-      <div className="px-3 pt-3 flex-shrink-0">
-        <button
-          onClick={() => setShowForm(true)}
-          className="w-full flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg text-xs font-semibold transition-all hover:opacity-85"
-          style={{ backgroundColor: 'var(--td-brand-color)', color: '#fff' }}
-        >
-          <Plus className="w-3.5 h-3.5" />
-          增加分类
+    <div className="schedule-sidebar-panel flex flex-col h-full">
+      <div className="schedule-sidebar-heading">
+        <strong>我的日历</strong>
+        <button type="button" onClick={() => setShowForm(true)} aria-label="增加分类" title="增加分类">
+          <Plus size={15} />
         </button>
       </div>
 

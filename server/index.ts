@@ -26,6 +26,7 @@ import { enqueueUserNotification, processNotificationQueue } from "./notificatio
 import * as backupService from "./backup-service.js";
 import { parseAiImport, type AiImportDraft } from "./ai-import-service.js";
 import { pollEmailImports } from "./email-import-service.js";
+import { buildCodeBuddyEnv } from "./codebuddy-env.js";
 
 // 数据库实例（等待初始化后赋值）
 let db: typeof dbModule;
@@ -68,6 +69,7 @@ interface PendingPermission {
   toolName: string;
   input: Record<string, unknown>;
   sessionId: string;
+  userId: string;
   timestamp: number;
 }
 
@@ -81,6 +83,8 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const isProduction = process.env.APP_ENV === 'production' || process.env.NODE_ENV === 'production';
+const staticPath = path.resolve(__dirname, '../dist');
 
 // Middleware
 app.use(express.json({ limit: '35mb' }));
@@ -93,9 +97,8 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
-// 【新增】生产环境提供静态文件（替代 Nginx）
-if (process.env.NODE_ENV === 'production') {
-  const staticPath = path.join(__dirname, 'public');
+// 生产环境直接提供 Vite 构建产物；部署时只需先执行 npm run build。
+if (isProduction) {
   app.use(express.static(staticPath));
   console.log(`[Static] Serving files from: ${staticPath}`);
 }
@@ -143,7 +146,7 @@ function addLog(level: LogEntry['level'], category: LogEntry['category'], messag
 }
 
 // 日志 API
-app.get("/api/logs", (req, res) => {
+app.get("/api/logs", authenticate, requireAdmin, (req, res) => {
   const { level, category, limit } = req.query;
   let filtered = [...logBuffer];
   
@@ -164,14 +167,14 @@ app.get("/api/logs", (req, res) => {
   });
 });
 
-app.delete("/api/logs", (req, res) => {
+app.delete("/api/logs", authenticate, requireAdmin, (req, res) => {
   logBuffer.length = 0;
   addLog('info', 'system', '日志已清空');
   res.json({ success: true });
 });
 
 // 导出日志为文本文件
-app.get("/api/logs/export", (req, res) => {
+app.get("/api/logs/export", authenticate, requireAdmin, (req, res) => {
   const { format = 'txt' } = req.query;
   const now = new Date();
   const pad = (n: number, len = 2) => String(n).padStart(len, '0');
@@ -201,10 +204,10 @@ app.get("/api/health", (req, res) => {
 
 // 日程 AI 模型配置（读/写）
 let scheduleModel = defaultModel;
-app.get("/api/schedule-model", (req, res) => {
+app.get("/api/schedule-model", authenticate, (req, res) => {
   res.json({ model: scheduleModel });
 });
-app.post("/api/schedule-model", (req, res) => {
+app.post("/api/schedule-model", authenticate, (req, res) => {
   const { model } = req.body;
   if (model) { scheduleModel = model; }
   res.json({ success: true, model: scheduleModel });
@@ -220,7 +223,7 @@ interface LoginStatusResponse {
 
 // 【修复】检查 API Key 状态
 // 【修复数据隔离】检查登录状态 - 获取当前用户的 API Key
-app.get("/api/check-login", async (req, res) => {
+app.get("/api/check-login", authenticate, async (req, res) => {
   const response: LoginStatusResponse = {
     isLoggedIn: false,
   };
@@ -253,10 +256,10 @@ app.get("/api/check-login", async (req, res) => {
 
 // 获取可用模型列表
 // 【修复数据隔离】获取模型列表 - 需要用户认证
-app.get("/api/models", async (req, res) => {
+app.get("/api/models", authenticate, async (req, res) => {
   try {
     // 获取当前用户的 API Key
-    let userApiKey: string | undefined;
+    let userCredential: dbModule.DbUserApiKey | undefined;
     let debugInfo: any = { hasAuthHeader: !!req.headers.authorization };
     const authHeader = req.headers.authorization;
     
@@ -267,8 +270,8 @@ app.get("/api/models", async (req, res) => {
         debugInfo.email = payload.email;
         const userKey = db.getUserApiKey(payload.userId);
         debugInfo.hasUserKey = !!userKey;
-        userApiKey = userKey?.api_key;
-        debugInfo.hasApiKey = !!userApiKey;
+        userCredential = userKey || undefined;
+        debugInfo.hasApiKey = !!userCredential?.api_key;
       } catch (e: any) {
         debugInfo.jwtError = e.message;
       }
@@ -276,7 +279,7 @@ app.get("/api/models", async (req, res) => {
 
     console.log("[Models] Debug:", JSON.stringify(debugInfo));
 
-    if (!userApiKey) {
+    if (!userCredential) {
       return res.status(401).json({ 
         error: '请先在设置页输入 API Key',
         debug: debugInfo 
@@ -286,10 +289,7 @@ app.get("/api/models", async (req, res) => {
     // 【修复】不再使用全局缓存，每个用户用自己的 Key 获取模型
     const session = await unstable_v2_createSession({ 
       cwd: process.cwd(),
-      env: {
-        CODEBUDDY_API_KEY: userApiKey,
-        CODEBUDDY_INTERNET_ENVIRONMENT: 'internal',
-      }
+      env: buildCodeBuddyEnv(userCredential)
     });
     
     const models = await session.getAvailableModels();
@@ -312,13 +312,12 @@ app.get("/api/models", async (req, res) => {
 app.get("/api/ai-schedule/history", authenticate, (req, res) => {
   try {
     const payload = (req as any).user as JwtPayload;
-    // 获取该用户的所有会话
-    const sessions = db.getAllSessions();
+    const sessions = db.getAllSessions(payload.userId);
     // 获取所有消息（取最近的20条）
     let allMessages: any[] = [];
     
     for (const session of sessions) {
-      const msgs = db.getMessagesBySession(session.id);
+      const msgs = db.getMessagesBySession(session.id, payload.userId);
       allMessages.push(...msgs);
     }
     
@@ -336,20 +335,20 @@ app.get("/api/ai-schedule/history", authenticate, (req, res) => {
 // ============= API Key 验证接口 =============
 
 // 验证当前用户 API Key 可用性（区分额度用完和无效 Key）
-app.post("/api/verify-api-key", async (req, res) => {
+app.post("/api/verify-api-key", authenticate, async (req, res) => {
   try {
     // 【修复数据隔离】从数据库获取当前用户的 API Key
-    let userApiKey: string | undefined;
+    let userCredential: dbModule.DbUserApiKey | undefined;
     const authHeader = req.headers.authorization;
     if (authHeader?.startsWith('Bearer ')) {
       try {
         const payload = jwt.verify(authHeader.slice(7), JWT_SECRET) as JwtPayload;
         const userKey = db.getUserApiKey(payload.userId);
-        userApiKey = userKey?.api_key;
+        userCredential = userKey || undefined;
       } catch {}
     }
 
-    if (!userApiKey) {
+    if (!userCredential) {
       return res.status(401).json({ 
         valid: false, 
         error: 'API Key 未配置，请在设置页输入',
@@ -360,10 +359,7 @@ app.post("/api/verify-api-key", async (req, res) => {
     // 【修复】使用该用户的 API Key 验证
     const session = await unstable_v2_createSession({ 
       cwd: process.cwd(),
-      env: {
-        CODEBUDDY_API_KEY: userApiKey,
-        CODEBUDDY_INTERNET_ENVIRONMENT: 'internal',
-      }
+      env: buildCodeBuddyEnv(userCredential)
     });
     
     const models = await session.getAvailableModels();
@@ -468,17 +464,6 @@ app.post("/api/user-api-key", authenticate, (req, res) => {
     
     db.upsertUserApiKey(userApiKey);
     
-    // 立即更新进程环境变量
-    process.env.CODEBUDDY_API_KEY = userApiKey.api_key;
-    // 【修复】确保使用国内版 API
-    process.env.CODEBUDDY_INTERNET_ENVIRONMENT = 'internal';
-    if (userApiKey.base_url) {
-      process.env.CODEBUDDY_BASE_URL = userApiKey.base_url;
-    } else {
-      delete process.env.CODEBUDDY_BASE_URL;
-    }
-    console.log('[User API Key] Saved, ENV:', process.env.CODEBUDDY_INTERNET_ENVIRONMENT);
-    
     // 清除模型缓存
     cachedModels = [];
     
@@ -493,11 +478,12 @@ app.post("/api/user-api-key", authenticate, (req, res) => {
 // ============= 会话 API =============
 
 // 获取所有会话（包含消息数量）
-app.get("/api/sessions", (req, res) => {
+app.get("/api/sessions", authenticate, (req, res) => {
   try {
-    const sessions = db.getAllSessions();
+    const userId = ((req as any).user as JwtPayload).userId;
+    const sessions = db.getAllSessions(userId);
     const sessionsWithMessages = sessions.map(session => {
-      const messages = db.getMessagesBySession(session.id);
+      const messages = db.getMessagesBySession(session.id, userId);
       return {
         ...session,
         messageCount: messages.length
@@ -511,16 +497,17 @@ app.get("/api/sessions", (req, res) => {
 });
 
 // 获取单个会话及其消息
-app.get("/api/sessions/:sessionId", (req, res) => {
+app.get("/api/sessions/:sessionId", authenticate, (req, res) => {
   try {
     const { sessionId } = req.params;
-    const session = db.getSession(sessionId);
+    const userId = ((req as any).user as JwtPayload).userId;
+    const session = db.getSession(sessionId, userId);
     
     if (!session) {
       return res.status(404).json({ error: "会话不存在" });
     }
     
-    const messages = db.getMessagesBySession(sessionId);
+    const messages = db.getMessagesBySession(sessionId, userId);
     
     // 解析 tool_calls JSON
     const parsedMessages = messages.map(msg => ({
@@ -536,13 +523,15 @@ app.get("/api/sessions/:sessionId", (req, res) => {
 });
 
 // 创建新会话
-app.post("/api/sessions", (req, res) => {
+app.post("/api/sessions", authenticate, (req, res) => {
   try {
     const { model = defaultModel, title = "新对话" } = req.body;
+    const userId = ((req as any).user as JwtPayload).userId;
     const now = new Date().toISOString();
     
     const session = db.createSession({
       id: uuidv4(),
+      user_id: userId,
       title,
       model,
       sdk_session_id: null,
@@ -562,7 +551,6 @@ app.post("/api/sessions", (req, res) => {
 // ============================================================
 
 // JWT 配置
-const isProduction = process.env.NODE_ENV === 'production';
 function requiredProductionConfig(name: string, fallback: string): string {
   const value = process.env[name];
   if (isProduction && !value) {
@@ -726,18 +714,6 @@ app.post("/api/auth/login", async (req, res) => {
     }
     const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
     
-    // 加载用户的 API Key 到进程环境变量
-    const userApiKey = db.getUserApiKey(user.id);
-    if (userApiKey) {
-      process.env.CODEBUDDY_API_KEY = userApiKey.api_key;
-      // 【修复】确保使用国内版 API
-      process.env.CODEBUDDY_INTERNET_ENVIRONMENT = 'internal';
-      if (userApiKey.base_url) {
-        process.env.CODEBUDDY_BASE_URL = userApiKey.base_url;
-      }
-      console.log('[Login] Loaded user API Key from database, using internal env');
-    }
-    
     // 更新最后登录时间
     db.updateUserLastLogin(user.id);
     
@@ -755,16 +731,6 @@ app.get("/api/auth/me", authenticate, (req, res) => {
   const payload = (req as any).user as JwtPayload;
   const user = db.getUserById(payload.userId);
   if (!user) return res.status(404).json({ error: '用户不存在' });
-  
-  // 自动加载用户的 API Key（如果有）
-  const userApiKey = db.getUserApiKey(user.id);
-  if (userApiKey) {
-    process.env.CODEBUDDY_API_KEY = userApiKey.api_key;
-    process.env.CODEBUDDY_INTERNET_ENVIRONMENT = 'internal';
-    if (userApiKey.base_url) {
-      process.env.CODEBUDDY_BASE_URL = userApiKey.base_url;
-    }
-  }
   
   res.json({ user });
 });
@@ -1514,12 +1480,13 @@ app.post("/api/email-import/check", authenticate, async (req, res) => {
 });
 
 // 更新会话
-app.patch("/api/sessions/:sessionId", (req, res) => {
+app.patch("/api/sessions/:sessionId", authenticate, (req, res) => {
   try {
     const { sessionId } = req.params;
     const { title, model } = req.body;
+    const userId = ((req as any).user as JwtPayload).userId;
     
-    const success = db.updateSession(sessionId, { title, model });
+    const success = db.updateSession(sessionId, userId, { title, model });
     
     if (!success) {
       return res.status(404).json({ error: "会话不存在" });
@@ -1533,10 +1500,11 @@ app.patch("/api/sessions/:sessionId", (req, res) => {
 });
 
 // 删除会话
-app.delete("/api/sessions/:sessionId", (req, res) => {
+app.delete("/api/sessions/:sessionId", authenticate, (req, res) => {
   try {
     const { sessionId } = req.params;
-    const success = db.deleteSession(sessionId);
+    const userId = ((req as any).user as JwtPayload).userId;
+    const success = db.deleteSession(sessionId, userId);
     
     if (!success) {
       return res.status(404).json({ error: "会话不存在" });
@@ -2128,39 +2096,6 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
 }
 
 // 检查登录状态的辅助函数
-async function checkLoginStatus(): Promise<{ isLoggedIn: boolean; error?: string }> {
-  // 【修复】先检查是否有 API Key
-  if (!process.env.CODEBUDDY_API_KEY) {
-    return { isLoggedIn: false, error: '未配置 API Key，请先在设置页输入您的 CodeBuddy API Key' };
-  }
-  
-  try {
-    let needsLogin = false;
-    let loginError: string | undefined;
-    
-    await unstable_v2_authenticate({
-      environment: 'internal',  // 【修复】使用国内版
-      env: {
-        CODEBUDDY_API_KEY: process.env.CODEBUDDY_API_KEY,
-        CODEBUDDY_INTERNET_ENVIRONMENT: process.env.CODEBUDDY_INTERNET_ENVIRONMENT || 'internal',
-      },
-      onAuthUrl: async (authState) => {
-        needsLogin = true;
-        loginError = 'API Key 无效，请检查或重新输入';
-        console.log('[AI Chat] 需要认证');
-      }
-    });
-    
-    if (needsLogin) {
-      return { isLoggedIn: false, error: loginError || 'API Key 无效，请检查或重新输入' };
-    }
-    
-    return { isLoggedIn: true };
-  } catch (error: any) {
-    return { isLoggedIn: false, error: error?.message || '登录状态检查失败' };
-  }
-}
-
 const AI_CATEGORY_LABELS_CN: Record<string, string> = {
   travel: '出行', work: '工作', social: '社交', life: '生活', health: '健康', other: '其他'
 };
@@ -2217,7 +2152,7 @@ function isReadOnlyScheduleQuery(text: string) {
   return /(有什么安排|有哪些安排|什么安排|有什么日程|有哪些日程|查看.*(?:安排|日程)|查询.*(?:安排|日程)|几点有会)/.test(normalized);
 }
 
-app.post("/api/ai-chat", async (req, res) => {
+app.post("/api/ai-chat", authenticate, async (req, res) => {
   const { text, targetDate, model: reqModel, calendarId, scheduleContext } = req.body;
   if (!text) return res.status(400).json({ error: "请输入内容" });
 
@@ -2226,7 +2161,7 @@ app.post("/api/ai-chat", async (req, res) => {
 
   // 【修复数据隔离】先提取用户ID和API Key
   let userId = 'default';
-  let userApiKey: string | undefined;
+  let userCredential: dbModule.DbUserApiKey | undefined;
   let authenticatedUser = false;
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
@@ -2236,7 +2171,7 @@ app.post("/api/ai-chat", async (req, res) => {
       authenticatedUser = true;
       // 获取该用户的 API Key
       const userKey = db.getUserApiKey(userId);
-      userApiKey = userKey?.api_key;
+      userCredential = userKey || undefined;
     } catch {}
   }
 
@@ -2268,7 +2203,7 @@ app.post("/api/ai-chat", async (req, res) => {
   }
 
   // 检查用户是否有 API Key
-  if (!userApiKey) {
+  if (!userCredential) {
     addLog('warn', 'ai', `用户 ${userId} 未配置 API Key`, { userId });
     return res.status(401).json({ 
       error: '请先在设置页输入您的 CodeBuddy API Key',
@@ -2282,10 +2217,7 @@ app.post("/api/ai-chat", async (req, res) => {
   try {
     await unstable_v2_authenticate({
       environment: 'internal',
-      env: {
-        CODEBUDDY_API_KEY: userApiKey,
-        CODEBUDDY_INTERNET_ENVIRONMENT: 'internal',
-      },
+      env: buildCodeBuddyEnv(userCredential),
       onAuthUrl: async () => {
         needsLogin = true;
         loginError = 'API Key 无效，请检查或重新输入';
@@ -2487,10 +2419,7 @@ priority 识别：
         model: selectedModel,
         maxTurns: 1,
         systemPrompt,
-        env: {
-          CODEBUDDY_API_KEY: userApiKey,
-          CODEBUDDY_INTERNET_ENVIRONMENT: 'internal',
-        },
+        env: buildCodeBuddyEnv(userCredential),
       }
     });
 
@@ -2555,6 +2484,11 @@ priority 识别：
           console.error('[AI Chat] 创建日程失败:', err.message);
         }
       } else if (op.type === 'update' && op.scheduleId && op.data) {
+        const target = scheduleStore.getSchedule(op.scheduleId);
+        if (!target || target.user_id !== userId) {
+          addLog('warn', 'schedule', 'AI 尝试修改无权访问的日程', { userId, scheduleId: op.scheduleId });
+          continue;
+        }
         console.log('[AI Chat] Updating schedule:', op.scheduleId, 'with:', op.data);
         const updated = scheduleStore.updateSchedule(op.scheduleId, op.data);
         if (updated) {
@@ -2564,6 +2498,11 @@ priority 识别：
           console.log('[AI Chat] Update failed - schedule not found or error');
         }
       } else if (op.type === 'delete' && op.scheduleId) {
+        const target = scheduleStore.getSchedule(op.scheduleId);
+        if (!target || target.user_id !== userId) {
+          addLog('warn', 'schedule', 'AI 尝试删除无权访问的日程', { userId, scheduleId: op.scheduleId });
+          continue;
+        }
         console.log('[AI Chat] Deleting schedule:', op.scheduleId);
         scheduleStore.deleteSchedule(op.scheduleId);
         deletedIds.push(op.scheduleId);
@@ -2631,7 +2570,7 @@ app.get("/api/schedules/by-date/:date", authenticate, (req, res) => {
 // ============= 聊天 API =============
 
 // 权限响应 API
-app.post("/api/permission-response", (req, res) => {
+app.post("/api/permission-response", authenticate, (req, res) => {
   const { requestId, behavior, message } = req.body;
   
   console.log(`[Permission] Response received: requestId=${requestId}, behavior=${behavior}`);
@@ -2640,6 +2579,9 @@ app.post("/api/permission-response", (req, res) => {
   if (!pending) {
     console.log(`[Permission] Request not found: ${requestId}`);
     return res.status(404).json({ error: "权限请求不存在或已超时" });
+  }
+  if (pending.userId !== ((req as any).user as JwtPayload).userId) {
+    return res.status(403).json({ error: "无权处理该权限请求" });
   }
   
   // 清除请求
@@ -2661,8 +2603,10 @@ app.post("/api/permission-response", (req, res) => {
 });
 
 // 发送消息并获取流式响应
-app.post("/api/chat", async (req, res) => {
+app.post("/api/chat", authenticate, async (req, res) => {
   const { sessionId, message, model, systemPrompt, cwd, permissionMode } = req.body;
+  const userId = ((req as any).user as JwtPayload).userId;
+  const userCredential = db.getUserApiKey(userId);
   
   // 请求日志
   console.log(`\n[Chat] ========== 新请求 ==========`);
@@ -2675,9 +2619,12 @@ app.post("/api/chat", async (req, res) => {
     console.log(`[Chat] 错误: 消息为空`);
     return res.status(400).json({ error: "消息不能为空" });
   }
+  if (!userCredential) {
+    return res.status(401).json({ error: "请先在设置页输入您的 CodeBuddy API Key" });
+  }
 
   // 获取或创建会话
-  let session = sessionId ? db.getSession(sessionId) : null;
+  let session = sessionId ? db.getSession(sessionId, userId) : null;
   const now = new Date().toISOString();
   
   if (!session) {
@@ -2685,6 +2632,7 @@ app.post("/api/chat", async (req, res) => {
     console.log(`[Chat] 创建新会话`);
     session = db.createSession({
       id: sessionId || uuidv4(),
+      user_id: userId,
       title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
       model: model || defaultModel,
       sdk_session_id: null,  // 稍后从 SDK 获取
@@ -2714,7 +2662,7 @@ app.post("/api/chat", async (req, res) => {
       model: null,
       created_at: now,
       tool_calls: null
-    });
+    }, userId);
     console.log(`[Chat] 用户消息已保存: ${userMessageId}`);
   } catch (dbError: any) {
     console.error(`[Chat] 保存用户消息失败:`, dbError);
@@ -3046,6 +2994,7 @@ app.post("/api/chat", async (req, res) => {
           toolName,
           input,
           sessionId: session.id,
+          userId,
           timestamp: Date.now()
         };
         
@@ -3077,6 +3026,7 @@ app.post("/api/chat", async (req, res) => {
         systemPrompt: getEnhancedSystemPrompt(systemPrompt || defaultSystemPrompt, message),
         permissionMode: permissionMode || 'default',
         canUseTool,
+        env: buildCodeBuddyEnv(userCredential),
         ...(sdkSessionId ? { resume: sdkSessionId } : {})  // 使用 resume 恢复对话
       }
     });
@@ -3115,7 +3065,7 @@ app.post("/api/chat", async (req, res) => {
         
         // 保存 SDK session_id 到数据库（如果是新的）
         if (newSdkSessionId && newSdkSessionId !== sdkSessionId) {
-          db.updateSession(session.id, { sdk_session_id: newSdkSessionId });
+          db.updateSession(session.id, userId, { sdk_session_id: newSdkSessionId });
           console.log(`[Stream] Saved SDK session_id to database`);
         }
       } else if (msg.type === "assistant") {
@@ -3200,12 +3150,12 @@ app.post("/api/chat", async (req, res) => {
       model: selectedModel,
       created_at: new Date().toISOString(),
       tool_calls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null
-    });
+    }, userId);
 
     // 更新会话标题（如果是第一条消息）
-    const messages = db.getMessagesBySession(session.id);
+    const messages = db.getMessagesBySession(session.id, userId);
     if (messages.length <= 2) {
-      db.updateSession(session.id, { 
+      db.updateSession(session.id, userId, {
         title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
         model: selectedModel
       });
@@ -3228,9 +3178,9 @@ app.post("/api/chat", async (req, res) => {
 });
 
 // 【新增】SPA 路由支持 - 所有未匹配的路由返回 index.html
-if (process.env.NODE_ENV === 'production') {
+if (isProduction) {
   app.get('*', (req, res) => {
-    const indexPath = path.join(__dirname, 'public', 'index.html');
+    const indexPath = path.join(staticPath, 'index.html');
     res.sendFile(indexPath);
   });
 }
@@ -3275,7 +3225,7 @@ async function startServer() {
       // 写入启动日志，日志面板可以看到服务器状态
       addLog('info', 'system', `服务器启动成功，端口 ${PORT}`);
       addLog('info', 'system', `数据库: sql.js`);
-      addLog('info', 'system', `环境: ${process.env.NODE_ENV || 'development'}`);
+      addLog('info', 'system', `环境: ${process.env.APP_ENV || process.env.NODE_ENV || 'development'}`);
       addLog('info', 'system', '邀请码已配置（具体值不会写入日志）');
     });
   } catch (error) {

@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { Message, ToolCall, PermissionRequest, PermissionMode, Session, CustomAgent, ContentBlock } from '../types';
+import { getStoredAuthHeaders } from './useAuth';
 
 const STORAGE_KEYS = {
   draftInput: 'draftInput',
@@ -135,7 +136,7 @@ export function useChat(options: UseChatOptions) {
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getStoredAuthHeaders() },
         body: JSON.stringify({
           sessionId,
           message: messageContent,
@@ -349,7 +350,7 @@ export function useChat(options: UseChatOptions) {
     
     await fetch('/api/permission-response', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getStoredAuthHeaders() },
       body: JSON.stringify({
         requestId: permissionRequest.requestId,
         behavior: 'allow'
@@ -367,7 +368,7 @@ export function useChat(options: UseChatOptions) {
     
     await fetch('/api/permission-response', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...getStoredAuthHeaders() },
       body: JSON.stringify({
         requestId: permissionRequest.requestId,
         behavior: 'deny',

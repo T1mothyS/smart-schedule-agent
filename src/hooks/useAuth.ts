@@ -19,6 +19,11 @@ interface AuthState {
 
 const TOKEN_KEY = 'aicalendar_token';
 
+export function getStoredAuthHeaders(): Record<string, string> {
+  const token = localStorage.getItem(TOKEN_KEY);
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export function useAuth() {
   const [state, setState] = useState<AuthState>({
     user: null,
@@ -41,13 +46,15 @@ export function useAuth() {
       if (res.ok) {
         const data = await res.json();
         setState({ user: data.user, token, isLoading: false, isAuthenticated: true });
-      } else {
+      } else if (res.status === 401 || res.status === 403) {
         localStorage.removeItem(TOKEN_KEY);
         setState({ user: null, token: null, isLoading: false, isAuthenticated: false });
+      } else {
+        setState(s => ({ ...s, token, isLoading: false }));
       }
     } catch {
-      localStorage.removeItem(TOKEN_KEY);
-      setState(s => ({ ...s, isLoading: false, isAuthenticated: false }));
+      // 服务重启或短暂网络波动不代表凭据失效；保留 token，避免误退出。
+      setState(s => ({ ...s, token, isLoading: false }));
     }
   }, []);
 
@@ -100,7 +107,7 @@ export function useAuth() {
 
   // 获取带 token 的 fetch 选项
   const authHeaders = useCallback((): Record<string, string> => ({
-    ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
+    ...getStoredAuthHeaders(),
   }), [state.token]);
 
   return { ...state, login, register, sendRegisterCode, logout, checkAuth, authHeaders };
