@@ -27,6 +27,7 @@ import * as backupService from "./backup-service.js";
 import { parseAiImport, type AiImportDraft } from "./ai-import-service.js";
 import { pollEmailImports } from "./email-import-service.js";
 import { buildCodeBuddyEnv } from "./codebuddy-env.js";
+import { createModelService } from "./model-service.js";
 
 // 数据库实例（等待初始化后赋值）
 let db: typeof dbModule;
@@ -103,10 +104,29 @@ if (isProduction) {
   console.log(`[Static] Serving files from: ${staticPath}`);
 }
 
-// 缓存可用模型列表
-let cachedModels: Array<{ modelId: string; name: string; description?: string }> = [];
 // 【修复】默认模型改为用户支持的模型
 const defaultModel = "glm-5.1";
+const modelService = createModelService<any>({
+  ttlMs: 30 * 60 * 1000,
+  timeoutMs: 30 * 1000,
+  onCloseError: error => console.error('[Models] 关闭 SDK Session 失败:', error),
+});
+
+function getAvailableModels(
+  userId: string,
+  credential: dbModule.DbUserApiKey,
+  forceRefresh = false,
+) {
+  return modelService.load({
+    userId,
+    credentialVersion: credential.updated_at,
+    forceRefresh,
+    createSession: () => unstable_v2_createSession({
+      cwd: process.cwd(),
+      env: buildCodeBuddyEnv(credential),
+    }),
+  });
+}
 
 // ==================== 日志系统 ====================
 // 内存日志缓冲区（最多保留500条）
@@ -269,13 +289,11 @@ app.get("/api/models", authenticate, async (req, res) => {
       });
     }
 
-    // 【修复】不再使用全局缓存，每个用户用自己的 Key 获取模型
-    const session = await unstable_v2_createSession({ 
-      cwd: process.cwd(),
-      env: buildCodeBuddyEnv(userCredential)
-    });
-    
-    const models = await session.getAvailableModels();
+    const models = await getAvailableModels(
+      currentUser.userId,
+      userCredential,
+      req.query.refresh === '1',
+    );
     
     res.json({ 
       models: models || [],
@@ -339,13 +357,9 @@ app.post("/api/verify-api-key", authenticate, async (req, res) => {
       });
     }
     
-    // 【修复】使用该用户的 API Key 验证
-    const session = await unstable_v2_createSession({ 
-      cwd: process.cwd(),
-      env: buildCodeBuddyEnv(userCredential)
-    });
-    
-    const models = await session.getAvailableModels();
+    // 验证必须绕过缓存，确保当前凭据仍然有效。
+    const currentUser = (req as any).user as JwtPayload;
+    const models = await getAvailableModels(currentUser.userId, userCredential, true);
     
     res.json({ 
       valid: true, 
@@ -447,8 +461,7 @@ app.post("/api/user-api-key", authenticate, (req, res) => {
     
     db.upsertUserApiKey(userApiKey);
     
-    // 清除模型缓存
-    cachedModels = [];
+    modelService.invalidate(payload.userId);
     
     addLog('info', 'system', `用户 ${payload.email} 更新了 API Key`);
     res.json({ success: true, message: 'API Key 保存成功' });

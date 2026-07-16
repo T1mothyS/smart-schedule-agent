@@ -90,7 +90,7 @@ function ScheduleModelConfig() {
         <Button
           variant="outline"
           size="small"
-          onClick={() => fetch('/api/models', { headers: getHeaders() }).then(r => r.json()).then(d => { if (d.models?.length > 0) setModels(d.models); }).catch(() => {})}
+          onClick={() => fetch('/api/models?refresh=1', { headers: getHeaders() }).then(r => r.json()).then(d => { if (d.models?.length > 0) setModels(d.models); }).catch(() => {})}
         >
           刷新模型列表
         </Button>
