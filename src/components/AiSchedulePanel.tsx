@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Send, Sparkles, Loader2, CheckCircle2, MapPin, Clock, Calendar, RotateCcw } from 'lucide-react';
+import { Send, Sparkles, Loader2, CheckCircle2, Eye, EyeOff, MapPin, Clock, Calendar, RotateCcw } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
 // ==================== 类型 ====================
@@ -44,6 +44,8 @@ interface AiSchedulePanelProps {
   activeCalendarIds?: string[];
   onOpenSchedule?: (id: string) => void;
   onOpenScheduleMenu?: (id: string, x: number, y: number) => void;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
 // ==================== 常量 ====================
@@ -257,14 +259,21 @@ function MessageBubble({ msg, calendars, onOpenSchedule, onOpenScheduleMenu }: {
 
 // ==================== 主组件 ====================
 
-export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds, onOpenSchedule, onOpenScheduleMenu }: AiSchedulePanelProps) {
+export function AiSchedulePanel({
+  onSchedulesCreated,
+  activeCalendarIds,
+  onOpenSchedule,
+  onOpenScheduleMenu,
+  collapsed = false,
+  onToggleCollapsed,
+}: AiSchedulePanelProps) {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [calendars, setCalendars] = useState<CalendarItem[]>([]);
   const { isAuthenticated, token, authHeaders } = useAuth();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   // 加载日程表信息（用于显示来源标识）
   useEffect(() => {
@@ -297,8 +306,18 @@ export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds, onOpenS
 
   // 自动滚到底部
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesContainerRef.current;
+    container?.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
   }, [messages, isLoading]);
+
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = 'auto';
+    const nextHeight = Math.min(textarea.scrollHeight, 96);
+    textarea.style.height = `${Math.max(nextHeight, 38)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 96 ? 'auto' : 'hidden';
+  }, [inputText, collapsed]);
 
   const handleSubmit = useCallback(async () => {
     const text = inputText.trim();
@@ -402,24 +421,45 @@ export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds, onOpenS
             </div>
           </div>
         </div>
-        {messages.length > 0 && (
-          <button
-            onClick={clearHistory}
-            className="p-1.5 rounded-lg hover:opacity-70 transition-opacity"
-            style={{ 
-              color: 'var(--td-text-color-secondary)',
-              backgroundColor: 'transparent',
-              border: 'none',
-            }}
-            title="清空对话"
-          >
-            <RotateCcw className="w-3.5 h-3.5" />
-          </button>
-        )}
+        <div className="schedule-ai-heading-actions">
+          {!collapsed && messages.length > 0 && (
+            <button
+              onClick={clearHistory}
+              className="p-1.5 rounded-lg hover:opacity-70 transition-opacity"
+              style={{
+                color: 'var(--td-text-color-secondary)',
+                backgroundColor: 'transparent',
+                border: 'none',
+              }}
+              title="清空对话"
+              aria-label="清空对话"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {onToggleCollapsed && (
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              className="p-1.5 rounded-lg hover:opacity-70 transition-opacity"
+              style={{
+                color: 'var(--td-text-color-secondary)',
+                backgroundColor: 'transparent',
+                border: 'none',
+              }}
+              aria-label={collapsed ? '展开 AI 日程助手' : '隐藏 AI 日程助手'}
+              title={collapsed ? '展开 AI 日程助手' : '隐藏 AI 日程助手'}
+            >
+              {collapsed ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* 对话区域 */}
-      <div className="flex-1 overflow-y-auto px-3 py-3">
+      {!collapsed && (
+        <>
+          {/* 对话区域 */}
+          <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-3 py-3">
         {/* 空状态：快捷示例 */}
         {messages.length === 0 && !isLoading && (
           <div>
@@ -484,55 +524,57 @@ export function AiSchedulePanel({ onSchedulesCreated, activeCalendarIds, onOpenS
           </div>
         )}
 
-        <div ref={bottomRef} />
-      </div>
-
-      {/* 输入框 */}
-      <div
-        className="px-3 pb-3 pt-2 flex-shrink-0 schedule-ai-composer-wrap"
-        style={{ borderTop: '1px solid var(--td-component-stroke)' }}
-      >
-        <div
-          className="rounded-xl overflow-hidden transition-all schedule-ai-composer"
-          style={{ backgroundColor: 'var(--td-bg-color-page)' }}
-        >
-          <textarea
-            ref={textareaRef}
-            value={inputText}
-            onChange={e => setInputText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="输入日程、修改要求或随意聊天..."
-            rows={3}
-            className="w-full px-3 pt-2.5 pb-1 resize-none text-sm outline-none bg-transparent border-0"
-            style={{ color: 'var(--td-text-color-primary)', border: 0, boxShadow: 'none' }}
-            disabled={isLoading}
-          />
-          <div className="flex items-center justify-between px-3 pb-2">
-            <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              Enter 发送 · Shift+Enter 换行
-            </span>
-            <button
-              onClick={handleSubmit}
-              disabled={!inputText.trim() || isLoading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
-              style={{
-                backgroundColor: (!inputText.trim() || isLoading)
-                  ? 'var(--td-bg-color-component)'
-                  : 'var(--td-brand-color)',
-                color: (!inputText.trim() || isLoading)
-                  ? 'var(--td-text-color-disabled)'
-                  : '#fff',
-                cursor: (!inputText.trim() || isLoading) ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {isLoading
-                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />处理中</>
-                : <><Send className="w-3.5 h-3.5" />发送</>
-              }
-            </button>
+            <div />
           </div>
-        </div>
-      </div>
+
+          {/* 输入框 */}
+          <div
+            className="flex-shrink-0 schedule-ai-composer-wrap"
+            style={{ borderTop: '1px solid var(--td-component-stroke)' }}
+          >
+            <div
+              className="rounded-xl transition-all schedule-ai-composer"
+              style={{ backgroundColor: 'var(--td-bg-color-page)' }}
+            >
+              <textarea
+                ref={textareaRef}
+                value={inputText}
+                onChange={e => setInputText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="输入日程、修改要求或随意聊天..."
+                rows={1}
+                className="resize-none text-sm outline-none bg-transparent border-0"
+                style={{ color: 'var(--td-text-color-primary)', border: 0, boxShadow: 'none' }}
+                disabled={isLoading}
+                aria-label="AI 日程助手输入框"
+              />
+              <span className="schedule-ai-composer-shortcut">Enter 发送 · Shift+Enter 换行</span>
+              <button
+                type="button"
+                onClick={handleSubmit}
+                disabled={!inputText.trim() || isLoading}
+                className="schedule-ai-send-button flex items-center justify-center rounded-lg text-xs font-medium transition-all"
+                style={{
+                  backgroundColor: (!inputText.trim() || isLoading)
+                    ? 'var(--td-bg-color-component)'
+                    : 'var(--td-brand-color)',
+                  color: (!inputText.trim() || isLoading)
+                    ? 'var(--td-text-color-disabled)'
+                    : '#fff',
+                  cursor: (!inputText.trim() || isLoading) ? 'not-allowed' : 'pointer',
+                }}
+                aria-label={isLoading ? '正在处理' : '发送'}
+                title="Enter 发送 · Shift+Enter 换行"
+              >
+                {isLoading
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Send className="w-3.5 h-3.5" />
+                }
+              </button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

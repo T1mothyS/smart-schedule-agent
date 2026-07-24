@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ChevronDown, ChevronLeft, ChevronRight, Plus, MapPin, Clock, CheckCircle2,
-  Circle, Trash2, Edit3, Calendar, CalendarDays, LayoutList, LayoutGrid, X, Bell, AlertTriangle
+  Circle, Trash2, Edit3, Calendar, CalendarDays, LayoutList, LayoutGrid, X, Bell, AlertTriangle,
+  PanelLeftOpen
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { 
@@ -1219,7 +1220,7 @@ function DayView({
   ];
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="calendar-day-view flex flex-col h-full overflow-hidden">
       {/* 【改进】全天日程悬浮Banner - 统一显示全天事件和全天待办 */}
       {allDayItems.length > 0 && (
         <div
@@ -1553,7 +1554,7 @@ function WeekView({
   ];
 
   return (
-    <div className="flex flex-col h-full overflow-hidden">
+    <div className="calendar-week-view flex flex-col h-full overflow-hidden">
       {/* 周头部 */}
       <div className="flex flex-shrink-0" style={{ borderBottom: '1px solid var(--td-component-stroke)' }}>
         <div className="w-14 flex-shrink-0" />
@@ -1810,7 +1811,7 @@ function MonthView({
   ];
 
   return (
-    <div className="h-full overflow-auto px-2 pb-4">
+    <div className="calendar-month-view h-full overflow-auto px-2 pb-4">
       <div className="grid grid-cols-7 mb-1 sticky top-0 pt-2 z-10" style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
         {WEEK_DAYS.map(d => (
           <div key={d} className="text-center text-xs py-1 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
@@ -2111,6 +2112,8 @@ export interface CalendarViewProps {
   onSelectedDateChange?: (date: Date) => void;
   showLunar?: boolean;
   showFestivals?: boolean;
+  onOpenRail?: () => void;
+  isRailOpen?: boolean;
 }
 
 export function CalendarView({
@@ -2122,6 +2125,8 @@ export function CalendarView({
   onSelectedDateChange,
   showLunar = true,
   showFestivals = true,
+  onOpenRail,
+  isRailOpen = false,
 }: CalendarViewProps) {
   const [viewMode, setViewMode] = useState<ViewMode>('agenda');
   const [currentDate, setCurrentDate] = useState<Date>(selectedDate || new Date());
@@ -2279,6 +2284,19 @@ export function CalendarView({
     return currentDate.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' });
   };
 
+  const compactHeaderTitle = () => {
+    if (viewMode === 'agenda' || viewMode === 'day') {
+      return `${currentDate.getMonth() + 1}月${currentDate.getDate()}日 · ${currentDate.toLocaleDateString('zh-CN', { weekday: 'short' })}`;
+    }
+    if (viewMode === 'week') {
+      const ws = getWeekStart(currentDate);
+      const we = new Date(ws);
+      we.setDate(ws.getDate() + 6);
+      return `${ws.getMonth() + 1}/${ws.getDate()}–${we.getMonth() + 1}/${we.getDate()}`;
+    }
+    return `${currentDate.getFullYear()}年${currentDate.getMonth() + 1}月`;
+  };
+
   const handleToggle = useCallback(async (id: string) => {
     try {
       const res = await fetch(`/api/schedules/${id}/toggle`, { method: 'POST', headers: authHeaders() });
@@ -2400,16 +2418,30 @@ export function CalendarView({
     >
       {/* 顶部工具栏 */}
       <div
-        className="flex items-center justify-between px-4 py-3 flex-shrink-0"
+        className="calendar-toolbar flex items-center justify-between px-4 py-3 flex-shrink-0"
         style={{ borderBottom: '1px solid var(--td-component-stroke)' }}
       >
-        <div className="flex items-center gap-2">
+        <div className="calendar-toolbar-primary flex items-center gap-2">
+          {onOpenRail && (
+            <button
+              type="button"
+              onClick={onOpenRail}
+              className="calendar-rail-trigger p-1.5 rounded-lg transition-colors"
+              aria-label="打开日历侧栏"
+              aria-controls="schedule-navigation-rail"
+              aria-expanded={isRailOpen}
+            >
+              <PanelLeftOpen className="w-4 h-4" />
+            </button>
+          )}
           <button
             onClick={goToday}
-            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+            className="calendar-go-today px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
             style={{ backgroundColor: 'var(--td-brand-color-light)', color: 'var(--td-brand-color)' }}
+            aria-label="回到今天"
           >
-            回到今天
+            <span className="calendar-go-today-full">回到今天</span>
+            <span className="calendar-go-today-compact" aria-hidden="true">今天</span>
           </button>
           <button 
             onClick={navigatePrev} 
@@ -2429,8 +2461,11 @@ export function CalendarView({
           >
             <ChevronRight className="w-4 h-4" />
           </button>
-          <span className="calendar-toolbar-date" style={{ color: 'var(--td-text-color-primary)' }}>
+          <span className="calendar-toolbar-date calendar-toolbar-date-full" style={{ color: 'var(--td-text-color-primary)' }}>
             {headerTitle()}
+          </span>
+          <span className="calendar-toolbar-date calendar-toolbar-date-compact" style={{ color: 'var(--td-text-color-primary)' }}>
+            {compactHeaderTitle()}
           </span>
           {(viewMode === 'agenda' || viewMode === 'day') && isToday && <span className="calendar-today-badge">今天</span>}
           {(showLunar || showFestivals) && (() => {
@@ -2439,14 +2474,14 @@ export function CalendarView({
             return label ? <span className="calendar-toolbar-meta">{label}</span> : null;
           })()}
           {todoInfo && (
-            <span className="text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#EF444420', color: '#EF4444' }}>
+            <span className="calendar-toolbar-todo text-xs px-2 py-0.5 rounded-full" style={{ backgroundColor: '#EF444420', color: '#EF4444' }}>
               {todoInfo.label} {todoInfo.count} 项
             </span>
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--td-component-stroke)' }}>
+        <div className="calendar-toolbar-actions flex items-center gap-2">
+          <div className="calendar-view-switch flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--td-component-stroke)' }}>
             {([
               { key: 'agenda', label: '日程', Icon: LayoutList },
               { key: 'day', label: '日', Icon: Calendar },
@@ -2457,24 +2492,26 @@ export function CalendarView({
                 key={key}
                 onClick={() => setViewMode(key)}
                 className="px-3 py-1.5 flex items-center gap-1 text-xs font-medium transition-all"
+                aria-label={`切换到${label}视图`}
                 style={{
                   backgroundColor: viewMode === key ? 'var(--td-brand-color)' : 'transparent',
                   color: viewMode === key ? '#fff' : 'var(--td-text-color-secondary)',
                 }}
               >
                 <Icon className="w-3 h-3" />
-                {label}
+                <span className="calendar-view-label">{label}</span>
               </button>
             ))}
           </div>
 
           <button
             onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
+            className="calendar-add-button flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all"
             style={{ backgroundColor: 'var(--td-brand-color)', color: '#fff' }}
+            aria-label="添加日程"
           >
             <Plus className="w-3.5 h-3.5" />
-            添加日程
+            <span>添加日程</span>
           </button>
         </div>
       </div>
@@ -2554,7 +2591,7 @@ export function CalendarView({
       })()}
 
       {/* 日程内容区 */}
-      <div className="flex-1 overflow-hidden">
+      <div className={`calendar-content-viewport calendar-content-${viewMode} flex-1 overflow-hidden`}>
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>加载中...</div>
