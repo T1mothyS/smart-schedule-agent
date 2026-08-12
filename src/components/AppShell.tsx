@@ -1,7 +1,7 @@
 import { ReactNode } from 'react';
-import { BellRing, CalendarDays, LayoutDashboard, Moon, Settings, Shield, Sparkles, Sun } from 'lucide-react';
+import { BellRing, Bot, CalendarDays, LayoutDashboard, Moon, Settings, Shield, Sparkles, Sun } from 'lucide-react';
 
-type Section = 'today' | 'schedule' | 'reminders' | 'import';
+type Section = 'today' | 'schedule' | 'assistant' | 'reminders' | 'import';
 
 interface AppShellProps {
   activeSection: Section;
@@ -61,6 +61,12 @@ export function AppShell({
             onClick={() => onSectionChange('import')}
           >
             <Sparkles size={14} /> 智能导入
+          </button>
+          <button
+            className={activeSection === 'assistant' ? 'product-nav-item ai-assistant-nav active' : 'product-nav-item ai-assistant-nav'}
+            onClick={() => onSectionChange('assistant')}
+          >
+            <Bot size={14} /> AI 助手
           </button>
         </nav>
 

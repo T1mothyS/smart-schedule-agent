@@ -16,6 +16,7 @@ export interface ActionItem {
   priority: 'high' | 'medium' | 'low';
   nextAction: string;
   itemType: 'event' | 'todo' | 'recurring';
+  isUnscheduled: boolean;
   completedAt: string | null;
   completionId: string | null;
   proof: {
@@ -27,6 +28,7 @@ export interface ActionItem {
 
 export interface ActionCenterResult {
   next: ActionItem | null;
+  unscheduled: ActionItem[];
   today: ActionItem[];
   upcoming: ActionItem[];
   overdue: ActionItem[];
@@ -61,8 +63,9 @@ function priorityScore(priority: string): number {
 }
 
 function chooseNext(items: ActionItem[], now: Date): ActionItem | null {
+  const actionableItems = items.filter(item => !item.isUnscheduled);
   const twoHours = new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString();
-  return [...items].sort((a, b) => {
+  return [...actionableItems].sort((a, b) => {
     const aSoonEvent = a.itemType === 'event' && a.dueAt <= twoHours && a.dueAt >= now.toISOString() ? 1 : 0;
     const bSoonEvent = b.itemType === 'event' && b.dueAt <= twoHours && b.dueAt >= now.toISOString() ? 1 : 0;
     if (aSoonEvent !== bSoonEvent) return bSoonEvent - aSoonEvent;
@@ -100,20 +103,23 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
   } : null;
 
   const items: ActionItem[] = [];
+  const unscheduledItems: ActionItem[] = [];
   for (const schedule of scheduleStore.getAllSchedules(userId)) {
     // 周期事务会生成日历全天待办；行动中心仍使用周期事务本体，避免重复两条。
     if (schedule.id.startsWith('reminder-cycle:')) continue;
     const dueDate = dateOnly(schedule.start_time);
     const completion = latestCompletion.get(`schedule:${schedule.id}:`);
     const completed = schedule.is_completed || !!completion;
+    const isUnscheduled = schedule.is_unscheduled === true;
     let status: ActionItemStatus | null = null;
     if (completed && dateInTimezone(completion?.completedAt || schedule.updated_at, timezone) === today) status = 'completed';
     else if (completed) continue;
+    else if (isUnscheduled) status = 'today';
     else if (schedule.type === 'todo' && dueDate < today) status = 'overdue';
     else if (dueDate === today) status = 'today';
     else if (dueDate > today && dueDate <= windowEnd) status = 'upcoming';
     if (!status) continue;
-    items.push({
+    const actionItem: ActionItem = {
       id: `schedule:${schedule.id}`,
       sourceType: 'schedule',
       sourceId: schedule.id,
@@ -125,10 +131,13 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
       priority: schedule.priority,
       nextAction: schedule.notes?.trim() || '',
       itemType: schedule.type === 'todo' ? 'todo' : 'event',
+      isUnscheduled,
       completedAt: completion?.completedAt || (completed ? schedule.updated_at : null),
       completionId: completion?.id || null,
       proof: proofFor(completion),
-    });
+    };
+    if (isUnscheduled && status === 'today') unscheduledItems.push(actionItem);
+    else items.push(actionItem);
   }
 
   const reminderTasks = reminderStore.listReminderTasks(userId);
@@ -158,6 +167,7 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
       priority: config.priority || 'medium',
       nextAction: config.actionGuide || config.nextAction || '完成本周期事务并登记证明',
       itemType: 'recurring',
+      isUnscheduled: false,
       completedAt: completion?.completedAt || cycle.completedAt,
       completionId: completion?.id || null,
       proof: proofFor(completion),
@@ -184,6 +194,7 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
       priority: config.priority || 'medium',
       nextAction: config.actionGuide || '本周期已完成',
       itemType: 'recurring',
+      isUnscheduled: false,
       completedAt: completion.completedAt,
       completionId: completion.id,
       proof: proofFor(completion),
@@ -195,11 +206,13 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
     return priorityDiff || a.dueAt.localeCompare(b.dueAt);
   });
   const todayItems = sortItems(items.filter(item => item.status === 'today'));
+  const unscheduled = sortItems(unscheduledItems);
   const upcoming = sortItems(items.filter(item => item.status === 'upcoming'));
   const overdue = sortItems(items.filter(item => item.status === 'overdue'));
   const completedToday = items.filter(item => item.status === 'completed').sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
   return {
     next: chooseNext([...todayItems, ...upcoming, ...overdue], now),
+    unscheduled,
     today: todayItems,
     upcoming,
     overdue,

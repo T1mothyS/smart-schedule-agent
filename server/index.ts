@@ -16,7 +16,7 @@ import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import cron from "node-cron";
-import { generateCode, sendVerificationEmail, sendReminderTestEmail } from "./email-service.js";
+import { generateCode, sendDailyReminderEmail, sendVerificationEmail, sendReminderTestEmail } from "./email-service.js";
 import { processCycleReminders } from "./reminder-service.js";
 import * as activityStore from "./activity-store.js";
 import { initActivityDb } from "./activity-store.js";
@@ -842,6 +842,84 @@ app.get("/api/action-center", authenticate, (req, res) => {
     res.json(getActionCenter(userId, upcomingDays));
   } catch (error: any) {
     res.status(500).json({ error: error?.message || '获取今日行动中心失败' });
+  }
+});
+
+app.post("/api/action-center/send-email", authenticate, async (req, res) => {
+  try {
+    const payload = (req as any).user as JwtPayload;
+    const reminderEmail = db.getReminderEmail(payload.userId) || payload.email;
+    if (!reminderEmail) return res.status(400).json({ error: '没有绑定通知邮箱，请先在设置中配置。' });
+    await sendDailyReminderEmail(reminderEmail, payload.userId);
+    addLog('info', 'reminder', `用户手动发送今日安排邮件: ${reminderEmail}`, { userId: payload.userId });
+    res.json({ success: true, message: `今天的安排已发送至 ${reminderEmail}` });
+  } catch (error: any) {
+    addLog('error', 'reminder', '手动发送今日安排邮件失败', { error: error?.message, userId: (req as any).user?.userId });
+    res.status(502).json({ error: error?.message || '邮件发送失败，请稍后重试。' });
+  }
+});
+
+app.post("/api/suspended-todos", authenticate, (req, res) => {
+  try {
+    const userId = (req as any).user.userId;
+    const title = String(req.body?.title || '').trim();
+    if (!title) return res.status(400).json({ error: '请输入待办内容。' });
+    const priority = ['high', 'medium', 'low'].includes(req.body?.priority) ? req.body.priority : 'medium';
+    const created = scheduleStore.createSchedule({
+      id: uuidv4(),
+      user_id: userId,
+      calendar_id: String(req.body?.calendarId || 'personal'),
+      type: 'todo',
+      title: title.slice(0, 160),
+      description: undefined,
+      start_time: new Date().toISOString(),
+      end_time: undefined,
+      all_day: false,
+      is_unscheduled: true,
+      location: undefined,
+      notes: String(req.body?.notes || '').trim() || undefined,
+      category: 'other',
+      priority,
+      is_completed: false,
+      is_repeated: false,
+      repeat_rule: undefined,
+      reminders: [],
+      is_high_risk: false,
+    });
+    res.status(201).json({ todo: created });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '创建挂起待办失败。' });
+  }
+});
+
+app.patch("/api/suspended-todos/:id", authenticate, (req, res) => {
+  try {
+    const userId = (req as any).user.userId;
+    const existing = scheduleStore.getSchedule(req.params.id);
+    if (!existing || existing.user_id !== userId || !existing.is_unscheduled) return res.status(404).json({ error: '挂起待办不存在。' });
+    const updates: any = {};
+    if (req.body?.title !== undefined) {
+      const title = String(req.body.title).trim();
+      if (!title) return res.status(400).json({ error: '待办内容不能为空。' });
+      updates.title = title.slice(0, 160);
+    }
+    if (req.body?.notes !== undefined) updates.notes = String(req.body.notes || '').trim() || undefined;
+    if (req.body?.priority !== undefined && ['high', 'medium', 'low'].includes(req.body.priority)) updates.priority = req.body.priority;
+    const updated = scheduleStore.updateSchedule(existing.id, updates);
+    res.json({ todo: updated });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '更新挂起待办失败。' });
+  }
+});
+
+app.delete("/api/suspended-todos/:id", authenticate, (req, res) => {
+  try {
+    const userId = (req as any).user.userId;
+    const existing = scheduleStore.getSchedule(req.params.id);
+    if (!existing || existing.user_id !== userId || !existing.is_unscheduled) return res.status(404).json({ error: '挂起待办不存在。' });
+    res.json({ success: scheduleStore.deleteSchedule(existing.id) });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '删除挂起待办失败。' });
   }
 });
 
@@ -2148,8 +2226,179 @@ function isReadOnlyScheduleQuery(text: string) {
   return /(有什么安排|有哪些安排|什么安排|有什么日程|有哪些日程|查看.*(?:安排|日程)|查询.*(?:安排|日程)|几点有会)/.test(normalized);
 }
 
+interface PendingAiSchedulePlan {
+  id: string;
+  userId: string;
+  targetCalendarId: string;
+  today: string;
+  intent: string;
+  reply: string;
+  warnings: string[];
+  operations: any[];
+  expiresAt: number;
+  confirmedResult?: any;
+}
+
+interface AiChatRequestRecord {
+  userId: string;
+  state: 'processing' | 'completed';
+  expiresAt: number;
+  response?: any;
+}
+
+const AI_SCHEDULE_PLAN_TTL_MS = 15 * 60 * 1000;
+const aiSchedulePlans = new Map<string, PendingAiSchedulePlan>();
+const aiChatRequestRecords = new Map<string, AiChatRequestRecord>();
+
+function cleanupExpiredAiScheduleState(): void {
+  const now = Date.now();
+  for (const [id, plan] of aiSchedulePlans) if (plan.expiresAt <= now) aiSchedulePlans.delete(id);
+  for (const [id, request] of aiChatRequestRecords) if (request.expiresAt <= now) aiChatRequestRecords.delete(id);
+}
+
+function isAiChatRequestId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{12,120}$/.test(value);
+}
+
+function planOperationPreview(operation: any, index: number): any {
+  const data = operation?.data || {};
+  const recurrence = operation?.recurrence || data.recurrence;
+  const operationType = operation?.type === 'create_recurring' ? 'create_recurring' : operation?.type;
+  return {
+    key: String(index),
+    type: operationType,
+    title: String(data.title || operation?.title || '未命名事项').slice(0, 160),
+    startTime: data.start_time || null,
+    endTime: data.end_time || null,
+    allDay: data.all_day === true,
+    isUnscheduled: data.is_unscheduled === true,
+    location: data.location || null,
+    notes: data.notes || null,
+    recurrence: recurrence ? {
+      frequency: recurrence.frequency || 'interval',
+      interval: Number(recurrence.interval || 1),
+      unit: recurrence.unit || 'day',
+      anchorDate: recurrence.anchorDate || String(data.start_time || '').slice(0, 10) || null,
+      reminderOffsets: Array.isArray(recurrence.reminderOffsets) ? recurrence.reminderOffsets : [1, 0],
+      reminderTime: recurrence.reminderTime || '09:00',
+    } : null,
+  };
+}
+
+function buildAiPlanWarnings(text: string, operations: any[], modelWarnings: unknown): string[] {
+  const warnings = new Set<string>(Array.isArray(modelWarnings) ? modelWarnings.map(String).slice(0, 10) : []);
+  const hasRecurringLanguage = /(每天|每日|每周|每月|每年|每隔\s*\d*\s*[天周月年])/.test(text);
+  const hasRecurringOperation = operations.some(operation => operation?.type === 'create_recurring');
+  if (hasRecurringLanguage && !hasRecurringOperation) {
+    warnings.add('原文包含周期表述，但计划未生成周期事项；确认前请改为“周期事项”或补充周期。');
+  }
+  if (/(周[一二三四五六日天].{0,3}(前|内)|周内|下周|本周)/.test(text)) {
+    warnings.add('原文含相对日期，请逐项核对计划中显示的公历日期与时间。');
+  }
+  if (operations.length > 1) {
+    warnings.add('这是多事项计划；确认后会一次执行全部列出的操作。');
+  }
+  return [...warnings].slice(0, 10);
+}
+
+function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
+  const createdSchedules: any[] = [];
+  const updatedSchedules: any[] = [];
+  const deletedIds: string[] = [];
+  const createdReminderTasks: any[] = [];
+
+  for (const op of plan.operations) {
+    if (op.type === 'create' && op.data?.title) {
+      try {
+        const created = scheduleStore.createSchedule({
+          id: uuidv4(),
+          user_id: plan.userId,
+          calendar_id: plan.targetCalendarId,
+          type: op.data.type === 'todo' ? 'todo' : 'event',
+          title: String(op.data.title).slice(0, 160),
+          description: undefined,
+          start_time: op.data.start_time || (plan.today + 'T09:00:00'),
+          end_time: op.data.end_time || undefined,
+          all_day: op.data.all_day === true,
+          is_unscheduled: op.data.is_unscheduled === true,
+          location: op.data.location || undefined,
+          notes: op.data.notes || undefined,
+          category: ['travel', 'work', 'social', 'life', 'health', 'other'].includes(op.data.category) ? op.data.category : 'other',
+          priority: ['high', 'medium', 'low'].includes(op.data.priority) ? op.data.priority : 'medium',
+          is_completed: false,
+          is_repeated: false,
+          reminders: [],
+          is_high_risk: false,
+        });
+        if (created) {
+          createdSchedules.push(created);
+          addLog('info', 'schedule', `AI 计划确认后创建日程: ${created.title}`, { id: created.id, planId: plan.id });
+        }
+      } catch (error: any) {
+        addLog('error', 'schedule', `AI 计划创建失败: ${op.data.title}`, { error: error?.message, planId: plan.id });
+      }
+    } else if (op.type === 'create_recurring' && op.data?.title) {
+      try {
+        const recurrence = op.recurrence || op.data.recurrence || {};
+        const anchorDate = recurrence.anchorDate || String(op.data.start_time || '').slice(0, 10) || plan.today;
+        const task = reminderStore.createReminderTask({
+          userId: plan.userId,
+          type: 'generic',
+          name: String(op.data.title).slice(0, 160),
+          timezone: process.env.APP_TIMEZONE || 'Asia/Shanghai',
+          config: normaliseReminderConfig('generic', {
+            templateKey: 'custom',
+            rule: {
+              frequency: recurrence.frequency || 'interval',
+              anchorDate,
+              interval: recurrence.interval || 1,
+              unit: recurrence.unit || 'day',
+              advancePolicy: recurrence.advancePolicy || 'calendar',
+              dayOfMonth: recurrence.dayOfMonth,
+              month: recurrence.month,
+            },
+            reminderOffsets: recurrence.reminderOffsets || [1, 0],
+            reminderTime: recurrence.reminderTime || '09:00',
+            actionGuide: op.data.notes || '完成本周期事项并登记结果',
+            priority: op.data.priority || 'medium',
+          }),
+        });
+        reminderCalendarSync.syncReminderTaskToCalendar(task);
+        createdReminderTasks.push(task);
+        addLog('info', 'reminder', `AI 计划确认后创建周期事项: ${task.name}`, { taskId: task.id, planId: plan.id });
+      } catch (error: any) {
+        addLog('error', 'reminder', `AI 周期事项创建失败: ${op.data.title}`, { error: error?.message, planId: plan.id });
+      }
+    } else if (op.type === 'update' && op.scheduleId && op.data) {
+      const target = scheduleStore.getSchedule(op.scheduleId);
+      if (!target || target.user_id !== plan.userId) {
+        addLog('warn', 'schedule', 'AI 计划尝试修改无权访问的日程', { userId: plan.userId, scheduleId: op.scheduleId, planId: plan.id });
+        continue;
+      }
+      const updated = scheduleStore.updateSchedule(op.scheduleId, op.data);
+      if (updated) updatedSchedules.push(updated);
+    } else if (op.type === 'delete' && op.scheduleId) {
+      const target = scheduleStore.getSchedule(op.scheduleId);
+      if (!target || target.user_id !== plan.userId) {
+        addLog('warn', 'schedule', 'AI 计划尝试删除无权访问的日程', { userId: plan.userId, scheduleId: op.scheduleId, planId: plan.id });
+        continue;
+      }
+      scheduleStore.deleteSchedule(op.scheduleId);
+      deletedIds.push(op.scheduleId);
+    }
+  }
+
+  return {
+    createdSchedules,
+    updatedSchedules,
+    deletedIds,
+    createdReminderTasks,
+    changed: createdSchedules.length + updatedSchedules.length + deletedIds.length + createdReminderTasks.length > 0,
+  };
+}
+
 app.post("/api/ai-chat", authenticate, async (req, res) => {
-  const { text, targetDate, model: reqModel, calendarId, scheduleContext } = req.body;
+  const { text, targetDate, model: reqModel, calendarId, requestId } = req.body;
   if (!text) return res.status(400).json({ error: "请输入内容" });
 
   // 记录 AI 对话请求日志
@@ -2229,6 +2478,19 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
   const today = targetDate || getLocalDateString();
   const selectedModel = reqModel || scheduleModel || defaultModel;
   const targetCalendarId = calendarId || 'personal';
+  cleanupExpiredAiScheduleState();
+  const requestKey = isAiChatRequestId(requestId) ? `${userId}:${requestId}` : null;
+  if (requestKey) {
+    const previous = aiChatRequestRecords.get(requestKey);
+    if (previous?.state === 'completed' && previous.response) return res.json(previous.response);
+    if (previous?.state === 'processing') {
+      return res.status(409).json({
+        error: '相同内容仍在处理中，请勿重复创建；请稍候再次发送原内容以取得结果。',
+        code: 'AI_REQUEST_IN_PROGRESS',
+      });
+    }
+    aiChatRequestRecords.set(requestKey, { userId, state: 'processing', expiresAt: Date.now() + AI_SCHEDULE_PLAN_TTL_MS });
+  }
 
   // 【关键修复】先解析用户消息中的日期，获取正确的日程作为AI上下文
   const queryDates = parseQueryDatesForCards(text, today);
@@ -2317,15 +2579,18 @@ ${scheduleList || '（暂无日程）'}
 {
   "intent": "create|update|delete|query|chat",
   "reply": "给用户的自然语言回复（必填，要基于上面提供的日程列表来回复，不要凭空捏造）",
+  "warnings": ["需要用户确认的歧义或缺失信息"],
   "operations": [
     {
-      "type": "create|update|delete",
+      "type": "create|create_recurring|update|delete",
       "scheduleId": "修改/删除时填写已有日程的完整UUID，必须从上面日程列表的 [ID:xxxx] 复制完整值！",
+      "recurrence": {"frequency":"interval|monthly|yearly","anchorDate":"YYYY-MM-DD","interval":1,"unit":"day|month|year","reminderOffsets":[1,0],"reminderTime":"09:00"},
       "data": {
         "title": "日程标题",
         "start_time": "YYYY-MM-DDTHH:MM:00",
         "end_time": "YYYY-MM-DDTHH:MM:00 或 null",
         "all_day": false,
+        "is_unscheduled": false,
         "location": "地点或null",
         "notes": "备注或null",
         "category": "travel/work/social/life/health/other",
@@ -2342,6 +2607,7 @@ ${scheduleList || '（暂无日程）'}
 - delete: 删除日程（"取消..."、"删掉..."、"不要..."）
 - query: 查询日程（"今天有什么安排"、"我几点有会"）
 - chat: 纯聊天、问建议（不操作日程）
+- 没有具体执行日期、需要长期挂起的待办使用 "is_unscheduled": true，并将 type 设为 "todo"；这类待办不要编造日期。
 
 时间识别技巧：
 - "上午"→09:00，"中午"→12:00，"下午"→14:00，"傍晚"→17:00，"晚上"→19:00
@@ -2371,10 +2637,12 @@ priority 识别：
 {
   "intent": "create|update|delete|query|chat",
   "reply": "给用户的自然语言回复（必填，要友好、简洁）",
+  "warnings": ["需要用户确认的歧义或缺失信息"],
   "operations": [
     {
-      "type": "create|update|delete",
+      "type": "create|create_recurring|update|delete",
       "scheduleId": "修改/删除时填写已有日程的id（从上面列表复制）",
+      "recurrence": {"frequency":"interval|monthly|yearly","anchorDate":"YYYY-MM-DD","interval":1,"unit":"day|month|year","reminderOffsets":[1,0],"reminderTime":"09:00"},
       "data": {
         "title": "...",
         "start_time": "YYYY-MM-DDTHH:MM:00",
@@ -2402,7 +2670,13 @@ priority 识别：
 - low: 含"随便""有空""顺便""不急"
 - medium: 其他情况
 
-修改时 scheduleId 必须从已有日程列表中精确匹配，operations 数组可以为空（chat/query意图时）。`;
+修改时 scheduleId 必须从已有日程列表中精确匹配，operations 数组可以为空（chat/query意图时）。
+
+多事项与周期规则：
+- 先逐条拆分输入。每个可执行事项必须对应一个独立 operation，不能把地址、前置动作或不同日期合并丢失。
+- “每天/每周/每月/每年/每隔 N 天”必须使用 type: "create_recurring"，不能把周期事项降级成一次性日程；其 data 中照常填写标题、备注、优先级，另填 recurrence：{"frequency":"interval|monthly|yearly","anchorDate":"YYYY-MM-DD","interval":1,"unit":"day|month|year","reminderOffsets":[1,0],"reminderTime":"09:00"}。
+- 对于“周三前”“周内”“周五和下周一”等相对日期，必须以当前日期换算出确切 YYYY-MM-DD；“周三前完成”最晚安排在该周周三，不能向后顺延。
+- 信息有歧义、缺少日期或会影响执行时，不要编造；在顶层 warnings 数组中列出需要用户核对的问题。所有写入都会先展示计划并等待用户确认。`;
 
   try {
     let jsonText = '';
@@ -2431,7 +2705,7 @@ priority 识别：
     if (!jsonMatch) throw new Error('AI 返回格式错误');
 
     const parsed = JSON.parse(jsonMatch[0]);
-    const operations = parsed.operations || [];
+    const operations = Array.isArray(parsed.operations) ? parsed.operations : [];
     console.log('[AI Chat] Intent:', parsed.intent);
     console.log('[AI Chat] Operations:', JSON.stringify(operations, null, 2));
     addLog('info', 'ai', `AI解析完成，意图: ${parsed.intent}，操作数: ${operations.length}`, {
@@ -2440,115 +2714,92 @@ priority 识别：
       reply: (parsed.reply || '').slice(0, 80)
     });
     
-    const createdSchedules: any[] = [];
-    const updatedSchedules: any[] = [];
-    const deletedIds: string[] = [];
-
-    for (const op of operations) {
-      if (op.type === 'create' && op.data?.title) {
-        try {
-          addLog('info', 'schedule', `创建日程: ${op.data.title}`, {
-            end_time: op.data.end_time,
-            all_day: op.data.all_day,
-            type: op.data.type
-          });
-          const created = scheduleStore.createSchedule({
-            id: uuidv4(),
-            user_id: userId,
-            calendar_id: targetCalendarId,
-            type: op.data.type || 'event',
-            title: op.data.title,
-            description: undefined,
-            start_time: op.data.start_time || (today + 'T09:00:00'),
-            end_time: op.data.end_time,
-            all_day: op.data.all_day === true,
-            location: op.data.location || undefined,
-            notes: op.data.notes || undefined,
-            category: op.data.category || 'other',
-            priority: op.data.priority || 'medium',
-            is_completed: false,
-            is_repeated: false,
-            reminders: [],
-            is_high_risk: false,
-          });
-          if (created) {
-            createdSchedules.push(created);
-            addLog('info', 'schedule', `创建成功: ${op.data.title}`, { id: created.id });
-          }
-        } catch (err: any) {
-          addLog('error', 'schedule', `创建失败: ${op.data.title}`, { error: err.message });
-          console.error('[AI Chat] 创建日程失败:', err.message);
-        }
-      } else if (op.type === 'update' && op.scheduleId && op.data) {
-        const target = scheduleStore.getSchedule(op.scheduleId);
-        if (!target || target.user_id !== userId) {
-          addLog('warn', 'schedule', 'AI 尝试修改无权访问的日程', { userId, scheduleId: op.scheduleId });
-          continue;
-        }
-        console.log('[AI Chat] Updating schedule:', op.scheduleId, 'with:', op.data);
-        const updated = scheduleStore.updateSchedule(op.scheduleId, op.data);
-        if (updated) {
-          updatedSchedules.push(updated);
-          console.log('[AI Chat] Update successful:', updated);
-        } else {
-          console.log('[AI Chat] Update failed - schedule not found or error');
-        }
-      } else if (op.type === 'delete' && op.scheduleId) {
-        const target = scheduleStore.getSchedule(op.scheduleId);
-        if (!target || target.user_id !== userId) {
-          addLog('warn', 'schedule', 'AI 尝试删除无权访问的日程', { userId, scheduleId: op.scheduleId });
-          continue;
-        }
-        console.log('[AI Chat] Deleting schedule:', op.scheduleId);
-        scheduleStore.deleteSchedule(op.scheduleId);
-        deletedIds.push(op.scheduleId);
-      }
-    }
-
-    console.log('[AI Chat] Summary - created:', createdSchedules.length, 'updated:', updatedSchedules.length, 'deleted:', deletedIds.length);
-    
-    const changed = createdSchedules.length + updatedSchedules.length + deletedIds.length > 0;
-    let finalScheduleItems = sortedSchedules;
-    if (changed) {
-      const allSchedules: any[] = [];
-      const seenFinalIds = new Set<string>();
-      for (const dateStr of queryDates) {
-        const schedules = scheduleStore.getSchedulesByDate(dateStr, userId);
-        for (const schedule of schedules) {
-          if (!seenFinalIds.has(schedule.id)) {
-            seenFinalIds.add(schedule.id);
-            allSchedules.push(schedule);
-          }
-        }
-      }
-      finalScheduleItems = allSchedules.sort((a, b) =>
-        new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
-      );
-    }
-
-    const finalReply = parsed.intent === 'query'
-      ? buildCompactScheduleQueryReply(finalScheduleItems, queryDates, today)
-      : (parsed.reply || '好的');
-
-    // 返回结构化日程，前端渲染为可点击卡片并复用日历详情操作
-    res.json({
+    const requiresConfirmation = operations.some((op: any) =>
+      ['create', 'create_recurring', 'update', 'delete'].includes(op?.type),
+    );
+    const response = requiresConfirmation ? (() => {
+      const plan: PendingAiSchedulePlan = {
+        id: uuidv4(),
+        userId,
+        targetCalendarId,
+        today,
+        intent: parsed.intent || 'chat',
+        reply: String(parsed.reply || '已整理出待确认的执行计划。'),
+        warnings: buildAiPlanWarnings(text, operations, parsed.warnings),
+        operations,
+        expiresAt: Date.now() + AI_SCHEDULE_PLAN_TTL_MS,
+      };
+      aiSchedulePlans.set(plan.id, plan);
+      addLog('info', 'ai', `AI 生成待确认计划，操作数: ${operations.length}`, { planId: plan.id, userId });
+      return {
+        success: true,
+        intent: plan.intent,
+        reply: plan.reply,
+        scheduleItems: sortedSchedules,
+        changed: false,
+        requiresConfirmation: true,
+        plan: {
+          id: plan.id,
+          expiresAt: new Date(plan.expiresAt).toISOString(),
+          warnings: plan.warnings,
+          operations: operations.map(planOperationPreview),
+        },
+      };
+    })() : {
       success: true,
       intent: parsed.intent || 'chat',
-      reply: finalReply,
-      scheduleItems: finalScheduleItems,
-      // 日程变更信息用于前端判断是否需要刷新日历
-      changed,
-      changedDetails: {
-        created: createdSchedules,
-        updated: updatedSchedules,
-        deleted: deletedIds,
-      },
-    });
+      reply: parsed.intent === 'query'
+        ? buildCompactScheduleQueryReply(sortedSchedules, queryDates, today)
+        : (parsed.reply || '好的'),
+      scheduleItems: sortedSchedules,
+      changed: false,
+      changedDetails: { created: [], updated: [], deleted: [] },
+    };
+    if (requestKey) aiChatRequestRecords.set(requestKey, { userId, state: 'completed', response, expiresAt: Date.now() + AI_SCHEDULE_PLAN_TTL_MS });
+    res.json(response);
   } catch (error: any) {
+    if (requestKey) aiChatRequestRecords.delete(requestKey);
     addLog('error', 'ai', `AI Chat 处理失败: ${error?.message || '未知错误'}`, { stack: error?.stack?.slice(0, 200) });
     console.error('[AI Chat] Error:', error);
     res.status(500).json({ error: error?.message || 'AI 处理失败，请重试' });
   }
+});
+
+app.post("/api/ai-chat/confirm", authenticate, (req, res) => {
+  cleanupExpiredAiScheduleState();
+  const planId = String(req.body?.planId || '');
+  const userId = ((req as any).user as JwtPayload).userId;
+  const plan = aiSchedulePlans.get(planId);
+  if (!plan || plan.userId !== userId) {
+    return res.status(404).json({ error: '待确认计划不存在或已过期，请重新生成。' });
+  }
+
+  if (!plan.confirmedResult) {
+    const result = executeAiScheduleOperations(plan);
+    const scheduleItems = [...result.createdSchedules, ...result.updatedSchedules];
+    plan.confirmedResult = {
+      success: true,
+      intent: plan.intent,
+      reply: `已确认并执行：创建 ${result.createdSchedules.length} 项日程、${result.createdReminderTasks.length} 项周期事项，更新 ${result.updatedSchedules.length} 项，删除 ${result.deletedIds.length} 项。`,
+      scheduleItems,
+      changed: result.changed,
+      changedDetails: {
+        created: result.createdSchedules,
+        updated: result.updatedSchedules,
+        deleted: result.deletedIds,
+        recurring: result.createdReminderTasks,
+      },
+    };
+    addLog('info', 'ai', 'AI 计划已确认执行', {
+      planId,
+      userId,
+      created: result.createdSchedules.length,
+      recurring: result.createdReminderTasks.length,
+      updated: result.updatedSchedules.length,
+      deleted: result.deletedIds.length,
+    });
+  }
+  res.json(plan.confirmedResult);
 });
 
 // 获取某日日程（供 AI 对话上下文）

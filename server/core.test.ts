@@ -195,6 +195,20 @@ test('行动中心聚合待办并记录完成证明', () => {
   assert.equal(updated?.note, '更新后的证明，金额 123.45 元');
 });
 
+test('无日期待办只出现在行动中心的挂起区域', () => {
+  const today = reminders.todayInTimezone();
+  const suspended = schedules.createSchedule({
+    id: 'schedule-suspended-todo', user_id: userId, calendar_id: 'personal', type: 'todo', title: '长期挂起事项',
+    description: undefined, start_time: today + 'T00:00:00', end_time: undefined,
+    all_day: false, is_unscheduled: true, location: undefined, notes: '想到时再处理', category: 'other', priority: 'medium', is_completed: false,
+    is_repeated: false, repeat_rule: undefined, reminders: [], is_high_risk: false,
+  });
+  const center = actionCenter.getActionCenter(userId, 7);
+  assert.ok(center.unscheduled.some(item => item.sourceId === suspended.id));
+  assert.equal(center.today.some(item => item.sourceId === suspended.id), false);
+  assert.equal(schedules.getSchedulesByDate(today, userId).some(item => item.id === suspended.id), false);
+});
+
 test('日历取消完成会同步行动中心，全天事项保留全天语义和备注', () => {
   const today = reminders.todayInTimezone();
   const schedule = schedules.createSchedule({

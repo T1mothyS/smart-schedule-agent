@@ -109,8 +109,9 @@ export function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
-      <div className="w-full max-w-md mx-4">
+    <div className="min-h-screen flex flex-col" style={{ background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
+      <main className="flex flex-1 items-center justify-center px-4 py-8">
+        <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="text-5xl mb-3">📅</div>
@@ -233,10 +234,17 @@ export function LoginPage() {
           )}
         </div>
 
-        <p className="text-center text-white/50 text-xs mt-6">
-          AI Calendar © 2026
-        </p>
-      </div>
+          <p className="text-center text-white/50 text-xs mt-6">
+            AI Calendar © 2026
+          </p>
+        </div>
+      </main>
+
+      <footer className="flex-none px-4 pb-5 text-center text-xs text-white/60">
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">
+          冀ICP备2026028167号
+        </a>
+      </footer>
     </div>
   );
 }

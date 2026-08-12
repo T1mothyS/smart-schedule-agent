@@ -12,6 +12,7 @@ interface Schedule {
   start_time: string;
   end_time?: string;
   all_day: boolean;
+  is_unscheduled?: boolean;
   location?: string;
   notes?: string;
   category: string;
@@ -26,8 +27,35 @@ interface CalendarItem {
   icon: string;
 }
 
+interface AiPlanOperation {
+  key: string;
+  type: 'create' | 'create_recurring' | 'update' | 'delete';
+  title: string;
+  startTime?: string | null;
+  endTime?: string | null;
+  allDay?: boolean;
+  isUnscheduled?: boolean;
+  location?: string | null;
+  notes?: string | null;
+  recurrence?: {
+    frequency: string;
+    interval: number;
+    unit: string;
+    anchorDate?: string | null;
+    reminderOffsets?: number[];
+    reminderTime?: string;
+  } | null;
+}
+
+interface AiSchedulePlan {
+  id: string;
+  expiresAt: string;
+  warnings: string[];
+  operations: AiPlanOperation[];
+}
+
 type MessageRole = 'user' | 'assistant';
-type MessageType = 'text' | 'schedules' | 'update' | 'error';
+type MessageType = 'text' | 'schedules' | 'update' | 'plan' | 'error';
 
 interface ChatMessage {
   id: string;
@@ -36,6 +64,7 @@ interface ChatMessage {
   text?: string;
   intent?: string;
   scheduleItems?: Schedule[];
+  plan?: AiSchedulePlan;
   timestamp: string;
 }
 
@@ -63,6 +92,24 @@ const CATEGORY_LABELS: Record<string, string> = {
 const PRIORITY_COLORS: Record<string, string> = {
   high: '#EF4444', medium: '#F59E0B', low: '#10B981',
 };
+
+const AI_RESPONSE_TIMEOUT_MS = 330_000;
+const AI_RETRY_WINDOW_MS = 15 * 60 * 1000;
+
+function createRequestId(): string {
+  return globalThis.crypto?.randomUUID?.() || `ai_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+async function readJsonResponse(response: Response): Promise<any> {
+  const raw = await response.text();
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    const contentType = response.headers.get('content-type') || '未知类型';
+    const preview = raw.replace(/\s+/g, ' ').slice(0, 120);
+    throw new Error(`服务返回了非 JSON 内容（${contentType}）：${preview || '空响应'}。请检查代理超时或服务状态。`);
+  }
+}
 
 // 【关键修复】获取本地时区的日期字符串（YYYY-MM-DD）
 function getLocalDateString(date?: Date): string {
@@ -172,11 +219,14 @@ function ScheduleMiniCard({ schedule, calendars, onOpen, onOpenMenu }: {
 
 // ==================== 消息气泡 ====================
 
-function MessageBubble({ msg, calendars, onOpenSchedule, onOpenScheduleMenu }: {
+function MessageBubble({ msg, calendars, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan, onDiscardPlan, confirmingPlanId }: {
   msg: ChatMessage;
   calendars: CalendarItem[];
   onOpenSchedule?: (id: string) => void;
   onOpenScheduleMenu?: (id: string, x: number, y: number) => void;
+  onConfirmPlan?: (messageId: string, planId: string) => void;
+  onDiscardPlan?: (messageId: string) => void;
+  confirmingPlanId?: string | null;
 }) {
   const isUser = msg.role === 'user';
 
@@ -236,6 +286,43 @@ function MessageBubble({ msg, calendars, onOpenSchedule, onOpenScheduleMenu }: {
               </div>
             )}
 
+            {msg.type === 'plan' && msg.plan && (
+              <div className="mt-2 rounded-lg p-2.5" style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
+                <div className="text-xs font-medium mb-2" style={{ color: '#1D4ED8' }}>待确认执行计划 · {msg.plan.operations.length} 项</div>
+                {msg.plan.warnings.map((warning, index) => (
+                  <div key={`${warning}-${index}`} className="text-xs mb-1" style={{ color: '#B45309' }}>需核对：{warning}</div>
+                ))}
+                <div className="space-y-1.5">
+                  {msg.plan.operations.map(operation => {
+                    const actionLabel: Record<string, string> = { create: '新建日程', create_recurring: '周期事项', update: '修改日程', delete: '删除日程' };
+                    const recurrenceUnit = operation.recurrence?.frequency === 'monthly' ? '月'
+                      : operation.recurrence?.frequency === 'yearly' ? '年'
+                        : operation.recurrence?.unit === 'month' ? '月'
+                          : operation.recurrence?.unit === 'year' ? '年' : '天';
+                    const timeLabel = operation.isUnscheduled
+                      ? '无具体日期 · 挂起待办'
+                      : operation.recurrence
+                      ? `每 ${operation.recurrence.interval || 1} ${recurrenceUnit} · 起始 ${operation.recurrence.anchorDate || '待确认'}`
+                      : operation.startTime ? `${formatDate(operation.startTime)} ${operation.allDay ? '全天' : formatTime(operation.startTime)}` : '时间待确认';
+                    return (
+                      <div key={operation.key} className="rounded-md px-2 py-1.5" style={{ backgroundColor: 'var(--td-bg-color-container)', border: '1px solid #DBEAFE' }}>
+                        <div className="text-xs font-medium" style={{ color: 'var(--td-text-color-primary)' }}>{operation.title}</div>
+                        <div className="text-[11px] mt-0.5" style={{ color: 'var(--td-text-color-secondary)' }}>{actionLabel[operation.type] || '处理'} · {timeLabel}</div>
+                        {operation.location && <div className="text-[11px] mt-0.5" style={{ color: 'var(--td-text-color-secondary)' }}>地点：{operation.location}</div>}
+                        {operation.notes && <div className="text-[11px] mt-0.5 whitespace-pre-line" style={{ color: 'var(--td-text-color-secondary)' }}>备注：{operation.notes}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-end gap-2 mt-2.5">
+                  <button type="button" className="secondary-button" onClick={() => onDiscardPlan?.(msg.id)} disabled={confirmingPlanId === msg.plan.id}>取消</button>
+                  <button type="button" className="primary-button" onClick={() => onConfirmPlan?.(msg.id, msg.plan!.id)} disabled={confirmingPlanId === msg.plan.id}>
+                    {confirmingPlanId === msg.plan.id ? '正在创建…' : '确认并创建'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* 使用结构化数据渲染可点击日程卡片 */}
             {msg.scheduleItems && msg.scheduleItems.length > 0 && (
               <div className="mt-2">
@@ -271,9 +358,11 @@ export function AiSchedulePanel({
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [calendars, setCalendars] = useState<CalendarItem[]>([]);
+  const [confirmingPlanId, setConfirmingPlanId] = useState<string | null>(null);
   const { isAuthenticated, token, authHeaders } = useAuth();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const retryRequestIdsRef = useRef(new Map<string, { requestId: string; expiresAt: number }>());
 
   // 加载日程表信息（用于显示来源标识）
   useEffect(() => {
@@ -323,6 +412,11 @@ export function AiSchedulePanel({
     const text = inputText.trim();
     if (!text || isLoading) return;
 
+    const today = getLocalDateString();
+    const targetCalendarId = (activeCalendarIds && activeCalendarIds.length > 0) ? activeCalendarIds[0] : 'personal';
+    const requestSignature = `${today}|${targetCalendarId}|${text}`;
+    const retryEntry = retryRequestIdsRef.current.get(requestSignature);
+    const requestId = retryEntry && retryEntry.expiresAt > Date.now() ? retryEntry.requestId : createRequestId();
     setInputText('');
     setIsLoading(true);
 
@@ -337,28 +431,31 @@ export function AiSchedulePanel({
     setMessages(prev => [...prev, userMsg]);
 
     try {
-      const today = getLocalDateString();
       const res = await fetch('/api/ai-chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        signal: AbortSignal.timeout(AI_RESPONSE_TIMEOUT_MS),
         body: JSON.stringify({
           text,
           targetDate: today,
-          calendarId: (activeCalendarIds && activeCalendarIds.length > 0) ? activeCalendarIds[0] : 'personal',
+          calendarId: targetCalendarId,
+          requestId,
         }),
       });
 
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (!res.ok) throw new Error(data.error || '处理失败');
+      retryRequestIdsRef.current.delete(requestSignature);
 
       const aiMsg: ChatMessage = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        type: data.intent === 'chat' || data.intent === 'query' ? 'text' :
+        type: data.requiresConfirmation ? 'plan' : data.intent === 'chat' || data.intent === 'query' ? 'text' :
               data.intent === 'update' || data.intent === 'delete' ? 'update' : 'schedules',
         intent: data.intent,
         text: data.reply,
         scheduleItems: data.scheduleItems || [],
+        plan: data.plan,
         timestamp: new Date().toISOString(),
       };
       setMessages(prev => [...prev, aiMsg]);
@@ -368,9 +465,14 @@ export function AiSchedulePanel({
         onSchedulesCreated?.(data.changedDetails?.created || []);
       }
     } catch (err: any) {
-      // 检查是否是未登录错误
       const errorMsg = err.message || '';
       const isLoginError = errorMsg.includes('未登录') || errorMsg.includes('登录');
+      const isPending = errorMsg.includes('仍在处理中');
+      const mayStillBeProcessing = err?.name === 'TimeoutError' || errorMsg.includes('非 JSON 内容') || isPending;
+      if (mayStillBeProcessing) {
+        retryRequestIdsRef.current.set(requestSignature, { requestId, expiresAt: Date.now() + AI_RETRY_WINDOW_MS });
+        setInputText(text);
+      }
       
       setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
@@ -378,6 +480,8 @@ export function AiSchedulePanel({
         type: 'error',
         text: isLoginError 
           ? (errorMsg || '请先配置 API Key 或登录 CodeBuddy CLI')
+          : mayStillBeProcessing
+            ? '请求已超出前端等待时间，服务端可能仍在整理计划。内容已保留，请勿修改内容；稍后再次发送可取得同一结果，不会重复创建日程。'
           : (errorMsg || '处理失败，请重试'),
         timestamp: new Date().toISOString(),
       }]);
@@ -385,7 +489,49 @@ export function AiSchedulePanel({
       setIsLoading(false);
       textareaRef.current?.focus();
     }
-  }, [inputText, isLoading, isAuthenticated, activeCalendarIds, onSchedulesCreated]);
+  }, [inputText, isLoading, activeCalendarIds, onSchedulesCreated, authHeaders]);
+
+  const handleConfirmPlan = useCallback(async (messageId: string, planId: string) => {
+    if (confirmingPlanId) return;
+    setConfirmingPlanId(planId);
+    try {
+      const response = await fetch('/api/ai-chat/confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        signal: AbortSignal.timeout(60_000),
+        body: JSON.stringify({ planId }),
+      });
+      const data = await readJsonResponse(response);
+      if (!response.ok) throw new Error(data.error || '确认计划失败');
+      setMessages(previous => previous.map(message => message.id === messageId ? {
+        ...message,
+        type: 'schedules',
+        text: data.reply,
+        plan: undefined,
+        scheduleItems: data.scheduleItems || [],
+      } : message));
+      if (data.changed) onSchedulesCreated?.(data.changedDetails?.created || []);
+    } catch (error: any) {
+      setMessages(previous => [...previous, {
+        id: (Date.now() + 2).toString(),
+        role: 'assistant',
+        type: 'error',
+        text: error?.message || '确认计划失败，请重试。',
+        timestamp: new Date().toISOString(),
+      }]);
+    } finally {
+      setConfirmingPlanId(null);
+    }
+  }, [authHeaders, confirmingPlanId, onSchedulesCreated]);
+
+  const handleDiscardPlan = useCallback((messageId: string) => {
+    setMessages(previous => previous.map(message => message.id === messageId ? {
+      ...message,
+      type: 'text',
+      text: '已取消这份计划，尚未创建或修改任何日程。',
+      plan: undefined,
+    } : message));
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -510,6 +656,9 @@ export function AiSchedulePanel({
             calendars={calendars}
             onOpenSchedule={onOpenSchedule}
             onOpenScheduleMenu={onOpenScheduleMenu}
+            onConfirmPlan={handleConfirmPlan}
+            onDiscardPlan={handleDiscardPlan}
+            confirmingPlanId={confirmingPlanId}
           />
         ))}
 

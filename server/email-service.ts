@@ -149,13 +149,17 @@ export async function sendDailyReminderEmail(to: string, userId: string): Promis
   const dateStr = dateInTimezone(today);
   const schedules = getSchedulesByDate(dateStr, userId);
   const content = formatScheduleList(schedules, today);
+  const htmlContent = escapeHtml(content)
+    .replace(/\n/g, '<br>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+  const totalCount = schedules.length;
 
   const html = `
     <div style="font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f0f4ff; min-height: 100vh;">
       <div style="background: #fff; border-radius: 16px; padding: 32px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);">
         <h2 style="color: #1a1a1a; font-size: 22px; margin-bottom: 8px;">📅 ${today.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })} 日程提醒</h2>
         <p style="color: #6b7280; font-size: 14px; margin-bottom: 24px;">来自 AI Calendar 的每日提醒</p>
-        <div style="background: #f9fafb; border-radius: 12px; padding: 24px; line-height: 2; color: #374151; font-size: 15px; white-space: pre-line;">${content.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</div>
+        <div style="background: #f9fafb; border-radius: 12px; padding: 24px; line-height: 2; color: #374151; font-size: 15px; white-space: pre-line;">${htmlContent}</div>
         <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center;">
           <a href="${process.env.APP_URL || 'http://47.95.114.137:3000/schedule'}" style="display: inline-block; background: linear-gradient(135deg, #3b82f6, #6366f1); color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-size: 15px; font-weight: 500;">打开 AI Calendar</a>
         </div>
@@ -166,7 +170,7 @@ export async function sendDailyReminderEmail(to: string, userId: string): Promis
   await sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
-    subject: `📅 ${today.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} 您有 ${schedules.length} 项日程待处理`,
+    subject: `📅 ${today.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} 您有 ${totalCount} 项安排待处理`,
     html,
   });
 }

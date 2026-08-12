@@ -85,6 +85,7 @@ async function initScheduleDb(): Promise<void> {
       start_time TEXT NOT NULL,
       end_time TEXT,
       all_day INTEGER DEFAULT 0,
+      is_unscheduled INTEGER DEFAULT 0,
       location TEXT,
       notes TEXT,
       category TEXT DEFAULT 'other',
@@ -103,6 +104,7 @@ async function initScheduleDb(): Promise<void> {
   try { db.run(`ALTER TABLE schedules ADD COLUMN user_id TEXT DEFAULT 'default'`); } catch {}
   try { db.run(`ALTER TABLE schedules ADD COLUMN type TEXT DEFAULT 'event'`); } catch {}
   try { db.run(`ALTER TABLE schedules ADD COLUMN all_day INTEGER DEFAULT 0`); } catch {}
+  try { db.run(`ALTER TABLE schedules ADD COLUMN is_unscheduled INTEGER DEFAULT 0`); } catch {}
   try { db.run(`ALTER TABLE schedules ADD COLUMN notes TEXT`); } catch {}
   try { db.run(`ALTER TABLE schedules ADD COLUMN calendar_id TEXT DEFAULT 'personal'`); } catch {}
   try { db.run(`ALTER TABLE schedules ADD COLUMN is_high_risk INTEGER DEFAULT 0`); } catch {}
@@ -208,6 +210,7 @@ export interface Schedule {
   start_time: string;
   end_time?: string;
   all_day: boolean;
+  is_unscheduled?: boolean;
   location?: string;
   notes?: string;
   category: string;
@@ -236,6 +239,7 @@ function rowToSchedule(row: any): Schedule {
     user_id: row.user_id || 'default',
     calendar_id: row.calendar_id || 'personal',
     all_day: row.all_day === 1,
+    is_unscheduled: row.is_unscheduled === 1,
     is_completed: row.is_completed === 1,
     is_repeated: row.is_repeated === 1,
     is_high_risk: row.is_high_risk === 1,
@@ -256,12 +260,12 @@ export function getAllSchedules(userId?: string): Schedule[] {
 export function getSchedulesByDateRange(startDate: string, endDate: string, userId?: string): Schedule[] {
   if (userId) {
     return queryAll<any>(
-      'SELECT * FROM schedules WHERE start_time >= ? AND start_time <= ? AND user_id = ? ORDER BY start_time ASC',
+      'SELECT * FROM schedules WHERE start_time >= ? AND start_time <= ? AND is_unscheduled = 0 AND user_id = ? ORDER BY start_time ASC',
       [startDate, endDate, userId]
     ).map(rowToSchedule);
   }
   return queryAll<any>(
-    'SELECT * FROM schedules WHERE start_time >= ? AND start_time <= ? ORDER BY start_time ASC',
+    'SELECT * FROM schedules WHERE start_time >= ? AND start_time <= ? AND is_unscheduled = 0 ORDER BY start_time ASC',
     [startDate, endDate]
   ).map(rowToSchedule);
 }
@@ -270,12 +274,12 @@ export function getSchedulesByDateRange(startDate: string, endDate: string, user
 export function getSchedulesByDate(date: string, userId?: string): Schedule[] {
   if (userId) {
     return queryAll<any>(
-      'SELECT * FROM schedules WHERE date(start_time) = date(?) AND user_id = ? ORDER BY start_time ASC',
+      'SELECT * FROM schedules WHERE date(start_time) = date(?) AND is_unscheduled = 0 AND user_id = ? ORDER BY start_time ASC',
       [date, userId]
     ).map(rowToSchedule);
   }
   return queryAll<any>(
-    'SELECT * FROM schedules WHERE date(start_time) = date(?) ORDER BY start_time ASC',
+    'SELECT * FROM schedules WHERE date(start_time) = date(?) AND is_unscheduled = 0 ORDER BY start_time ASC',
     [date]
   ).map(rowToSchedule);
 }
@@ -296,6 +300,8 @@ function safeNull(val: any): any {
 // 创建日程
 export function createSchedule(schedule: Omit<Schedule, 'created_at' | 'updated_at'>): Schedule {
   const now = new Date().toISOString();
+  const isUnscheduled = schedule.is_unscheduled === true;
+  const startTimeValue = schedule.start_time || now;
   const calendars = schedule.user_id ? getAllCalendars(schedule.user_id) : [];
   const requestedCalendar = schedule.calendar_id || 'personal';
   const calendarId = calendars.find(item => item.id === requestedCalendar)?.id
@@ -304,11 +310,13 @@ export function createSchedule(schedule: Omit<Schedule, 'created_at' | 'updated_
     || requestedCalendar;
 
   // 【关键修复】全天日程的 end_time 不能为 null，设置为 start_time（同一天结束）
-  const endTimeValue = safeNull(schedule.end_time) || (schedule.all_day ? schedule.start_time : null);
+  const endTimeValue = isUnscheduled
+    ? null
+    : safeNull(schedule.end_time) || (schedule.all_day ? startTimeValue : null);
 
   run(
-    `INSERT INTO schedules (id, user_id, calendar_id, type, title, description, start_time, end_time, all_day, location, notes, category, priority, is_completed, is_repeated, repeat_rule, reminders, is_high_risk, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO schedules (id, user_id, calendar_id, type, title, description, start_time, end_time, all_day, is_unscheduled, location, notes, category, priority, is_completed, is_repeated, repeat_rule, reminders, is_high_risk, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       schedule.id,
       schedule.user_id || 'default',
@@ -316,9 +324,10 @@ export function createSchedule(schedule: Omit<Schedule, 'created_at' | 'updated_
       schedule.type || 'event',
       schedule.title,
       safeNull(schedule.description),
-      schedule.start_time,
+      startTimeValue,
       endTimeValue,
       schedule.all_day ? 1 : 0,
+      isUnscheduled ? 1 : 0,
       safeNull(schedule.location),
       safeNull(schedule.notes),
       schedule.category,
@@ -352,9 +361,13 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
 
   const now = new Date().toISOString();
   const merged = { ...existing, ...updates, updated_at: now };
+  const isUnscheduled = merged.is_unscheduled === true;
+  const startTimeValue = merged.start_time || now;
 
   // 【关键修复】全天日程的 end_time 不能为 null
-  const endTimeValue = safeNull(merged.end_time) || (merged.all_day ? merged.start_time : null);
+  const endTimeValue = isUnscheduled
+    ? null
+    : safeNull(merged.end_time) || (merged.all_day ? startTimeValue : null);
 
   run(
     `UPDATE schedules SET
@@ -364,6 +377,7 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
       start_time = ?,
       end_time = ?,
       all_day = ?,
+      is_unscheduled = ?,
       location = ?,
       notes = ?,
       category = ?,
@@ -378,9 +392,10 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
       merged.type || 'event',
       merged.title,
       safeNull(merged.description),
-      merged.start_time,
+      startTimeValue,
       endTimeValue,
       merged.all_day ? 1 : 0,
+      isUnscheduled ? 1 : 0,
       safeNull(merged.location),
       safeNull(merged.notes),
       merged.category,
@@ -566,11 +581,11 @@ export function restoreUserScheduleData(
     const id = String(schedule.id);
     if (!id || queryOne('SELECT id FROM schedules WHERE id = ?', [id])) continue;
     db.run(
-      `INSERT INTO schedules (id, user_id, calendar_id, type, title, description, start_time, end_time, all_day, location, notes, category,
+      `INSERT INTO schedules (id, user_id, calendar_id, type, title, description, start_time, end_time, all_day, is_unscheduled, location, notes, category,
        priority, is_completed, is_repeated, repeat_rule, reminders, is_high_risk, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, userId, schedule.calendar_id, schedule.type, schedule.title, schedule.description || null, schedule.start_time,
-        schedule.end_time || null, schedule.all_day ? 1 : 0, schedule.location || null, schedule.notes || null,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       [id, userId, schedule.calendar_id, schedule.type, schedule.title, schedule.description || null, schedule.start_time || new Date().toISOString(),
+         schedule.is_unscheduled ? null : (schedule.end_time || null), schedule.all_day ? 1 : 0, schedule.is_unscheduled ? 1 : 0, schedule.location || null, schedule.notes || null,
         schedule.category || 'other', schedule.priority || 'medium', schedule.is_completed ? 1 : 0, schedule.is_repeated ? 1 : 0,
         schedule.repeat_rule || null, JSON.stringify(schedule.reminders || []), schedule.is_high_risk ? 1 : 0,
         schedule.created_at || new Date().toISOString(), schedule.updated_at || new Date().toISOString()],

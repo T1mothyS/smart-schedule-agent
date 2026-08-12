@@ -23,6 +23,7 @@ export interface Schedule {
   start_time: string;
   end_time?: string;
   all_day: boolean;
+  is_unscheduled?: boolean;
   location?: string;
   notes?: string;
   category: string;
@@ -579,6 +580,7 @@ function ScheduleFormModal({
     date: editingSchedule
       ? editingSchedule.start_time.split('T')[0]
       : toDateKey(defaultDate),
+    isUnscheduled: editingSchedule?.is_unscheduled === true,
     startTime: editingSchedule && !editingSchedule.all_day
       ? formatTime(editingSchedule.start_time)
       : '09:00',
@@ -598,17 +600,20 @@ function ScheduleFormModal({
 
   const set = (k: string, v: any) => setForm(prev => ({ ...prev, [k]: v }));
   const selectedDate = formatScheduleDate(form.date);
+  const isUnscheduled = form.type === 'todo' && form.isUnscheduled;
 
   // 类别颜色配置
   const catColor = CATEGORY_COLORS[form.category] || '#6B7280';
 
   const handleSave = () => {
     if (!form.title.trim()) return;
-    const startTime = form.all_day
+    const startTime = isUnscheduled
+      ? new Date().toISOString()
+      : form.all_day
       ? `${form.date}T00:00:00`
       : `${form.date}T${form.startTime}:00`;
     // 待办任务也需要 end_time（用于冲突检测和排版），时长固定1小时
-    const endTime = form.all_day
+    const endTime = isUnscheduled || form.all_day
       ? undefined
       : `${form.date}T${form.endTime}:00`;
 
@@ -618,14 +623,15 @@ function ScheduleFormModal({
       calendar_id: form.calendarId,
       start_time: startTime,
       end_time: endTime,
-      all_day: form.all_day,
+      all_day: isUnscheduled ? false : form.all_day,
+      is_unscheduled: isUnscheduled,
       location: form.location || undefined,
       notes: form.notes || undefined,
       category: form.category,
       priority: form.priority,
-      reminders: form.reminder ? [form.reminder] : [],
-      is_repeated: !!form.repeat,
-      repeat_rule: form.repeat || undefined,
+      reminders: isUnscheduled ? [] : (form.reminder ? [form.reminder] : []),
+      is_repeated: isUnscheduled ? false : !!form.repeat,
+      repeat_rule: isUnscheduled ? undefined : (form.repeat || undefined),
     });
   };
 
@@ -668,7 +674,11 @@ function ScheduleFormModal({
             {(['event', 'todo'] as const).map(t => (
               <button
                 key={t}
-                onClick={() => set('type', t)}
+                onClick={() => setForm(prev => ({
+                  ...prev,
+                  type: t,
+                  isUnscheduled: t === 'todo' ? prev.isUnscheduled : false,
+                }))}
                 className="schedule-type-option flex-1 py-2 rounded-lg text-sm font-medium transition-all"
                 style={{
                   backgroundColor: form.type === t ? 'var(--td-brand-color)' : 'var(--td-bg-color-component)',
@@ -695,45 +705,66 @@ function ScheduleFormModal({
             }}
           />
 
-          {/* 日期 - 整行可点击 */}
-          <div
-            className="relative overflow-hidden rounded-lg cursor-pointer transition-all hover:border-brand-color"
-            style={{
-              backgroundColor: 'var(--td-bg-color-component)',
-              border: '1.5px solid var(--td-component-stroke)',
-            }}
-            onClick={() => {
-              // 触发原生的 date input 点击
-              const input = document.getElementById('schedule-date-input') as HTMLInputElement;
-              input?.showPicker?.();
-            }}
-          >
-            <input
-              id="schedule-date-input"
-              type="date"
-              value={form.date}
-              onChange={e => set('date', e.target.value)}
-              className="w-full px-3 py-2 text-sm outline-none cursor-pointer"
+          {/* 日期 - 待办可以切换为无固定期限 */}
+          <div className="schedule-date-field">
+            <div
+              className={`relative overflow-hidden rounded-lg transition-all ${isUnscheduled ? 'is-unscheduled' : 'cursor-pointer hover:border-brand-color'}`}
               style={{
-                backgroundColor: 'transparent',
-                color: 'var(--td-text-color-primary)',
-                position: 'absolute',
-                opacity: 0,
-                width: '100%',
-                height: '100%',
-                top: 0,
-                left: 0,
+                backgroundColor: 'var(--td-bg-color-component)',
+                border: '1.5px solid var(--td-component-stroke)',
               }}
-            />
-            {/* 显示当前选择的日期 */}
-            <div className="schedule-date-summary">
-              <Calendar className="w-5 h-5" />
-              <div>
-                <strong>{selectedDate.date}</strong>
-                {selectedDate.weekday && <span>{selectedDate.weekday}</span>}
+              onClick={() => {
+                if (isUnscheduled) return;
+                const input = document.getElementById('schedule-date-input') as HTMLInputElement;
+                input?.showPicker?.();
+              }}
+            >
+              {!isUnscheduled && (
+                <input
+                  id="schedule-date-input"
+                  type="date"
+                  value={form.date}
+                  onChange={e => set('date', e.target.value)}
+                  className="w-full px-3 py-2 text-sm outline-none cursor-pointer"
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: 'var(--td-text-color-primary)',
+                    position: 'absolute',
+                    opacity: 0,
+                    width: '100%',
+                    height: '100%',
+                    top: 0,
+                    left: 0,
+                  }}
+                />
+              )}
+              <div className="schedule-date-summary">
+                <Calendar className="w-5 h-5" />
+                <div>
+                  <strong>{isUnscheduled ? '无固定期限' : selectedDate.date}</strong>
+                  {isUnscheduled ? <span>完成前持续保留，不绑定具体日期</span> : selectedDate.weekday && <span>{selectedDate.weekday}</span>}
+                </div>
+                {!isUnscheduled && selectedDate.isToday && <em>今天</em>}
               </div>
-              {selectedDate.isToday && <em>今天</em>}
             </div>
+            {form.type === 'todo' && (
+              <label className="schedule-unscheduled-toggle">
+                <input
+                  type="checkbox"
+                  checked={form.isUnscheduled}
+                  onChange={event => setForm(prev => ({
+                    ...prev,
+                    isUnscheduled: event.target.checked,
+                    reminder: event.target.checked ? '' : prev.reminder,
+                    repeat: event.target.checked ? '' : prev.repeat,
+                  }))}
+                />
+                <span>
+                  <strong>无固定期限待办</strong>
+                  <small>暂不绑定执行日期，之后可以再切回日期待办</small>
+                </span>
+              </label>
+            )}
           </div>
 
           {/* 时间（仅日程类型） */}
@@ -775,7 +806,7 @@ function ScheduleFormModal({
           )}
 
           {/* 待办时间选择器（只需设置开始时间，占用1小时） */}
-          {form.type === 'todo' && (
+          {form.type === 'todo' && !isUnscheduled && (
             <div>
               <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
                 待办时间
@@ -798,7 +829,7 @@ function ScheduleFormModal({
           )}
 
           {/* 提前提醒 - 使用新的ReminderPicker */}
-          <div>
+          {!isUnscheduled && <div>
             <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
               提前提醒
             </div>
@@ -806,7 +837,7 @@ function ScheduleFormModal({
               value={form.reminder}
               onChange={v => set('reminder', v)}
             />
-          </div>
+          </div>}
 
           <button
             type="button"
@@ -927,7 +958,7 @@ function ScheduleFormModal({
           />
 
           {/* 循环设置 */}
-          <div>
+          {!isUnscheduled && <div>
             <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
               循环重复
             </div>
@@ -952,7 +983,7 @@ function ScheduleFormModal({
                 </button>
               ))}
             </div>
-          </div>
+          </div>}
           </div>}
         </div>
 
@@ -2243,9 +2274,9 @@ export function CalendarView({
   }, [openScheduleMenuRequest?.nonce]);
 
   // 根据激活的日程表过滤
-  const visibleSchedules = (activeCalendarIds && activeCalendarIds.length > 0)
+  const visibleSchedules = ((activeCalendarIds && activeCalendarIds.length > 0)
     ? schedules.filter(s => activeCalendarIds.includes(s.calendar_id))
-    : schedules;
+    : schedules).filter(schedule => !schedule.is_unscheduled);
 
   const navigatePrev = () => {
     const d = new Date(currentDate);
