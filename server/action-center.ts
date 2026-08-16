@@ -30,6 +30,7 @@ export interface ActionCenterResult {
   next: ActionItem | null;
   unscheduled: ActionItem[];
   today: ActionItem[];
+  tomorrow: ActionItem[];
   upcoming: ActionItem[];
   overdue: ActionItem[];
   completedToday: ActionItem[];
@@ -207,6 +208,8 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
   });
   const todayItems = sortItems(items.filter(item => item.status === 'today'));
   const unscheduled = sortItems(unscheduledItems);
+  const tomorrowDate = endOfWindow(today, 1);
+  const tomorrow = sortItems(items.filter(item => item.status === 'upcoming' && dateOnly(item.dueAt) === tomorrowDate));
   const upcoming = sortItems(items.filter(item => item.status === 'upcoming'));
   const overdue = sortItems(items.filter(item => item.status === 'overdue'));
   const completedToday = items.filter(item => item.status === 'completed').sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
@@ -214,6 +217,7 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
     next: chooseNext([...todayItems, ...upcoming, ...overdue], now),
     unscheduled,
     today: todayItems,
+    tomorrow,
     upcoming,
     overdue,
     completedToday,

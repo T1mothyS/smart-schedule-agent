@@ -17,6 +17,8 @@ export interface CreditCardConfig {
   paymentDay: number;
   paymentMonthOffset: 0 | 1;
   reminderOffsets: number[];
+  reminderTime: string;
+  priority: 'high' | 'medium' | 'low';
 }
 
 export interface SimConfig {
@@ -27,6 +29,8 @@ export interface SimConfig {
   lastOperationDate: string;
   actionGuide: string;
   reminderOffsets: number[];
+  reminderTime: string;
+  priority: 'high' | 'medium' | 'low';
 }
 
 export type RecurrenceRule =
@@ -87,6 +91,7 @@ export interface ReminderDelivery {
 export interface ReminderTaskSummary extends ReminderTask {
   currentCycle: ReminderCycle | null;
   nextReminderDate: string | null;
+  lastReminderDate: string | null;
   sentReminderTypes: string[];
 }
 
@@ -414,6 +419,16 @@ function resetOpenGenericCycle(task: ReminderTask, cycle: ReminderCycle, dueDate
   return updated;
 }
 
+function refreshOpenCycleDeliveries(task: ReminderTask, cycle: ReminderCycle): void {
+  if (cycle.status === 'completed' || cycle.status === 'cancelled') return;
+  run(
+    `DELETE FROM reminder_deliveries
+     WHERE cycle_id = ? AND status IN ('pending', 'failed')`,
+    [cycle.id],
+  );
+  for (const item of cycleReminderDates(task, cycle)) createDelivery(task, cycle, item.type, item.date);
+}
+
 function ensureCurrentCycle(task: ReminderTask, today = todayInTimezone(task.timezone)): ReminderCycle {
   const latest = queryOne<any>(
     `SELECT * FROM reminder_cycles WHERE task_id = ? ORDER BY created_at DESC LIMIT 1`,
@@ -474,10 +489,17 @@ export function listReminderTasks(userId: string): ReminderTaskSummary[] {
        ORDER BY scheduled_date ASC LIMIT 1`,
       [cycle.id, todayInTimezone(task.timezone)],
     );
+    const last = queryOne<{ scheduled_date: string; sent_at: string | null }>(
+      `SELECT scheduled_date, sent_at FROM reminder_deliveries
+       WHERE task_id = ? AND status = 'sent'
+       ORDER BY COALESCE(sent_at, scheduled_date) DESC LIMIT 1`,
+      [task.id],
+    );
     return {
       ...task,
       currentCycle: cycle,
       nextReminderDate: next?.scheduled_date || null,
+      lastReminderDate: last?.sent_at?.slice(0, 10) || last?.scheduled_date || null,
       sentReminderTypes: deliveries.map(item => item.reminderType),
     };
   });
@@ -534,16 +556,22 @@ export function updateReminderTask(
     `UPDATE reminder_tasks SET name = ?, enabled = ?, timezone = ?, config = ?, updated_at = ? WHERE id = ?`,
     [next.name, next.enabled ? 1 : 0, next.timezone, JSON.stringify(next.config), next.updatedAt, id],
   );
-  if (updates.config && next.type === 'generic') {
+  if (updates.config) {
     const latest = queryOne<any>(
       `SELECT * FROM reminder_cycles WHERE task_id = ? ORDER BY created_at DESC LIMIT 1`,
       [id],
     );
     if (latest) {
       const cycle = rowToCycle(latest);
-      if (cycle.status === 'pending' || cycle.status === 'expired') {
+      if (next.type === 'generic' && (cycle.status === 'pending' || cycle.status === 'expired')) {
         const anchorDate = (next.config as GenericReminderConfig).rule.anchorDate;
-        if (cycle.dueDate !== anchorDate) resetOpenGenericCycle(next, cycle, anchorDate);
+        if (cycle.dueDate !== anchorDate) {
+          resetOpenGenericCycle(next, cycle, anchorDate);
+        } else {
+          refreshOpenCycleDeliveries(next, cycle);
+        }
+      } else if (cycle.status === 'pending' || cycle.status === 'expired') {
+        refreshOpenCycleDeliveries(next, cycle);
       }
     }
   }

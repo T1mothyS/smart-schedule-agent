@@ -42,31 +42,31 @@ export function AppShell({
             className={activeSection === 'today' ? 'product-nav-item active' : 'product-nav-item'}
             onClick={() => onSectionChange('today')}
           >
-            <LayoutDashboard size={14} /> 今日
+            <LayoutDashboard className="product-nav-icon" size={16} /> 今日
           </button>
           <button
             className={activeSection === 'schedule' ? 'product-nav-item active' : 'product-nav-item'}
             onClick={() => onSectionChange('schedule')}
           >
-            <CalendarDays size={14} /> 日程
+            <CalendarDays className="product-nav-icon" size={16} /> 日程
           </button>
           <button
             className={activeSection === 'reminders' ? 'product-nav-item active' : 'product-nav-item'}
             onClick={() => onSectionChange('reminders')}
           >
-            <BellRing size={14} /> 周期提醒
+            <BellRing className="product-nav-icon" size={16} /> 周期提醒
           </button>
           <button
             className={activeSection === 'import' ? 'product-nav-item active' : 'product-nav-item'}
             onClick={() => onSectionChange('import')}
           >
-            <Sparkles size={14} /> 智能导入
+            <Sparkles className="product-nav-icon" size={16} /> 智能导入
           </button>
           <button
             className={activeSection === 'assistant' ? 'product-nav-item ai-assistant-nav active' : 'product-nav-item ai-assistant-nav'}
             onClick={() => onSectionChange('assistant')}
           >
-            <Bot size={14} /> AI 助手
+            <Bot className="ai-assistant-nav-icon" size={22} strokeWidth={2.3} /> AI 助手
           </button>
         </nav>
 

@@ -233,6 +233,13 @@ export interface Category {
   icon: string;
 }
 
+const SCHEDULE_CATEGORY_IDS = new Set(['travel', 'work', 'social', 'life', 'health', 'other']);
+
+function normaliseScheduleCategory(value: unknown): string {
+  const category = String(value || 'other');
+  return SCHEDULE_CATEGORY_IDS.has(category) ? category : 'other';
+}
+
 function rowToSchedule(row: any): Schedule {
   return {
     ...row,
@@ -244,7 +251,8 @@ function rowToSchedule(row: any): Schedule {
     is_repeated: row.is_repeated === 1,
     is_high_risk: row.is_high_risk === 1,
     reminders: row.reminders ? JSON.parse(row.reminders) : [],
-    type: row.type || 'event'
+    type: row.type || 'event',
+    category: normaliseScheduleCategory(row.category),
   };
 }
 
@@ -330,7 +338,7 @@ export function createSchedule(schedule: Omit<Schedule, 'created_at' | 'updated_
       isUnscheduled ? 1 : 0,
       safeNull(schedule.location),
       safeNull(schedule.notes),
-      schedule.category,
+      normaliseScheduleCategory(schedule.category),
       schedule.priority,
       schedule.is_completed ? 1 : 0,
       schedule.is_repeated ? 1 : 0,
@@ -398,7 +406,7 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
       isUnscheduled ? 1 : 0,
       safeNull(merged.location),
       safeNull(merged.notes),
-      merged.category,
+      normaliseScheduleCategory(merged.category),
       merged.priority,
       merged.is_completed ? 1 : 0,
       merged.is_repeated ? 1 : 0,

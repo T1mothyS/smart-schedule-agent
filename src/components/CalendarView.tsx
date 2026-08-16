@@ -11,6 +11,7 @@ import {
 import { AgendaView } from './calendar/AgendaView';
 import { ScheduleContextMenu } from './calendar/ScheduleContextMenu';
 import { getCalendarDayMeta } from './calendar/calendarMeta';
+import { getScheduleCategory, SCHEDULE_CATEGORIES, SCHEDULE_CATEGORY_COLORS, SCHEDULE_CATEGORY_LABELS } from '../utils/scheduleCategories';
 
 // ==================== 类型定义 ====================
 
@@ -40,19 +41,8 @@ type ViewMode = 'agenda' | 'day' | 'week' | 'month';
 
 // ==================== 常量 ====================
 
-const CATEGORY_COLORS: Record<string, string> = {
-  travel: '#F59E0B',
-  work: '#3B82F6',
-  social: '#EC4899',
-  life: '#10B981',
-  health: '#EF4444',
-  other: '#6B7280',
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-  travel: '出行', work: '工作', social: '社交',
-  life: '生活', health: '健康', other: '其他',
-};
+const CATEGORY_COLORS = SCHEDULE_CATEGORY_COLORS;
+const CATEGORY_LABELS = SCHEDULE_CATEGORY_LABELS;
 
 // 优先级颜色系统
 const PRIORITY_COLORS: Record<string, { bg: string; border: string; dot: string; label: string }> = {
@@ -557,20 +547,18 @@ function ReminderPicker({
 
 // ==================== 日程表单（新增 / 编辑通用） ====================
 
-function ScheduleFormModal({
+export function ScheduleFormModal({
   defaultDate,
   editingSchedule,
-  calendarColor,
+  defaultCategory,
   onSave,
   onClose,
-  activeCalendars,
 }: {
   defaultDate: Date;
   editingSchedule?: Schedule | null;
-  calendarColor?: string;
+  defaultCategory?: string;
   onSave: (s: Partial<Schedule>) => void;
   onClose: () => void;
-  activeCalendars?: Array<{ id: string; name: string; color: string; icon: string }>;
 }) {
   const isEditing = !!editingSchedule;
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -589,11 +577,11 @@ function ScheduleFormModal({
       : '10:00',
     all_day: editingSchedule?.all_day || false,
     location: editingSchedule?.location || '',
-    category: editingSchedule?.category || 'other',
+    category: editingSchedule?.category || (SCHEDULE_CATEGORIES.some(category => category.id === defaultCategory) ? defaultCategory! : 'other'),
     priority: (editingSchedule?.priority || 'medium') as 'high' | 'medium' | 'low',
     notes: editingSchedule?.notes || '',
     reminder: (editingSchedule?.reminders?.[0] || '') as string,
-    calendarId: editingSchedule?.calendar_id || (activeCalendars?.[0]?.id || 'personal'),
+    calendarId: editingSchedule?.calendar_id || 'personal',
     // 循环设置
     repeat: (editingSchedule?.is_repeated ? (editingSchedule as any).repeat_rule || 'daily' : '') as '' | 'daily' | 'weekly' | 'monthly',
   });
@@ -638,14 +626,11 @@ function ScheduleFormModal({
   const priorityConfig = PRIORITY_COLORS[form.priority];
 
   // 类别选项
-  const categoryOptions = [
-    { key: 'travel', label: '出行', color: CATEGORY_COLORS.travel },
-    { key: 'work', label: '工作', color: CATEGORY_COLORS.work },
-    { key: 'social', label: '社交', color: CATEGORY_COLORS.social },
-    { key: 'life', label: '生活', color: CATEGORY_COLORS.life },
-    { key: 'health', label: '健康', color: CATEGORY_COLORS.health },
-    { key: 'other', label: '其他', color: CATEGORY_COLORS.other },
-  ];
+  const categoryOptions = SCHEDULE_CATEGORIES.map(category => ({
+    key: category.id,
+    label: category.name,
+    color: category.color,
+  }));
 
   return (
     <div
@@ -847,7 +832,7 @@ function ScheduleFormModal({
           >
             <div>
               <strong>高级选项</strong>
-              <span>地点、分类、优先级、日程表、备注与重复</span>
+              <span>地点、分类、优先级、备注与重复</span>
             </div>
             <ChevronDown size={17} />
           </button>
@@ -916,32 +901,6 @@ function ScheduleFormModal({
               ))}
             </div>
           </div>
-
-          {/* 日程表来源 - 与左侧同步 */}
-          {activeCalendars && activeCalendars.length > 0 && (
-            <div>
-              <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
-                所属日程表
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {activeCalendars.map(cal => (
-                  <button
-                    key={cal.id}
-                    onClick={() => set('calendarId', cal.id)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1"
-                    style={{
-                      backgroundColor: form.calendarId === cal.id ? cal.color + '20' : 'var(--td-bg-color-component)',
-                      color: form.calendarId === cal.id ? cal.color : 'var(--td-text-color-secondary)',
-                      border: `1.5px solid ${form.calendarId === cal.id ? cal.color : 'transparent'}`,
-                    }}
-                  >
-                    <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />
-                    <span>{cal.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* 备注 */}
           <textarea
@@ -1021,7 +980,6 @@ function ScheduleChip({
   onDelete,
   onEdit,
   onClick,
-  calendar,
 }: {
   schedule: Schedule;
   compact?: boolean;
@@ -1029,10 +987,10 @@ function ScheduleChip({
   onDelete?: (id: string) => void;
   onEdit?: (s: Schedule) => void;
   onClick?: (s: Schedule) => void;
-  calendar?: { id: string; name: string; color: string; icon: string };
 }) {
   const pColor = PRIORITY_COLORS[schedule.priority] || PRIORITY_COLORS.medium;
-  const catColor = CATEGORY_COLORS[schedule.category] || '#6B7280';
+  const category = getScheduleCategory(schedule.category);
+  const catColor = category.color;
 
   if (compact) {
     return (
@@ -1057,19 +1015,9 @@ function ScheduleChip({
         {schedule.type === 'todo' && <span className="opacity-70">◇</span>}
         {!schedule.all_day && <span className="opacity-70">{formatTime(schedule.start_time)}</span>}
         <span className="schedule-title-primary schedule-title-compact truncate">{schedule.title}</span>
-        {/* 日程来源标签 */}
-        {calendar && (
-          <span
-            className="rounded px-0.5 flex-shrink-0"
-            style={{ 
-              border: `1px solid ${calendar.color}`,
-              fontSize: '8px',
-            }}
-            title={calendar.name}
-          >
-            <span className="calendar-color-dot" style={{ backgroundColor: calendar.color }} />
-          </span>
-        )}
+        <span className="rounded px-0.5 flex-shrink-0" style={{ border: `1px solid ${category.color}`, fontSize: '8px' }} title={category.name}>
+          <span className="calendar-color-dot" style={{ backgroundColor: category.color }} />
+        </span>
       </div>
     );
   }
@@ -1126,19 +1074,6 @@ function ScheduleChip({
             >
               {schedule.type === 'todo' ? '待办' : CATEGORY_LABELS[schedule.category]}
             </span>
-            {/* 日程来源标签 */}
-            {calendar && (
-              <span
-                className="text-xs px-1 py-0.5 rounded flex-shrink-0 font-medium"
-                style={{ 
-                  border: `1px solid ${calendar.color}`,
-                  color: calendar.color,
-                }}
-                title={calendar.name}
-              >
-                <span className="calendar-color-dot" style={{ backgroundColor: calendar.color }} />{calendar.name}
-              </span>
-            )}
           </div>
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
@@ -1198,7 +1133,7 @@ function ScheduleChip({
 // ==================== 日视图 ====================
 
 function DayView({
-  date, schedules, onToggle, onDelete, onEdit, onClickSchedule, conflictingIds, conflictMap, activeCalendars,
+  date, schedules, onToggle, onDelete, onEdit, onClickSchedule, conflictingIds, conflictMap,
 }: {
   date: Date;
   schedules: Schedule[];
@@ -1208,7 +1143,6 @@ function DayView({
   onClickSchedule: (s: Schedule) => void;
   conflictingIds?: Set<string>;
   conflictMap?: Map<string, Schedule[]>;
-  activeCalendars?: Array<{ id: string; name: string; color: string; icon: string }>;
 }) {
   const daySchedules = schedules.filter(s => isSameDay(parseLocalDate(s.start_time), date));
   // 分离全天事件和待办任务
@@ -1478,27 +1412,6 @@ function DayView({
                                 </span>
                               )}
                               <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
-                              {/* 日程来源标签 - 窄卡片时隐藏 */}
-                              {!isNarrowCard && (
-                                (() => {
-                                  const cal = activeCalendars?.find(c => c.id === s.calendar_id);
-                                  if (!cal) return null;
-                                  return (
-                                    <span
-                                      className="px-1 py-0 rounded flex-shrink-0 font-medium"
-                                      style={{ 
-                                        backgroundColor: 'transparent', 
-                                        color: '#666',
-                                        border: `1px solid ${cal.color}`,
-                                        fontSize: '7px',
-                                      }}
-                                      title={cal.name}
-                                    >
-                                      <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />{cal.name.slice(0, 2)}
-                                    </span>
-                                  );
-                                })()
-                              )}
                             </div>
                             {/* 日视图显示地点 - 窄卡片时隐藏 */}
                             {!isNarrowCard && s.location && (
@@ -1554,7 +1467,7 @@ function DayView({
 // ==================== 周视图 ====================
 
 function WeekView({
-  weekStart, schedules, onToggle, onDelete, onEdit, onClickSchedule, onClickDay, conflictingIds, activeCalendars, showLunar, showFestivals,
+  weekStart, schedules, onToggle, onDelete, onEdit, onClickSchedule, onClickDay, conflictingIds, showLunar, showFestivals,
 }: {
   weekStart: Date;
   schedules: Schedule[];
@@ -1564,7 +1477,6 @@ function WeekView({
   onClickSchedule: (s: Schedule) => void;
   onClickDay: (d: Date) => void;
   conflictingIds?: Set<string>;
-  activeCalendars?: Array<{ id: string; name: string; color: string; icon: string }>;
   showLunar?: boolean;
   showFestivals?: boolean;
 }) {
@@ -1780,23 +1692,13 @@ function WeekView({
                             </span>
                           )}
                           <span className="opacity-70">{formatTime(s.start_time)}</span><span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
-                          {/* 日程来源标签 */}
-                          {(() => {
-                            const cal = activeCalendars?.find(c => c.id === s.calendar_id);
-                            if (!cal) return null;
-                            return (
-                              <span
-                                className="rounded px-0.5 flex-shrink-0"
-                                style={{ 
-                                  border: `1px solid ${cal.color}`,
-                                  fontSize: '7px',
-                                }}
-                                title={cal.name}
-                              >
-                                <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />
-                              </span>
-                            );
-                          })()}
+                          <span
+                            className="rounded px-0.5 flex-shrink-0"
+                            style={{ border: `1px solid ${getScheduleCategory(s.category).color}`, fontSize: '7px' }}
+                            title={getScheduleCategory(s.category).name}
+                          >
+                            <span className="calendar-color-dot" style={{ backgroundColor: getScheduleCategory(s.category).color }} />
+                          </span>
                         </div>
                       );
                     })}
@@ -1814,7 +1716,7 @@ function WeekView({
 // ==================== 月视图 ====================
 
 function MonthView({
-  year, month, schedules, selectedDate, onSelectDate, onToggle, onClickSchedule, conflictingIds, activeCalendars, showLunar, showFestivals,
+  year, month, schedules, selectedDate, onSelectDate, onToggle, onClickSchedule, conflictingIds, showLunar, showFestivals,
 }: {
   year: number;
   month: number;
@@ -1824,7 +1726,6 @@ function MonthView({
   onToggle?: (id: string) => void;
   onClickSchedule?: (s: Schedule) => void;
   conflictingIds?: Set<string>;
-  activeCalendars?: Array<{ id: string; name: string; color: string; icon: string }>;
   showLunar?: boolean;
   showFestivals?: boolean;
 }) {
@@ -1991,7 +1892,7 @@ function MonthView({
                           !
                         </span>
                       )}
-                      <ScheduleChip schedule={s} compact onClick={onClickSchedule} calendar={activeCalendars?.find(c => c.id === s.calendar_id)} />
+                      <ScheduleChip schedule={s} compact onClick={onClickSchedule} />
                     </div>
                   );
                 })}
@@ -2017,14 +1918,12 @@ function ScheduleDetailModal({
   onDelete,
   onToggle,
   onEdit,
-  calendar,
 }: {
   schedule: Schedule;
   onClose: () => void;
   onDelete: (id: string) => void;
   onToggle: (id: string) => void;
   onEdit: (s: Schedule) => void;
-  calendar?: { id: string; name: string; color: string; icon: string };
 }) {
   const pColor = PRIORITY_COLORS[schedule.priority] || PRIORITY_COLORS.medium;
   const catColor = CATEGORY_COLORS[schedule.category] || '#6B7280';
@@ -2058,19 +1957,6 @@ function ScheduleDetailModal({
             </div>
             <h3 className="schedule-title-primary text-base font-bold">
               {schedule.title}
-              {/* 日程来源标签 */}
-              {calendar && (
-                <span
-                  className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium"
-                  style={{ 
-                    border: `1px solid ${calendar.color}`,
-                    color: calendar.color,
-                  }}
-                  title={calendar.name}
-                >
-                  <span className="calendar-color-dot" style={{ backgroundColor: calendar.color }} /> {calendar.name}
-                </span>
-              )}
             </h3>
           </div>
           <button onClick={onClose} className="p-1 rounded-lg hover:opacity-60 ml-2">
@@ -2136,7 +2022,7 @@ function ScheduleDetailModal({
 
 export interface CalendarViewProps {
   refreshKey?: number;
-  activeCalendarIds?: string[];
+  activeCategoryIds?: string[];
   openScheduleRequest?: { id: string; nonce: number } | null;
   openScheduleMenuRequest?: { id: string; x: number; y: number; nonce: number } | null;
   selectedDate?: Date;
@@ -2149,7 +2035,7 @@ export interface CalendarViewProps {
 
 export function CalendarView({
   refreshKey = 0,
-  activeCalendarIds,
+  activeCategoryIds,
   openScheduleRequest,
   openScheduleMenuRequest,
   selectedDate,
@@ -2162,7 +2048,6 @@ export function CalendarView({
   const [viewMode, setViewMode] = useState<ViewMode>('agenda');
   const [currentDate, setCurrentDate] = useState<Date>(selectedDate || new Date());
   const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [calendars, setCalendars] = useState<Array<{ id: string; name: string; color: string; icon: string }>>([]);
   const [loading, setLoading] = useState(false);
   const { authHeaders } = useAuth();
   const [showAddModal, setShowAddModal] = useState(false);
@@ -2181,14 +2066,6 @@ export function CalendarView({
     if (!selectedDate || isSameDay(selectedDate, currentDate)) return;
     setCurrentDate(new Date(selectedDate));
   }, [selectedDate?.getTime()]);
-
-  // 获取日程表列表
-  useEffect(() => {
-    fetch('/api/calendars', { headers: authHeaders() })
-      .then(r => r.json())
-      .then(d => setCalendars(d.calendars || []))
-      .catch(() => {});
-  }, []);
 
   // 请求通知权限
   useEffect(() => {
@@ -2273,9 +2150,9 @@ export function CalendarView({
     return () => { cancelled = true; };
   }, [openScheduleMenuRequest?.nonce]);
 
-  // 根据激活的日程表过滤
-  const visibleSchedules = ((activeCalendarIds && activeCalendarIds.length > 0)
-    ? schedules.filter(s => activeCalendarIds.includes(s.calendar_id))
+  // 根据左侧六类日程分类过滤
+  const visibleSchedules = ((activeCategoryIds && activeCategoryIds.length > 0)
+    ? schedules.filter(s => activeCategoryIds.includes(s.category))
     : schedules).filter(schedule => !schedule.is_unscheduled);
 
   const navigatePrev = () => {
@@ -2352,7 +2229,7 @@ export function CalendarView({
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
           ...form,
-          calendar_id: (activeCalendarIds && activeCalendarIds.length > 0) ? activeCalendarIds[0] : 'personal',
+          calendar_id: 'personal',
           category: form.category || 'other',
           priority: form.priority || 'medium',
           is_completed: false,
@@ -2634,7 +2511,6 @@ export function CalendarView({
                 <AgendaView
                   schedules={visibleSchedules}
                   selectedDate={currentDate}
-                  calendars={calendars}
                   showLunar={showLunar}
                   showFestivals={showFestivals}
                   onSelectDate={updateCurrentDate}
@@ -2688,7 +2564,6 @@ export function CalendarView({
                   onClickSchedule={setSelectedSchedule}
                   conflictingIds={conflictingIds}
                   conflictMap={conflictMap}
-                  activeCalendars={calendars}
                 />
               );
             } else if (viewMode === 'week') {
@@ -2702,7 +2577,6 @@ export function CalendarView({
                   onClickSchedule={setSelectedSchedule}
                   onClickDay={handleWeekDayClick}
                   conflictingIds={conflictingIds}
-                  activeCalendars={calendars}
                   showLunar={showLunar}
                   showFestivals={showFestivals}
                 />
@@ -2718,7 +2592,6 @@ export function CalendarView({
                   onToggle={handleToggle}
                   onClickSchedule={setSelectedSchedule}
                   conflictingIds={conflictingIds}
-                  activeCalendars={calendars}
                   showLunar={showLunar}
                   showFestivals={showFestivals}
                 />
@@ -2734,7 +2607,7 @@ export function CalendarView({
           defaultDate={currentDate}
           onSave={handleAddSchedule}
           onClose={() => setShowAddModal(false)}
-          activeCalendars={calendars.filter(c => activeCalendarIds?.includes(c.id))}
+          defaultCategory={activeCategoryIds?.length === 1 ? activeCategoryIds[0] : undefined}
         />
       )}
 
@@ -2745,7 +2618,6 @@ export function CalendarView({
           editingSchedule={editingSchedule}
           onSave={handleEditSchedule}
           onClose={() => setEditingSchedule(null)}
-          activeCalendars={calendars.filter(c => activeCalendarIds?.includes(c.id))}
         />
       )}
 
@@ -2757,7 +2629,6 @@ export function CalendarView({
           onDelete={handleDelete}
           onToggle={handleToggle}
           onEdit={(s) => { setSelectedSchedule(null); setEditingSchedule(s); }}
-          calendar={calendars.find(c => c.id === selectedSchedule.calendar_id)}
         />
       )}
 

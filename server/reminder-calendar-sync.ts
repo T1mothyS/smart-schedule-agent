@@ -1,7 +1,9 @@
 import * as scheduleStore from './schedule-store.js';
 import type {
+  CreditCardConfig,
   GenericReminderConfig,
   ReminderCycle,
+  SimConfig,
   ReminderTaskSummary,
 } from './reminder-store.js';
 
@@ -16,9 +18,9 @@ export function isReminderLinkedSchedule(id: string): boolean {
 }
 
 function priorityFor(task: ReminderTaskSummary): 'high' | 'medium' | 'low' {
-  if (task.type === 'credit_card') return 'high';
+  if (task.type === 'credit_card') return (task.config as CreditCardConfig).priority || 'high';
   if (task.type === 'generic') return (task.config as GenericReminderConfig).priority || 'medium';
-  return 'medium';
+  return (task.config as SimConfig).priority || 'medium';
 }
 
 function descriptionFor(task: ReminderTaskSummary, cycle: ReminderCycle): string {

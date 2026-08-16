@@ -58,6 +58,20 @@ async function initDb(): Promise<void> {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS ai_schedule_messages (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      type TEXT NOT NULL,
+      content TEXT NOT NULL,
+      intent TEXT,
+      schedule_items TEXT,
+      plan TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
@@ -144,6 +158,7 @@ async function initDb(): Promise<void> {
   // 创建索引
   db.run('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_ai_schedule_messages_user_created ON ai_schedule_messages(user_id, created_at)');
   db.run('CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email)');
 
   // 保存到文件
@@ -204,6 +219,18 @@ export interface DbMessage {
   model: string | null;
   created_at: string;
   tool_calls: string | null;
+}
+
+export interface DbAiScheduleMessage {
+  id: string;
+  user_id: string;
+  role: 'user' | 'assistant';
+  type: string;
+  content: string;
+  intent: string | null;
+  schedule_items: string | null;
+  plan: string | null;
+  created_at: string;
 }
 
 export interface DbUser {
@@ -359,9 +386,94 @@ export function createMessages(messages: DbMessage[], userId: string): void {
   }
 }
 
+// ============= AI 日程助手历史 =============
+
+export function getAiScheduleMessages(userId: string, limit = 20): DbAiScheduleMessage[] {
+  if (limit <= 0) {
+    return queryAll<DbAiScheduleMessage>(
+      'SELECT * FROM ai_schedule_messages WHERE user_id = ? ORDER BY created_at ASC',
+      [userId],
+    );
+  }
+  const safeLimit = Math.min(Math.floor(limit) || 20, 2000);
+  return queryAll<DbAiScheduleMessage>(
+    'SELECT * FROM ai_schedule_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
+    [userId, safeLimit],
+  ).reverse();
+}
+
+export function createAiScheduleMessage(message: DbAiScheduleMessage): DbAiScheduleMessage {
+  run(
+    `INSERT INTO ai_schedule_messages
+      (id, user_id, role, type, content, intent, schedule_items, plan, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      message.id,
+      message.user_id,
+      message.role,
+      message.type,
+      message.content,
+      message.intent,
+      message.schedule_items,
+      message.plan,
+      message.created_at,
+    ],
+  );
+  return message;
+}
+
+export function updateAiScheduleMessage(
+  id: string,
+  userId: string,
+  updates: Partial<Pick<DbAiScheduleMessage, 'type' | 'content' | 'intent' | 'schedule_items' | 'plan'>>,
+): boolean {
+  const fields: string[] = [];
+  const values: any[] = [];
+  for (const field of ['type', 'content', 'intent', 'schedule_items', 'plan'] as const) {
+    if (updates[field] !== undefined) {
+      fields.push(`${field} = ?`);
+      values.push(updates[field]);
+    }
+  }
+  if (!fields.length) return false;
+  values.push(id, userId);
+  return run(`UPDATE ai_schedule_messages SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, values) > 0;
+}
+
+export function deleteAiScheduleMessage(id: string, userId: string): boolean {
+  const existing = queryOne<{ id: string }>(
+    'SELECT id FROM ai_schedule_messages WHERE id = ? AND user_id = ?',
+    [id, userId],
+  );
+  if (!existing) return false;
+  run('DELETE FROM ai_schedule_messages WHERE id = ? AND user_id = ?', [id, userId]);
+  return true;
+}
+
+/**
+ * 清理过期历史时逐条删除，避免一次批量删除阻塞数据库，也便于统计实际清理数量。
+ */
+export function deleteExpiredAiScheduleMessages(beforeIso: string, userId?: string): number {
+  const rows = userId
+    ? queryAll<{ id: string; user_id: string }>(
+        'SELECT id, user_id FROM ai_schedule_messages WHERE user_id = ? AND created_at < ? ORDER BY created_at ASC',
+        [userId, beforeIso],
+      )
+    : queryAll<{ id: string; user_id: string }>(
+        'SELECT id, user_id FROM ai_schedule_messages WHERE created_at < ? ORDER BY created_at ASC',
+        [beforeIso],
+      );
+  let deleted = 0;
+  for (const row of rows) {
+    if (deleteAiScheduleMessage(row.id, row.user_id)) deleted += 1;
+  }
+  return deleted;
+}
+
 export function clearAllData(): void {
   run('DELETE FROM messages');
   run('DELETE FROM sessions');
+  run('DELETE FROM ai_schedule_messages');
 }
 
 // ============= 用户操作 =============
@@ -561,6 +673,7 @@ export function deleteUser(userId: string): boolean {
   try {
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
+    run('DELETE FROM ai_schedule_messages WHERE user_id = ?', [userId]);
     const sessions = queryAll<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', [userId]);
     for (const session of sessions) {
       run('DELETE FROM messages WHERE session_id = ?', [session.id]);
@@ -578,6 +691,7 @@ export function clearUserData(userId: string): { schedules: number; sessions: nu
   try {
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
+    run('DELETE FROM ai_schedule_messages WHERE user_id = ?', [userId]);
     const sessions = queryAll<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', [userId]);
     for (const session of sessions) run('DELETE FROM messages WHERE session_id = ?', [session.id]);
     run('DELETE FROM sessions WHERE user_id = ?', [userId]);

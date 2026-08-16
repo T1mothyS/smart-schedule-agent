@@ -18,6 +18,7 @@ import { AppShell } from './components/AppShell';
 import { ActionCenterPage } from './components/ActionCenterPage';
 import { AiImportPage } from './components/AiImportPage';
 import { MiniMonthCalendar } from './components/calendar/MiniMonthCalendar';
+import { SCHEDULE_CATEGORIES } from './utils/scheduleCategories';
 
 // ==================== 日程主页（三栏布局） ====================
 
@@ -44,7 +45,7 @@ function AiAssistantPage() {
 }
 
 function SchedulePage({ user }: SchedulePageProps) {
-  const [activeCalendarIds, setActiveCalendarIds] = useState<string[]>([]);
+  const [activeCategoryIds, setActiveCategoryIds] = useState<string[]>(() => SCHEDULE_CATEGORIES.map(category => category.id));
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [isRailOpen, setIsRailOpen] = useState(false);
   const railCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -65,7 +66,7 @@ function SchedulePage({ user }: SchedulePageProps) {
   }, [isRailOpen]);
 
   const handleActiveChange = useCallback((ids: string[]) => {
-    setActiveCalendarIds(ids);
+    setActiveCategoryIds(ids);
   }, []);
 
   const updateSystemCalendar = (type: 'lunar' | 'festival') => {
@@ -115,10 +116,10 @@ function SchedulePage({ user }: SchedulePageProps) {
               />
             </div>
             <div
-              className="schedule-rail-module schedule-rail-calendars"
+              className="schedule-rail-module schedule-rail-categories"
             >
               <ScheduleSidebar
-                activeCalendarIds={activeCalendarIds}
+                activeCategoryIds={activeCategoryIds}
                 onActiveChange={handleActiveChange}
               />
             </div>
@@ -156,7 +157,7 @@ function SchedulePage({ user }: SchedulePageProps) {
         <section className="schedule-calendar-shell">
           <main className="schedule-calendar-main">
             <CalendarView
-              activeCalendarIds={activeCalendarIds}
+              activeCategoryIds={activeCategoryIds}
               openScheduleRequest={openScheduleRequest}
               openScheduleMenuRequest={openScheduleMenuRequest}
               selectedDate={selectedDate}
