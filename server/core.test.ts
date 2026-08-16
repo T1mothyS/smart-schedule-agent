@@ -69,6 +69,37 @@ test('未来年度周期使用明确填写的本期到期日，编辑后同步�
   assert.equal(updated?.currentCycle?.status, 'pending');
 });
 
+test('编辑 SIM 卡提前天数会重建当前周期的待发送提醒', () => {
+  const lastOperationDate = reminders.todayInTimezone();
+  const task = reminders.createReminderTask({
+    userId,
+    type: 'sim',
+    name: 'SIM 卡提醒编辑测试',
+    config: {
+      provider: '测试运营商',
+      numberMasked: '138****0000',
+      region: '中国大陆',
+      intervalDays: 60,
+      lastOperationDate,
+      actionGuide: '测试操作',
+      reminderOffsets: [10],
+      reminderTime: '09:00',
+      priority: 'medium',
+    },
+  });
+  const firstNextDate = task.nextReminderDate;
+  const updated = reminders.updateReminderTask(task.id, userId, {
+    config: {
+      ...(task.config as reminders.SimConfig),
+      reminderOffsets: [3],
+    },
+  });
+
+  assert.equal(firstNextDate, reminders.addDays(task.currentCycle!.dueDate, -10));
+  assert.equal(updated?.nextReminderDate, reminders.addDays(task.currentCycle!.dueDate, -3));
+  assert.notEqual(updated?.nextReminderDate, firstNextDate);
+});
+
 test('邮件测试时间按 GMT+8 输出', () => {
   assert.equal(
     email.formatDateTimeInTimezone(new Date('2026-07-15T15:11:00.000Z'), 'Asia/Shanghai'),
@@ -116,6 +147,30 @@ test('AI 会话和消息按用户隔离', () => {
     () => db.createMessage({ id: 'message-cross-user', session_id: 'session-user-a', role: 'user', content: '越权', model: null, created_at: now, tool_calls: null }, otherUserId),
     /无权访问/,
   );
+});
+
+test('AI 助手历史按用户隔离并逐条清理超过三天的记录', () => {
+  const now = Date.now();
+  const oldTime = new Date(now - 3 * 24 * 60 * 60 * 1000 - 1).toISOString();
+  const freshTime = new Date(now).toISOString();
+  db.createAiScheduleMessage({
+    id: 'ai-history-old', user_id: userId, role: 'user', type: 'text', content: '旧消息',
+    intent: null, schedule_items: null, plan: null, created_at: oldTime,
+  });
+  db.createAiScheduleMessage({
+    id: 'ai-history-fresh', user_id: userId, role: 'assistant', type: 'text', content: '新消息',
+    intent: 'chat', schedule_items: '[]', plan: null, created_at: freshTime,
+  });
+  db.createAiScheduleMessage({
+    id: 'ai-history-other-user', user_id: 'other-session-user', role: 'user', type: 'text', content: '其他用户消息',
+    intent: null, schedule_items: null, plan: null, created_at: oldTime,
+  });
+
+  const deleted = db.deleteExpiredAiScheduleMessages(new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString(), userId);
+  assert.equal(deleted, 1);
+  assert.equal(db.getAiScheduleMessages(userId, 0).some(item => item.id === 'ai-history-old'), false);
+  assert.equal(db.getAiScheduleMessages(userId, 0).some(item => item.id === 'ai-history-fresh'), true);
+  assert.equal(db.getAiScheduleMessages('other-session-user', 0).some(item => item.id === 'ai-history-other-user'), true);
 });
 
 test('通用周期任务、逾期手动完成和下一周期生成', () => {
@@ -184,6 +239,15 @@ test('行动中心聚合待办并记录完成证明', () => {
   });
   const center = actionCenter.getActionCenter(userId, 7);
   assert.ok(center.today.some(item => item.sourceId === schedule.id));
+  const tomorrowSchedule = schedules.createSchedule({
+    id: 'schedule-tomorrow', user_id: userId, calendar_id: 'personal', type: 'event', title: '明天的会议',
+    description: undefined, start_time: reminders.addDays(today, 1) + 'T10:00:00', end_time: reminders.addDays(today, 1) + 'T11:00:00',
+    all_day: false, location: undefined, notes: undefined, category: 'work', priority: 'medium', is_completed: false,
+    is_repeated: false, repeat_rule: undefined, reminders: [], is_high_risk: false,
+  });
+  const withTomorrow = actionCenter.getActionCenter(userId, 7);
+  assert.ok(withTomorrow.tomorrow.some(item => item.sourceId === tomorrowSchedule.id));
+  assert.ok(withTomorrow.upcoming.some(item => item.sourceId === tomorrowSchedule.id));
   const completion = activity.createCompletion({ userId, sourceType: 'schedule', sourceId: schedule.id, note: '完成证明' });
   schedules.updateSchedule(schedule.id, { is_completed: true });
   const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
@@ -207,6 +271,16 @@ test('无日期待办只出现在行动中心的挂起区域', () => {
   assert.ok(center.unscheduled.some(item => item.sourceId === suspended.id));
   assert.equal(center.today.some(item => item.sourceId === suspended.id), false);
   assert.equal(schedules.getSchedulesByDate(today, userId).some(item => item.id === suspended.id), false);
+});
+
+test('日程分类只保留六个统一分类，未知值归入其他', () => {
+  const schedule = schedules.createSchedule({
+    id: 'schedule-legacy-category', user_id: userId, calendar_id: 'personal', type: 'event', title: '旧分类日程',
+    description: undefined, start_time: reminders.todayInTimezone() + 'T12:00:00', end_time: undefined,
+    all_day: false, location: undefined, notes: undefined, category: 'personal', priority: 'medium', is_completed: false,
+    is_repeated: false, repeat_rule: undefined, reminders: [], is_high_risk: false,
+  });
+  assert.equal(schedule.category, 'other');
 });
 
 test('日历取消完成会同步行动中心，全天事项保留全天语义和备注', () => {

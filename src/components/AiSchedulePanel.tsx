@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Send, Sparkles, Loader2, CheckCircle2, Eye, EyeOff, MapPin, Clock, Calendar, RotateCcw } from 'lucide-react';
+import { Bot, Send, Loader2, CheckCircle2, Eye, EyeOff, MapPin, Clock, RotateCcw } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
+import { SCHEDULE_CATEGORY_COLORS, SCHEDULE_CATEGORY_LABELS } from '../utils/scheduleCategories';
 
 // ==================== 类型 ====================
 
@@ -18,13 +19,6 @@ interface Schedule {
   category: string;
   priority: 'high' | 'medium' | 'low';
   is_completed: boolean;
-}
-
-interface CalendarItem {
-  id: string;
-  name: string;
-  color: string;
-  icon: string;
 }
 
 interface AiPlanOperation {
@@ -70,7 +64,6 @@ interface ChatMessage {
 
 interface AiSchedulePanelProps {
   onSchedulesCreated?: (schedules: Schedule[]) => void;
-  activeCalendarIds?: string[];
   onOpenSchedule?: (id: string) => void;
   onOpenScheduleMenu?: (id: string, x: number, y: number) => void;
   collapsed?: boolean;
@@ -79,15 +72,8 @@ interface AiSchedulePanelProps {
 
 // ==================== 常量 ====================
 
-const CATEGORY_COLORS: Record<string, string> = {
-  travel: '#F59E0B', work: '#3B82F6', social: '#EC4899',
-  life: '#10B981', health: '#EF4444', other: '#6B7280',
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-  travel: '出行', work: '工作', social: '社交',
-  life: '生活', health: '健康', other: '其他',
-};
+const CATEGORY_COLORS = SCHEDULE_CATEGORY_COLORS;
+const CATEGORY_LABELS = SCHEDULE_CATEGORY_LABELS;
 
 const PRIORITY_COLORS: Record<string, string> = {
   high: '#EF4444', medium: '#F59E0B', low: '#10B981',
@@ -141,15 +127,13 @@ function formatDate(isoStr: string): string {
 
 // ==================== 日程卡片 ====================
 
-function ScheduleMiniCard({ schedule, calendars, onOpen, onOpenMenu }: {
+function ScheduleMiniCard({ schedule, onOpen, onOpenMenu }: {
   schedule: Schedule;
-  calendars: CalendarItem[];
   onOpen?: (id: string) => void;
   onOpenMenu?: (id: string, x: number, y: number) => void;
 }) {
   const color = CATEGORY_COLORS[schedule.category] || '#6B7280';
   const pColor = PRIORITY_COLORS[schedule.priority] || '#F59E0B';
-  const cal = calendars.find(c => c.id === schedule.calendar_id);
   const dateStr = formatDate(schedule.start_time);
   const startStr = schedule.all_day ? '全天' : formatTime(schedule.start_time);
   const endStr = schedule.end_time && !schedule.all_day ? ` - ${formatTime(schedule.end_time)}` : '';
@@ -207,21 +191,14 @@ function ScheduleMiniCard({ schedule, calendars, onOpen, onOpenMenu }: {
           备注：{schedule.notes}
         </div>
       )}
-      {cal && (
-        <div className="mt-1.5 flex items-center gap-1 text-[10px]" style={{ color: 'var(--td-text-color-placeholder)' }}>
-          <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />
-          {cal.name}
-        </div>
-      )}
     </button>
   );
 }
 
 // ==================== 消息气泡 ====================
 
-function MessageBubble({ msg, calendars, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan, onDiscardPlan, confirmingPlanId }: {
+function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan, onDiscardPlan, confirmingPlanId }: {
   msg: ChatMessage;
-  calendars: CalendarItem[];
   onOpenSchedule?: (id: string) => void;
   onOpenScheduleMenu?: (id: string, x: number, y: number) => void;
   onConfirmPlan?: (messageId: string, planId: string) => void;
@@ -257,7 +234,7 @@ function MessageBubble({ msg, calendars, onOpenSchedule, onOpenScheduleMenu, onC
             className="w-5 h-5 rounded-full flex items-center justify-center text-xs"
             style={{ backgroundColor: 'var(--td-brand-color)' }}
           >
-            <Sparkles className="w-3 h-3 text-white" />
+            <Bot className="w-3 h-3 text-white" />
           </div>
           <span className="text-xs font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
             AI 助手
@@ -330,7 +307,6 @@ function MessageBubble({ msg, calendars, onOpenSchedule, onOpenScheduleMenu, onC
                   <ScheduleMiniCard
                     key={schedule.id}
                     schedule={schedule}
-                    calendars={calendars}
                     onOpen={onOpenSchedule}
                     onOpenMenu={onOpenScheduleMenu}
                   />
@@ -348,7 +324,6 @@ function MessageBubble({ msg, calendars, onOpenSchedule, onOpenScheduleMenu, onC
 
 export function AiSchedulePanel({
   onSchedulesCreated,
-  activeCalendarIds,
   onOpenSchedule,
   onOpenScheduleMenu,
   collapsed = false,
@@ -357,20 +332,11 @@ export function AiSchedulePanel({
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [calendars, setCalendars] = useState<CalendarItem[]>([]);
   const [confirmingPlanId, setConfirmingPlanId] = useState<string | null>(null);
   const { isAuthenticated, token, authHeaders } = useAuth();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const retryRequestIdsRef = useRef(new Map<string, { requestId: string; expiresAt: number }>());
-
-  // 加载日程表信息（用于显示来源标识）
-  useEffect(() => {
-    fetch('/api/calendars', { headers: authHeaders() })
-      .then(r => r.json())
-      .then(data => setCalendars(data.calendars || []))
-      .catch(() => {});
-  }, []);
 
   // 加载历史消息
   useEffect(() => {
@@ -382,12 +348,14 @@ export function AiSchedulePanel({
           const msgs = data.messages.map((m: any) => ({
             id: m.id,
             role: m.role,
-            type: (m.role === 'assistant' && m.intent) ? 'schedules' : 'text',
-            text: m.content || m.reply || '',
+            type: m.type || ((m.role === 'assistant' && m.intent) ? 'schedules' : 'text'),
+            text: m.text || m.content || m.reply || '',
             intent: m.intent,
-            timestamp: m.created_at,
+            scheduleItems: m.scheduleItems || m.schedule_items || undefined,
+            plan: m.plan,
+            timestamp: m.timestamp || m.created_at || new Date().toISOString(),
           })) as ChatMessage[];
-          setMessages(msgs.slice(-20)); // 最近20条
+          setMessages(msgs);
         }
       })
       .catch(() => {});
@@ -413,7 +381,7 @@ export function AiSchedulePanel({
     if (!text || isLoading) return;
 
     const today = getLocalDateString();
-    const targetCalendarId = (activeCalendarIds && activeCalendarIds.length > 0) ? activeCalendarIds[0] : 'personal';
+    const targetCalendarId = 'personal';
     const requestSignature = `${today}|${targetCalendarId}|${text}`;
     const retryEntry = retryRequestIdsRef.current.get(requestSignature);
     const requestId = retryEntry && retryEntry.expiresAt > Date.now() ? retryEntry.requestId : createRequestId();
@@ -448,7 +416,7 @@ export function AiSchedulePanel({
       retryRequestIdsRef.current.delete(requestSignature);
 
       const aiMsg: ChatMessage = {
-        id: (Date.now() + 1).toString(),
+        id: data.historyMessageId || (Date.now() + 1).toString(),
         role: 'assistant',
         type: data.requiresConfirmation ? 'plan' : data.intent === 'chat' || data.intent === 'query' ? 'text' :
               data.intent === 'update' || data.intent === 'delete' ? 'update' : 'schedules',
@@ -489,7 +457,7 @@ export function AiSchedulePanel({
       setIsLoading(false);
       textareaRef.current?.focus();
     }
-  }, [inputText, isLoading, activeCalendarIds, onSchedulesCreated, authHeaders]);
+  }, [inputText, isLoading, onSchedulesCreated, authHeaders]);
 
   const handleConfirmPlan = useCallback(async (messageId: string, planId: string) => {
     if (confirmingPlanId) return;
@@ -510,6 +478,17 @@ export function AiSchedulePanel({
         plan: undefined,
         scheduleItems: data.scheduleItems || [],
       } : message));
+      fetch('/api/ai-schedule/history/' + messageId, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({
+          type: 'schedules',
+          content: data.reply || '计划已确认执行。',
+          intent: data.intent || 'create',
+          scheduleItems: data.scheduleItems || [],
+          plan: null,
+        }),
+      }).catch(() => {});
       if (data.changed) onSchedulesCreated?.(data.changedDetails?.created || []);
     } catch (error: any) {
       setMessages(previous => [...previous, {
@@ -524,14 +503,22 @@ export function AiSchedulePanel({
     }
   }, [authHeaders, confirmingPlanId, onSchedulesCreated]);
 
-  const handleDiscardPlan = useCallback((messageId: string) => {
+  const handleDiscardPlan = useCallback(async (messageId: string) => {
+    const discarded = messages.find(message => message.id === messageId);
     setMessages(previous => previous.map(message => message.id === messageId ? {
       ...message,
       type: 'text',
       text: '已取消这份计划，尚未创建或修改任何日程。',
       plan: undefined,
     } : message));
-  }, []);
+    if (discarded) {
+      fetch('/api/ai-schedule/history/' + messageId, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ type: 'text', content: '已取消这份计划，尚未创建或修改任何日程。', intent: discarded.intent || null, plan: null }),
+      }).catch(() => {});
+    }
+  }, [authHeaders, messages]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -540,7 +527,13 @@ export function AiSchedulePanel({
     }
   };
 
-  const clearHistory = () => setMessages([]);
+  const clearHistory = async () => {
+    try {
+      await fetch('/api/ai-schedule/history', { method: 'DELETE', headers: authHeaders() });
+    } finally {
+      setMessages([]);
+    }
+  };
 
   const EXAMPLES = [
     '今天上午去车站接人，下午两点开会，晚上约朋友吃饭',
@@ -557,7 +550,7 @@ export function AiSchedulePanel({
         style={{ borderBottom: '1px solid var(--td-component-stroke)' }}
       >
         <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4" style={{ color: 'var(--td-brand-color)' }} />
+          <span className="ai-assistant-heading-icon"><Bot size={23} strokeWidth={2.2} /></span>
           <div>
             <div className="text-sm font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
               AI 日程助手
@@ -612,7 +605,7 @@ export function AiSchedulePanel({
             <div className="text-center mb-4 pt-4">
               <div className="w-10 h-10 rounded-2xl flex items-center justify-center mx-auto mb-2"
                 style={{ backgroundColor: 'var(--td-brand-color-light)' }}>
-                <Calendar className="w-5 h-5" style={{ color: 'var(--td-brand-color)' }} />
+                <Bot className="w-6 h-6" style={{ color: 'var(--td-brand-color)' }} />
               </div>
               <div className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
                 你好，我是 AI 日程助手
@@ -653,8 +646,7 @@ export function AiSchedulePanel({
           <MessageBubble
             key={msg.id}
             msg={msg}
-            calendars={calendars}
-            onOpenSchedule={onOpenSchedule}
+          onOpenSchedule={onOpenSchedule}
             onOpenScheduleMenu={onOpenScheduleMenu}
             onConfirmPlan={handleConfirmPlan}
             onDiscardPlan={handleDiscardPlan}

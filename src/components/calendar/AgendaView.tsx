@@ -2,17 +2,11 @@ import { useEffect, useMemo, useRef } from 'react';
 import { CalendarDays, CheckCircle2, Circle, Clock3, MapPin } from 'lucide-react';
 import type { Schedule } from '../CalendarView';
 import { addCalendarDays, getCalendarDayMeta, toLocalDateKey } from './calendarMeta';
-
-interface CalendarSource {
-  id: string;
-  name: string;
-  color: string;
-}
+import { getScheduleCategory } from '../../utils/scheduleCategories';
 
 interface AgendaViewProps {
   schedules: Schedule[];
   selectedDate: Date;
-  calendars: CalendarSource[];
   showLunar: boolean;
   showFestivals: boolean;
   onSelectDate: (date: Date) => void;
@@ -42,14 +36,9 @@ function formatTime(schedule: Schedule): string {
   return `${start} – ${end}`;
 }
 
-function getCalendarColor(schedule: Schedule, calendars: CalendarSource[]): string {
-  return calendars.find(item => item.id === schedule.calendar_id)?.color || '#3b82f6';
-}
-
 export function AgendaView({
   schedules,
   selectedDate,
-  calendars,
   showLunar,
   showFestivals,
   onSelectDate,
@@ -131,7 +120,8 @@ export function AgendaView({
                 </article>
               ))}
               {group.schedules.map(schedule => {
-                const color = getCalendarColor(schedule, calendars);
+                const category = getScheduleCategory(schedule.category);
+                const color = category.color;
                 return (
                   <article
                     key={schedule.id}
@@ -180,7 +170,7 @@ export function AgendaView({
                     </div>
                     <span className="agenda-calendar-source">
                       <i style={{ backgroundColor: color }} />
-                      {calendars.find(item => item.id === schedule.calendar_id)?.name || '日程'}
+                      {category.name}
                     </span>
                   </article>
                 );

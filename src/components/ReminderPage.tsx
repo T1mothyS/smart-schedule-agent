@@ -80,15 +80,15 @@ const initialForm: FormState = {
   priority: 'medium',
 };
 
-const templates: Array<{ key: GenericReminderConfig['templateKey']; name: string; frequency: FormState['frequency']; offsets: string; action: string }> = [
-  { key: 'subscription', name: '订阅续费', frequency: 'monthly', offsets: '7,1', action: '确认是否续费或取消订阅' },
-  { key: 'insurance', name: '保险', frequency: 'yearly', offsets: '30,7,1', action: '核对保障并完成续保' },
-  { key: 'document', name: '证件', frequency: 'once', offsets: '90,30,7', action: '准备材料并办理换证' },
-  { key: 'membership', name: '会员', frequency: 'yearly', offsets: '14,3,1', action: '确认会员是否继续保留' },
-  { key: 'rent', name: '房租', frequency: 'monthly', offsets: '3,1,0', action: '支付房租并保存凭证' },
-  { key: 'utilities', name: '水电账单', frequency: 'monthly', offsets: '3,1,0', action: '核对金额并缴费' },
-  { key: 'vehicle_inspection', name: '车辆年检', frequency: 'yearly', offsets: '30,7,1', action: '预约年检并准备车辆资料' },
-  { key: 'custom', name: '自定义事务', frequency: 'once', offsets: '7,1', action: '完成本周期事务并登记证明' },
+const templates: Array<{ key: GenericReminderConfig['templateKey']; name: string }> = [
+  { key: 'subscription', name: '订阅续费' },
+  { key: 'insurance', name: '保险' },
+  { key: 'document', name: '证件' },
+  { key: 'membership', name: '会员' },
+  { key: 'rent', name: '房租' },
+  { key: 'utilities', name: '水电账单' },
+  { key: 'vehicle_inspection', name: '车辆年检' },
+  { key: 'custom', name: '自定义事务' },
 ];
 
 function statusLabel(status: string | undefined): { label: string; tone: string } {
@@ -112,11 +112,34 @@ function formatDue(date: string | null): string {
 function configToForm(task: ReminderTask): FormState {
   if (task.type === 'credit_card') {
     const config = task.config as CreditCardConfig;
-    return { ...initialForm, type: 'credit_card', name: task.name, statementDay: String(config.statementDay), paymentDay: String(config.paymentDay), paymentMonthOffset: String(config.paymentMonthOffset) };
+    return {
+      ...initialForm,
+      type: 'credit_card',
+      name: task.name,
+      statementDay: String(config.statementDay),
+      paymentDay: String(config.paymentDay),
+      paymentMonthOffset: String(config.paymentMonthOffset),
+      reminderOffsets: (config.reminderOffsets || [15, 7, 1, 0]).join(','),
+      reminderTime: config.reminderTime || '09:00',
+      priority: config.priority || 'high',
+    };
   }
   if (task.type === 'sim') {
     const config = task.config as SimConfig;
-    return { ...initialForm, type: 'sim', name: task.name, provider: config.provider, numberMasked: config.numberMasked, region: config.region, intervalDays: String(config.intervalDays), lastOperationDate: config.lastOperationDate, actionGuide: config.actionGuide };
+    return {
+      ...initialForm,
+      type: 'sim',
+      name: task.name,
+      provider: config.provider,
+      numberMasked: config.numberMasked,
+      region: config.region,
+      intervalDays: String(config.intervalDays),
+      lastOperationDate: config.lastOperationDate,
+      actionGuide: config.actionGuide,
+      reminderOffsets: (config.reminderOffsets || [30, 15, 7, 1, 0]).join(','),
+      reminderTime: config.reminderTime || '09:00',
+      priority: config.priority || 'medium',
+    };
   }
   const config = task.config as GenericReminderConfig;
   const rule = config.rule;
@@ -178,12 +201,6 @@ export function ReminderPage() {
 
   const updateForm = (key: keyof FormState, value: string) => setForm(current => ({ ...current, [key]: value }));
   const openCreate = (type: ReminderTaskType = 'credit_card') => { setEditing(null); setForm({ ...initialForm, type, lastOperationDate: today() }); setFormOpen(true); };
-  const openTemplate = (template: typeof templates[number]) => {
-    const date = today();
-    setEditing(null);
-    setForm({ ...initialForm, type: 'generic', templateKey: template.key, frequency: template.frequency, anchorDate: date, dayOfMonth: String(Number(date.slice(8, 10))), month: String(Number(date.slice(5, 7))), reminderOffsets: template.offsets, actionGuide: template.action, name: template.name });
-    setFormOpen(true);
-  };
   const openEdit = (task: ReminderTask) => { setEditing(task); setForm(configToForm(task)); setFormOpen(true); };
 
   const saveTask = async (event: FormEvent) => {
@@ -191,9 +208,26 @@ export function ReminderPage() {
     setSaving(true);
     try {
       const config = form.type === 'credit_card'
-        ? { statementDay: Number(form.statementDay), paymentDay: Number(form.paymentDay), paymentMonthOffset: Number(form.paymentMonthOffset), reminderOffsets: [15, 7, 1, 0] }
+        ? {
+          statementDay: Number(form.statementDay),
+          paymentDay: Number(form.paymentDay),
+          paymentMonthOffset: Number(form.paymentMonthOffset),
+          reminderOffsets: form.reminderOffsets.split(/[,，\s]+/).map(Number).filter(value => Number.isFinite(value)),
+          reminderTime: form.reminderTime,
+          priority: form.priority,
+        }
         : form.type === 'sim'
-        ? { provider: form.provider, numberMasked: form.numberMasked, region: form.region, intervalDays: Number(form.intervalDays), lastOperationDate: form.lastOperationDate, actionGuide: form.actionGuide, reminderOffsets: [30, 15, 7, 1, 0] }
+        ? {
+          provider: form.provider,
+          numberMasked: form.numberMasked,
+          region: form.region,
+          intervalDays: Number(form.intervalDays),
+          lastOperationDate: form.lastOperationDate,
+          actionGuide: form.actionGuide,
+          reminderOffsets: form.reminderOffsets.split(/[,，\s]+/).map(Number).filter(value => Number.isFinite(value)),
+          reminderTime: form.reminderTime,
+          priority: form.priority,
+        }
         : {
           templateKey: form.templateKey,
           rule: {
@@ -290,8 +324,6 @@ export function ReminderPage() {
           <div className="stat-card"><div className="stat-icon red"><AlertTriangle size={18} /></div><div><span>需要补登记</span><strong>{stats.expired}</strong></div></div>
         </section>
 
-        <section className="template-panel"><div className="template-panel-head"><div><h2>从模板快速创建</h2><span>只需填写日期和规则，后续周期自动生成</span></div></div><div className="template-grid">{templates.map(template => <button key={template.key} onClick={() => openTemplate(template)}><Repeat2 size={17} /><strong>{template.name}</strong><span>{template.offsets.split(',').map(value => '提前 ' + value + ' 天').join(' · ')}</span></button>)}</div></section>
-
         <section className="reminder-toolbar"><div><h2>我的提醒</h2><span>已发送的提醒会自动记录，不会重复发送。</span></div><div className="toolbar-actions"><div className="filter-pills">{([['all', '全部'], ['credit_card', '信用卡'], ['sim', 'SIM 卡'], ['generic', '生活事务'], ['expired', '逾期']] as [Filter, string][]).map(([value, label]) => <button key={value} className={filter === value ? 'filter-pill active' : 'filter-pill'} onClick={() => setFilter(value)}>{label}</button>)}</div><button className="secondary-button" onClick={sendTestEmail}><Mail size={15} /> 测试邮件</button></div></section>
 
         {loading ? <div className="empty-panel"><div className="loading-dot" /><span>正在加载提醒...</span></div> : visibleTasks.length === 0 ? <div className="empty-panel"><div className="empty-icon"><BellRing size={23} /></div><h3>{filter === 'all' ? '还没有周期提醒' : '没有符合条件的任务'}</h3><p>{filter === 'all' ? '先创建一张信用卡或一张 SIM 卡，日历会自动帮你安排提醒。' : '换一个筛选条件，或者新建一条提醒。'}</p>{filter === 'all' && <button className="primary-button" onClick={() => openCreate()}><Plus size={17} /> 新建第一条提醒</button>}</div> : (
@@ -305,8 +337,8 @@ export function ReminderPage() {
             return <article className={!task.enabled ? 'task-card disabled' : 'task-card'} key={task.id}>
               <div className="task-card-head"><div className={'task-type-icon ' + (task.type === 'credit_card' ? 'card' : task.type === 'sim' ? 'sim' : 'generic')}>{task.type === 'credit_card' ? <CreditCard size={20} /> : task.type === 'sim' ? <Smartphone size={20} /> : <Repeat2 size={20} />}</div><div className="task-title-wrap"><h3>{task.name}</h3></div><span className={'status-badge ' + status.tone}>{status.label}</span></div>
               <div className="task-due-block"><span>{task.type === 'credit_card' ? '本期还款日' : task.type === 'sim' ? '本次保号截止' : '本周期到期日'}</span><strong>{formatDue(cycle?.dueDate || null)}</strong><em>{remaining === null ? '—' : remaining < 0 ? '已逾期 ' + Math.abs(remaining) + ' 天' : remaining === 0 ? '今天到期' : '还有 ' + remaining + ' 天'}</em></div>
-              <div className="task-details">{task.type === 'credit_card' ? <><span>账单日每月 {cardConfig.statementDay} 日</span><span>{cardConfig.paymentMonthOffset === 1 ? '次月' : '当月'} {cardConfig.paymentDay} 日还款</span></> : task.type === 'sim' ? <><span>{simConfig.provider || '未填写运营商'} · {simConfig.numberMasked || '未填写号码'}</span><span>每 {simConfig.intervalDays} 天检查一次</span></> : <><span>{genericConfig.actionGuide}</span><span>{genericConfig.reminderOffsets.map(value => '提前 ' + value + ' 天').join(' · ')}</span></>}</div>
-              <div className="task-card-foot"><span className="next-reminder">{task.enabled && task.nextReminderDate ? '下一提醒 ' + formatDue(task.nextReminderDate) : task.enabled ? '暂无待发送提醒' : '已暂停提醒'}</span><div className="card-actions">{task.enabled && cycle && cycle.status !== 'completed' && <button className="complete-button" onClick={() => { setCompleteTarget(task); setCompleteDate(today()); }}><CheckCircle2 size={15} /> 标记完成</button>}<button className="icon-button small" onClick={() => openEdit(task)} title="编辑"><Edit3 size={15} /></button><button className="icon-button small" onClick={() => toggleTask(task)} title={task.enabled ? '暂停' : '启用'}>{task.enabled ? <PauseCircle size={15} /> : <PlayCircle size={15} />}</button><button className="icon-button small danger-button" onClick={() => deleteTask(task)} title="删除"><Trash2 size={15} /></button></div></div>
+              <div className="task-details">{task.type === 'credit_card' ? <><span>账单日每月 {cardConfig.statementDay} 日</span><span>{cardConfig.paymentMonthOffset === 1 ? '次月' : '当月'} {cardConfig.paymentDay} 日还款</span><span>提前提醒：{(cardConfig.reminderOffsets || [15, 7, 1, 0]).map(value => value + ' 天').join(' · ')}</span></> : task.type === 'sim' ? <><span>{simConfig.provider || '未填写运营商'} · {simConfig.numberMasked || '未填写号码'}</span><span>每 {simConfig.intervalDays} 天检查一次</span><span>提前提醒：{(simConfig.reminderOffsets || [30, 15, 7, 1, 0]).map(value => value + ' 天').join(' · ')}</span></> : <><span>{genericConfig.actionGuide}</span><span>{genericConfig.reminderOffsets.map(value => '提前 ' + value + ' 天').join(' · ')}</span></>}</div>
+              <div className="task-card-foot"><div className="task-reminder-meta"><span className="next-reminder">{task.enabled && task.nextReminderDate ? '下一提醒 ' + formatDue(task.nextReminderDate) : task.enabled ? '暂无待发送提醒' : '已暂停提醒'}</span><small className="last-reminder">{task.lastReminderDate ? '上次提醒 ' + formatDue(task.lastReminderDate) : '上次提醒：尚未发送'}</small></div><div className="card-actions">{task.enabled && cycle && cycle.status !== 'completed' && <button className="complete-button" onClick={() => { setCompleteTarget(task); setCompleteDate(today()); }}><CheckCircle2 size={15} /> 标记完成</button>}<button className="icon-button small" onClick={() => openEdit(task)} title="编辑"><Edit3 size={15} /></button><button className="icon-button small" onClick={() => toggleTask(task)} title={task.enabled ? '暂停' : '启用'}>{task.enabled ? <PauseCircle size={15} /> : <PlayCircle size={15} />}</button><button className="icon-button small danger-button" onClick={() => deleteTask(task)} title="删除"><Trash2 size={15} /></button></div></div>
             </article>;
           })}</section>
         )}
@@ -344,6 +376,11 @@ export function ReminderPage() {
             <label className="form-label">提前提醒天数<input value={form.reminderOffsets} onChange={event => updateForm('reminderOffsets', event.target.value)} placeholder="例如：30,7,1" /></label>
             <label className="form-label">优先级<select value={form.priority} onChange={event => updateForm('priority', event.target.value)}><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select></label>
             <label className="form-label full">建议操作<input value={form.actionGuide} onChange={event => updateForm('actionGuide', event.target.value)} /></label>
+          </div>}
+          {form.type !== 'generic' && <div className="form-grid">
+            <label className="form-label">提醒时间<input type="time" value={form.reminderTime} onChange={event => updateForm('reminderTime', event.target.value)} /></label>
+            <label className="form-label">提前提醒天数<input value={form.reminderOffsets} onChange={event => updateForm('reminderOffsets', event.target.value)} placeholder="例如：30,7,1" /><small>用逗号分隔，填 0 表示当天提醒</small></label>
+            <label className="form-label full">优先级<select value={form.priority} onChange={event => updateForm('priority', event.target.value)}><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select></label>
           </div>}
           <div className="modal-foot"><button type="button" className="secondary-button" onClick={() => setFormOpen(false)}>取消</button><button className="primary-button" disabled={saving}>{saving ? '保存中…' : editing ? '保存修改' : '创建提醒'}</button></div>
         </form>

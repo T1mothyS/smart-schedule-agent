@@ -28,6 +28,7 @@ import { parseAiImport, type AiImportDraft } from "./ai-import-service.js";
 import { pollEmailImports } from "./email-import-service.js";
 import { buildCodeBuddyEnv } from "./codebuddy-env.js";
 import { createModelService } from "./model-service.js";
+import { parseAiJson } from "./ai-json.js";
 
 // 数据库实例（等待初始化后赋值）
 let db: typeof dbModule;
@@ -52,6 +53,16 @@ function getLocalISOString(date?: Date): string {
   const offset = d.getTimezoneOffset();
   const localDate = new Date(d.getTime() - offset * 60 * 1000);
   return localDate.toISOString();
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message || error.stack || error.name;
+  if (typeof error === 'string' && error) return error;
+  try {
+    const serialized = JSON.stringify(error);
+    if (serialized && serialized !== '{}') return serialized;
+  } catch {}
+  return String(error || '未知错误');
 }
 
 // 【修复】默认使用国内版 API（codebuddy.cn）
@@ -310,26 +321,68 @@ app.get("/api/models", authenticate, async (req, res) => {
 });
 
 // ============= AI 日程对话历史 =============
+const AI_SCHEDULE_HISTORY_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+function cleanupAiScheduleHistory(userId?: string): number {
+  const cutoff = new Date(Date.now() - AI_SCHEDULE_HISTORY_TTL_MS).toISOString();
+  return db.deleteExpiredAiScheduleMessages(cutoff, userId);
+}
+
+function parseHistoryJson(value: string | null): any {
+  if (!value) return undefined;
+  try { return JSON.parse(value); } catch { return undefined; }
+}
+
+function toAiScheduleHistoryMessage(message: dbModule.DbAiScheduleMessage) {
+  return {
+    id: message.id,
+    role: message.role,
+    type: message.type,
+    text: message.content,
+    intent: message.intent || undefined,
+    scheduleItems: parseHistoryJson(message.schedule_items),
+    plan: parseHistoryJson(message.plan),
+    timestamp: message.created_at,
+  };
+}
+
 app.get("/api/ai-schedule/history", authenticate, (req, res) => {
   try {
     const payload = (req as any).user as JwtPayload;
-    const sessions = db.getAllSessions(payload.userId);
-    // 获取所有消息（取最近的20条）
-    let allMessages: any[] = [];
-    
-    for (const session of sessions) {
-      const msgs = db.getMessagesBySession(session.id, payload.userId);
-      allMessages.push(...msgs);
-    }
-    
-    // 按时间排序，取最近20条
-    allMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    allMessages = allMessages.slice(0, 20);
-    
-    res.json({ messages: allMessages });
+    cleanupAiScheduleHistory(payload.userId);
+    res.json({ messages: db.getAiScheduleMessages(payload.userId, 0).map(toAiScheduleHistoryMessage) });
   } catch (error: any) {
     console.error("[AI History] Error:", error);
     res.json({ messages: [] });
+  }
+});
+
+app.patch("/api/ai-schedule/history/:id", authenticate, (req, res) => {
+  try {
+    const payload = (req as any).user as JwtPayload;
+    const body = req.body || {};
+    const updates: Partial<Pick<dbModule.DbAiScheduleMessage, 'type' | 'content' | 'intent' | 'schedule_items' | 'plan'>> = {};
+    if (body.type !== undefined) updates.type = String(body.type);
+    if (body.content !== undefined) updates.content = String(body.content);
+    if (body.intent !== undefined) updates.intent = body.intent ? String(body.intent) : null;
+    if (body.scheduleItems !== undefined) updates.schedule_items = body.scheduleItems == null ? null : JSON.stringify(body.scheduleItems);
+    if (body.plan !== undefined) updates.plan = body.plan == null ? null : JSON.stringify(body.plan);
+    if (!db.updateAiScheduleMessage(req.params.id, payload.userId, updates)) {
+      return res.status(404).json({ error: '历史消息不存在' });
+    }
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '更新历史消息失败' });
+  }
+});
+
+app.delete("/api/ai-schedule/history", authenticate, (req, res) => {
+  try {
+    const payload = (req as any).user as JwtPayload;
+    const deleted = db.deleteExpiredAiScheduleMessages(new Date(Date.now() + 1).toISOString(), payload.userId);
+    res.json({ success: true, deleted });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '清空历史失败' });
   }
 });
 
@@ -1232,8 +1285,10 @@ function normaliseReminderConfig(type: reminderStore.ReminderTaskType, input: an
       paymentDay,
       paymentMonthOffset,
       reminderOffsets: Array.isArray(input?.reminderOffsets)
-        ? input.reminderOffsets.map(Number).filter((value: number) => value >= 0 && value <= 60)
+        ? [...new Set(input.reminderOffsets.map(Number).filter((value: number) => Number.isInteger(value) && value >= 0 && value <= 60))]
         : [15, 7, 1, 0],
+      reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(input?.reminderTime) ? input.reminderTime : '09:00',
+      priority: ['high', 'medium', 'low'].includes(input?.priority) ? input.priority : 'high',
     };
   }
 
@@ -1284,8 +1339,10 @@ function normaliseReminderConfig(type: reminderStore.ReminderTaskType, input: an
     lastOperationDate: input.lastOperationDate,
     actionGuide: String(input?.actionGuide || '完成一次充值、消费、短信、通话或流量操作').trim(),
     reminderOffsets: Array.isArray(input?.reminderOffsets)
-      ? input.reminderOffsets.map(Number).filter((value: number) => value >= 0 && value <= 180)
+      ? [...new Set(input.reminderOffsets.map(Number).filter((value: number) => Number.isInteger(value) && value >= 0 && value <= 180))]
       : [30, 15, 7, 1, 0],
+    reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(input?.reminderTime) ? input.reminderTime : '09:00',
+    priority: ['high', 'medium', 'low'].includes(input?.priority) ? input.priority : 'medium',
   };
 }
 
@@ -1546,7 +1603,7 @@ app.post("/api/email-import/check", authenticate, async (req, res) => {
     onlyUserId: userId,
     resolveApiKey: targetUserId => db.getUserApiKey(targetUserId)?.api_key || process.env.CODEBUDDY_API_KEY || null,
     log: (message, error) => error
-      ? addLog('error', 'ai', message, { error: error instanceof Error ? error.message : String(error) })
+      ? addLog('error', 'ai', message, { error: describeError(error) })
       : addLog('info', 'ai', message),
   });
   const statusCode = result.status === 'error' ? 502 : result.status === 'busy' ? 409 : 200;
@@ -2250,6 +2307,47 @@ const AI_SCHEDULE_PLAN_TTL_MS = 15 * 60 * 1000;
 const aiSchedulePlans = new Map<string, PendingAiSchedulePlan>();
 const aiChatRequestRecords = new Map<string, AiChatRequestRecord>();
 
+function saveAiScheduleHistoryMessage(input: {
+  userId: string;
+  role: 'user' | 'assistant';
+  type: string;
+  content: string;
+  intent?: string | null;
+  scheduleItems?: unknown;
+  plan?: unknown;
+}): dbModule.DbAiScheduleMessage {
+  return db.createAiScheduleMessage({
+    id: uuidv4(),
+    user_id: input.userId,
+    role: input.role,
+    type: input.type,
+    content: input.content,
+    intent: input.intent || null,
+    schedule_items: input.scheduleItems === undefined ? null : JSON.stringify(input.scheduleItems),
+    plan: input.plan === undefined ? null : JSON.stringify(input.plan),
+    created_at: new Date().toISOString(),
+  });
+}
+
+function saveAiScheduleResponseHistory(userId: string, response: any): dbModule.DbAiScheduleMessage {
+  const type = response.requiresConfirmation
+    ? 'plan'
+    : response.intent === 'chat' || response.intent === 'query'
+      ? 'text'
+      : response.intent === 'update' || response.intent === 'delete'
+        ? 'update'
+        : 'schedules';
+  return saveAiScheduleHistoryMessage({
+    userId,
+    role: 'assistant',
+    type,
+    content: String(response.reply || ''),
+    intent: response.intent || null,
+    scheduleItems: response.scheduleItems || [],
+    plan: response.plan,
+  });
+}
+
 function cleanupExpiredAiScheduleState(): void {
   const now = Date.now();
   for (const [id, plan] of aiSchedulePlans) if (plan.expiresAt <= now) aiSchedulePlans.delete(id);
@@ -2420,6 +2518,20 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
     } catch {}
   }
 
+  if (authenticatedUser) {
+    try {
+      cleanupAiScheduleHistory(userId);
+      saveAiScheduleHistoryMessage({
+        userId,
+        role: 'user',
+        type: 'text',
+        content: String(text),
+      });
+    } catch (error) {
+      console.error('[AI History] 保存用户消息失败:', error);
+    }
+  }
+
   // 只读日程查询直接使用本地数据，不依赖外部 AI 或 API Key。
   if (authenticatedUser && isReadOnlyScheduleQuery(text)) {
     const today = targetDate || getLocalDateString();
@@ -2437,19 +2549,27 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
     }
     scheduleItems.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
     addLog('info', 'ai', `本地完成日程查询，共 ${scheduleItems.length} 项`, { userId, queryDates });
-    return res.json({
+    const response = {
       success: true,
       intent: 'query',
       reply: buildCompactScheduleQueryReply(scheduleItems, queryDates, today),
       scheduleItems,
       changed: false,
       changedDetails: { created: [], updated: [], deleted: [] },
-    });
+    };
+    try {
+      const historyMessage = saveAiScheduleResponseHistory(userId, response);
+      return res.json({ ...response, historyMessageId: historyMessage.id });
+    } catch (error) {
+      console.error('[AI History] 保存本地查询结果失败:', error);
+      return res.json(response);
+    }
   }
 
   // 检查用户是否有 API Key
   if (!userCredential) {
     addLog('warn', 'ai', `用户 ${userId} 未配置 API Key`, { userId });
+    try { saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: '请先在设置页输入您的 CodeBuddy API Key' }); } catch {}
     return res.status(401).json({ 
       error: '请先在设置页输入您的 CodeBuddy API Key',
       needLogin: true 
@@ -2469,9 +2589,11 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
       }
     });
     if (needsLogin) {
+      try { saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: loginError || 'API Key 无效，请检查或重新输入' }); } catch {}
       return res.status(401).json({ error: loginError });
     }
   } catch (error: any) {
+    try { saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: error?.message || 'API Key 认证失败' }); } catch {}
     return res.status(401).json({ error: error?.message || 'API Key 认证失败' });
   }
 
@@ -2701,10 +2823,11 @@ priority 识别：
       }
     }
 
-    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('AI 返回格式错误');
-
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsedResult = parseAiJson(jsonText);
+    const parsed = parsedResult.value;
+    if (parsedResult.repaired) {
+      addLog('warn', 'ai', 'AI 返回 JSON 含未转义双引号，已自动修复');
+    }
     const operations = Array.isArray(parsed.operations) ? parsed.operations : [];
     console.log('[AI Chat] Intent:', parsed.intent);
     console.log('[AI Chat] Operations:', JSON.stringify(operations, null, 2));
@@ -2717,7 +2840,7 @@ priority 识别：
     const requiresConfirmation = operations.some((op: any) =>
       ['create', 'create_recurring', 'update', 'delete'].includes(op?.type),
     );
-    const response = requiresConfirmation ? (() => {
+    const response: any = requiresConfirmation ? (() => {
       const plan: PendingAiSchedulePlan = {
         id: uuidv4(),
         userId,
@@ -2755,12 +2878,24 @@ priority 识别：
       changed: false,
       changedDetails: { created: [], updated: [], deleted: [] },
     };
+    try {
+      const historyMessage = saveAiScheduleResponseHistory(userId, response);
+      response.historyMessageId = historyMessage.id;
+    } catch (historyError) {
+      console.error('[AI History] 保存助手消息失败:', historyError);
+    }
     if (requestKey) aiChatRequestRecords.set(requestKey, { userId, state: 'completed', response, expiresAt: Date.now() + AI_SCHEDULE_PLAN_TTL_MS });
     res.json(response);
   } catch (error: any) {
     if (requestKey) aiChatRequestRecords.delete(requestKey);
-    addLog('error', 'ai', `AI Chat 处理失败: ${error?.message || '未知错误'}`, { stack: error?.stack?.slice(0, 200) });
+    addLog('error', 'ai', `AI Chat 处理失败: ${error?.message || '未知错误'}`, {
+      stack: error?.stack?.slice(0, 200),
+      responsePreview: jsonText ? jsonText.replace(/\s+/g, ' ').slice(0, 240) : undefined,
+    });
     console.error('[AI Chat] Error:', error);
+    try {
+      saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: error?.message || 'AI 处理失败，请重试' });
+    } catch {}
     res.status(500).json({ error: error?.message || 'AI 处理失败，请重试' });
   }
 });
@@ -3553,7 +3688,18 @@ cron.schedule('*/5 * * * *', () => {
     model: scheduleModel,
     resolveApiKey: userId => db.getUserApiKey(userId)?.api_key || process.env.CODEBUDDY_API_KEY || null,
     log: (message, error) => error
-      ? addLog('error', 'ai', message, { error: error instanceof Error ? error.message : String(error) })
+      ? addLog('error', 'ai', message, { error: describeError(error) })
       : addLog('info', 'ai', message),
   }).catch(error => addLog('error', 'ai', '邮箱导入调度失败: ' + (error?.message || error)));
+});
+
+// 每小时逐条清理超过 3 天的 AI 助手历史，避免只在用户打开页面时才清理。
+cron.schedule('0 * * * *', () => {
+  if (!dbInitialized) return;
+  try {
+    const deleted = cleanupAiScheduleHistory();
+    if (deleted > 0) addLog('info', 'ai', `清理 AI 助手过期历史: ${deleted} 条`);
+  } catch (error: any) {
+    addLog('error', 'ai', '清理 AI 助手过期历史失败', { error: error?.message || String(error) });
+  }
 });

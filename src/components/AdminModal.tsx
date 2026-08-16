@@ -11,6 +11,7 @@ import {
 import {
   RefreshIcon,
   DeleteIcon,
+  DownloadIcon,
 } from 'tdesign-icons-react';
 import { useAuth } from '../hooks/useAuth';
 
@@ -323,6 +324,7 @@ function DebugLogsTab() {
   const [category, setCategory] = useState('all');
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [total, setTotal] = useState(0);
+  const [exporting, setExporting] = useState(false);
   const logContainerRef = React.useRef<HTMLDivElement>(null);
   const intervalRef = React.useRef<number | null>(null);
 
@@ -364,6 +366,35 @@ function DebugLogsTab() {
     }
   };
 
+  const handleExportLogs = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const response = await fetch('/api/logs/export?format=txt', { headers: authHeaders() });
+      if (!response.ok) {
+        let message = '导出失败';
+        try { message = (await response.json()).error || message; } catch {}
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const disposition = response.headers.get('content-disposition') || '';
+      const filename = disposition.match(/filename="([^"]+)"/)?.[1] || 'schedule-logs.txt';
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      MessagePlugin.success('日志已导出');
+    } catch (error) {
+      MessagePlugin.error(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const getLevelColor = (level: string) => {
     switch (level) {
       case 'error': return '#EF4444';
@@ -398,6 +429,9 @@ function DebugLogsTab() {
         </label>
         <Button size="small" variant="outline" icon={<RefreshIcon />} onClick={fetchLogs}>
           刷新
+        </Button>
+        <Button size="small" variant="outline" icon={<DownloadIcon />} onClick={handleExportLogs} loading={exporting}>
+          一键导出
         </Button>
         <Button size="small" variant="outline" icon={<DeleteIcon />} onClick={handleClearLogs}>
           清空
