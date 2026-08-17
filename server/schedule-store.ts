@@ -317,9 +317,9 @@ export function createSchedule(schedule: Omit<Schedule, 'created_at' | 'updated_
     || calendars.find(item => item.is_default)?.id
     || requestedCalendar;
 
-  // 【关键修复】全天日程的 end_time 不能为 null，设置为 start_time（同一天结束）
+  // 兼容旧数据库：end_time 仍可能是 NOT NULL；无固定期限待办用 start_time 作内部占位，实际语义由 is_unscheduled 表示。
   const endTimeValue = isUnscheduled
-    ? null
+    ? startTimeValue
     : safeNull(schedule.end_time) || (schedule.all_day ? startTimeValue : null);
 
   run(
@@ -372,9 +372,9 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
   const isUnscheduled = merged.is_unscheduled === true;
   const startTimeValue = merged.start_time || now;
 
-  // 【关键修复】全天日程的 end_time 不能为 null
+  // 兼容旧数据库：无固定期限待办的 end_time 继续保存内部占位值。
   const endTimeValue = isUnscheduled
-    ? null
+    ? startTimeValue
     : safeNull(merged.end_time) || (merged.all_day ? startTimeValue : null);
 
   run(
@@ -588,12 +588,13 @@ export function restoreUserScheduleData(
   for (const schedule of data.schedules || []) {
     const id = String(schedule.id);
     if (!id || queryOne('SELECT id FROM schedules WHERE id = ?', [id])) continue;
+    const startTime = schedule.start_time || new Date().toISOString();
     db.run(
       `INSERT INTO schedules (id, user_id, calendar_id, type, title, description, start_time, end_time, all_day, is_unscheduled, location, notes, category,
        priority, is_completed, is_repeated, repeat_rule, reminders, is_high_risk, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-       [id, userId, schedule.calendar_id, schedule.type, schedule.title, schedule.description || null, schedule.start_time || new Date().toISOString(),
-         schedule.is_unscheduled ? null : (schedule.end_time || null), schedule.all_day ? 1 : 0, schedule.is_unscheduled ? 1 : 0, schedule.location || null, schedule.notes || null,
+       [id, userId, schedule.calendar_id, schedule.type, schedule.title, schedule.description || null, startTime,
+         schedule.is_unscheduled ? startTime : (schedule.end_time || null), schedule.all_day ? 1 : 0, schedule.is_unscheduled ? 1 : 0, schedule.location || null, schedule.notes || null,
         schedule.category || 'other', schedule.priority || 'medium', schedule.is_completed ? 1 : 0, schedule.is_repeated ? 1 : 0,
         schedule.repeat_rule || null, JSON.stringify(schedule.reminders || []), schedule.is_high_risk ? 1 : 0,
         schedule.created_at || new Date().toISOString(), schedule.updated_at || new Date().toISOString()],

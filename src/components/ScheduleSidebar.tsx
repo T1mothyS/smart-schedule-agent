@@ -33,8 +33,7 @@ export function ScheduleSidebar({ activeCategoryIds, onActiveChange }: ScheduleS
     <div className="schedule-sidebar-panel flex flex-col h-full">
       <div className="schedule-sidebar-heading">
         <div>
-          <strong>日程分类</strong>
-          <span className="schedule-sidebar-subtitle">与创建日程和 AI 使用同一套分类</span>
+          <strong className="schedule-sidebar-title">日程分类</strong>
         </div>
       </div>
 

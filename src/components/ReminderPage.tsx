@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   BellRing,
@@ -18,8 +18,6 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import type { CreditCardConfig, GenericReminderConfig, ReminderStats, ReminderTask, ReminderTaskType, SimConfig } from '../reminder-types';
-
-type Filter = 'all' | ReminderTaskType | 'expired';
 
 interface ReminderPageProps {
   theme?: string;
@@ -166,7 +164,6 @@ export function ReminderPage() {
   const { authHeaders } = useAuth();
   const [tasks, setTasks] = useState<ReminderTask[]>([]);
   const [stats, setStats] = useState<ReminderStats>({ total: 0, active: 0, dueSoon: 0, expired: 0 });
-  const [filter, setFilter] = useState<Filter>('all');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
@@ -194,10 +191,7 @@ export function ReminderPage() {
 
   useEffect(() => { loadTasks(); }, [loadTasks]);
 
-  const visibleTasks = useMemo(() => tasks.filter(task => {
-    if (filter === 'expired') return task.currentCycle?.status === 'expired';
-    return filter === 'all' || task.type === filter;
-  }), [filter, tasks]);
+  const visibleTasks = tasks;
 
   const updateForm = (key: keyof FormState, value: string) => setForm(current => ({ ...current, [key]: value }));
   const openCreate = (type: ReminderTaskType = 'credit_card') => { setEditing(null); setForm({ ...initialForm, type, lastOperationDate: today() }); setFormOpen(true); };
@@ -313,7 +307,7 @@ export function ReminderPage() {
   return (
     <div className="reminder-page">
       <main className="reminder-content">
-        <section className="reminder-hero"><div><div className="eyebrow">PERSONAL OPERATIONS</div><h1>把容易忘的事，交给日历记住。</h1><p>信用卡和 SIM 卡会按照各自规则生成周期。邮件负责提醒，页面负责登记完成。</p></div><button className="primary-button" onClick={() => openCreate()}><Plus size={17} /> 新建提醒</button></section>
+        <section className="reminder-hero"><div><div className="eyebrow">PERSONAL OPERATIONS</div><h1>周期事件管理</h1></div><button className="primary-button" onClick={() => openCreate()}>+周期事件</button></section>
 
         {notice && <div className={'notice ' + notice.type} role="status">{notice.type === 'success' ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}<span>{notice.message}</span><button onClick={() => setNotice(null)} aria-label="关闭提示"><X size={15} /></button></div>}
 
@@ -324,9 +318,9 @@ export function ReminderPage() {
           <div className="stat-card"><div className="stat-icon red"><AlertTriangle size={18} /></div><div><span>需要补登记</span><strong>{stats.expired}</strong></div></div>
         </section>
 
-        <section className="reminder-toolbar"><div><h2>我的提醒</h2><span>已发送的提醒会自动记录，不会重复发送。</span></div><div className="toolbar-actions"><div className="filter-pills">{([['all', '全部'], ['credit_card', '信用卡'], ['sim', 'SIM 卡'], ['generic', '生活事务'], ['expired', '逾期']] as [Filter, string][]).map(([value, label]) => <button key={value} className={filter === value ? 'filter-pill active' : 'filter-pill'} onClick={() => setFilter(value)}>{label}</button>)}</div><button className="secondary-button" onClick={sendTestEmail}><Mail size={15} /> 测试邮件</button></div></section>
+        <section className="reminder-toolbar"><div><h2>我的提醒</h2><span>已发送的提醒会自动记录，不会重复发送。</span></div><div className="toolbar-actions"><button className="secondary-button" onClick={sendTestEmail}><Mail size={15} /> 测试邮件</button></div></section>
 
-        {loading ? <div className="empty-panel"><div className="loading-dot" /><span>正在加载提醒...</span></div> : visibleTasks.length === 0 ? <div className="empty-panel"><div className="empty-icon"><BellRing size={23} /></div><h3>{filter === 'all' ? '还没有周期提醒' : '没有符合条件的任务'}</h3><p>{filter === 'all' ? '先创建一张信用卡或一张 SIM 卡，日历会自动帮你安排提醒。' : '换一个筛选条件，或者新建一条提醒。'}</p>{filter === 'all' && <button className="primary-button" onClick={() => openCreate()}><Plus size={17} /> 新建第一条提醒</button>}</div> : (
+        {loading ? <div className="empty-panel"><div className="loading-dot" /><span>正在加载提醒...</span></div> : visibleTasks.length === 0 ? <div className="empty-panel"><div className="empty-icon"><BellRing size={23} /></div><h3>还没有周期提醒</h3><p>先创建一张信用卡或一张 SIM 卡，日历会自动帮你安排提醒。</p><button className="primary-button" onClick={() => openCreate()}><Plus size={17} /> 新建第一条提醒</button></div> : (
           <section className="task-grid">{visibleTasks.map(task => {
             const cycle = task.currentCycle;
             const status = statusLabel(cycle?.status);

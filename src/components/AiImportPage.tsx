@@ -1,4 +1,4 @@
-import { ChangeEvent, useCallback, useEffect, useState } from 'react';
+import { ChangeEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, FileImage, Mail, RefreshCw, Sparkles, Trash2, WandSparkles } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 
@@ -37,6 +37,8 @@ export function AiImportPage() {
   const [pendingImports, setPendingImports] = useState<ImportRecord[]>([]);
   const [imapConfigured, setImapConfigured] = useState(false);
   const [checkingEmail, setCheckingEmail] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const helpRef = useRef<HTMLDivElement>(null);
 
   const loadPendingImports = useCallback(() => {
     return fetch('/api/ai/imports?status=draft', { headers: authHeaders() })
@@ -52,6 +54,15 @@ export function AiImportPage() {
     }).catch(() => undefined);
     loadPendingImports();
   }, [authHeaders, loadPendingImports]);
+
+  useEffect(() => {
+    if (!showHelp) return;
+    const closeHelp = (event: PointerEvent) => {
+      if (!helpRef.current?.contains(event.target as Node)) setShowHelp(false);
+    };
+    document.addEventListener('pointerdown', closeHelp);
+    return () => document.removeEventListener('pointerdown', closeHelp);
+  }, [showHelp]);
 
   const chooseImages = (event: ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(event.target.files || []).filter(file => ['image/jpeg', 'image/png', 'image/webp'].includes(file.type)).slice(0, 3);
@@ -127,7 +138,7 @@ export function AiImportPage() {
   const lowConfidence = (field: string) => (draft?.confidence?.[field] ?? 0) < .7;
 
   return <div className="ai-import-page">
-    <header className="ai-import-header"><div><div className="eyebrow">AI INBOX</div><h1>智能导入</h1><p>从自然语言或截图提取日期和周期；确认前不会写入正式日历。</p></div><WandSparkles size={34} /></header>
+    <header className="ai-import-header"><div><div className="eyebrow">AI INBOX</div><div className="ai-import-title-row"><h1>智能导入</h1><div ref={helpRef} className="ai-import-help" onMouseEnter={() => setShowHelp(true)} onMouseLeave={() => setShowHelp(false)}><button type="button" className="ai-import-help-button" aria-label="查看智能导入说明" aria-expanded={showHelp} onClick={event => { event.stopPropagation(); setShowHelp(true); }} onFocus={() => setShowHelp(true)}>?</button>{showHelp && <div className="ai-import-help-popover" role="tooltip">支持从自然语言、账单截图或转发邮件中提取日期、金额和周期，生成可修改的待确认草稿；确认前不会写入正式日历，邮箱导入也不会自动创建事项。</div>}</div></div></div><WandSparkles size={34} /></header>
     {notice && <div className={'notice ' + notice.type}>{notice.type === 'success' ? <CheckCircle2 size={17} /> : <AlertTriangle size={17} />}{notice.message}</div>}
     <div className="ai-import-layout">
       <section className="ai-import-card">

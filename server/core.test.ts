@@ -267,6 +267,7 @@ test('无日期待办只出现在行动中心的挂起区域', () => {
     all_day: false, is_unscheduled: true, location: undefined, notes: '想到时再处理', category: 'other', priority: 'medium', is_completed: false,
     is_repeated: false, repeat_rule: undefined, reminders: [], is_high_risk: false,
   });
+  assert.equal(suspended.end_time, suspended.start_time);
   const center = actionCenter.getActionCenter(userId, 7);
   assert.ok(center.unscheduled.some(item => item.sourceId === suspended.id));
   assert.equal(center.today.some(item => item.sourceId === suspended.id), false);
