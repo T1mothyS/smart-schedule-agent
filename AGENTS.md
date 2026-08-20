@@ -555,6 +555,15 @@ Git 历史显示项目已经经历了基础架构、日历工作区、AI 客户�
 - 未验证内容：当前本地账号没有当天已完成事项和正在发生的冲突样例，因此未在真实浏览器数据上点击验证“设为未完成”和冲突提醒小叉；生产服务器、真实多设备展示和部署结果尚未验证。
 - Git/部署状态：本次修改已建立本地 checkpoint `46b7ec7 fix: refine action center and reminder dates`，未推送、未部署；保留生产预构建发布路径，不执行服务器端安装或构建。
 
+### 2026-08-20：行动中心修订版部署上线
+
+- 用户意图：将上一项行动中心、冲突提醒和信用卡周期日期修订部署到生产环境。
+- 实际部署：基于提交 `948d3e93bb16c6eff8f4f9a691882217ed5e80f8` 在本地完成 `typecheck`、28 项测试和完整构建；生成预构建发布包 `workspace-20260820122049`，服务器未执行 `npm ci`、测试或构建。发布包共 115 个条目，排除项检查为 0，SHA256 为 `9a421f846facfcae61b59a48060cf3f15fa94a99388b40a5c19e30d664f23431`。
+- 备份与回滚：部署前备份为 `/root/deploy-backups/smart-schedule-data-env-before-workspace-20260820122049.tar.gz`；旧版本保留在 `/root/smart-schedule-agent.rollback-workspace-20260820122049`，新版本 `.deploy` 已记录提交、发布包哈希、备份和回滚目录。
+- 验证结果：服务器 PM2 为 `online`；本机和公网 `/api/health` 均返回 `{"status":"ok"}`；公网今日页面和导航静态资源均返回 HTTP 200。
+- 异常记录：原子切换主流程已显示 `DEPLOY_SUCCESS`；PowerShell 通过 SSH 管道传入的 CRLF 使远程脚本退出时附带 127，但发生在成功健康检查和 PM2 状态输出之后，独立复核确认服务已正常上线。
+- Git/部署状态：当前分支 `refactor/calendar-workspace-v2` 仍领先 origin 5 个提交，未推送；生产已通过本地预构建制品上线，未执行服务器端依赖安装或构建。
+
 ## 13. 参考文件
 
 - README.md：当前能力、配置、目录、常见问题和资源边界；
