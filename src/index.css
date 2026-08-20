@@ -981,6 +981,14 @@ t-chat-sender::part(send-btn):disabled,
 .proof-files { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .proof-files button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border: 1px solid var(--td-component-stroke); border-radius: 8px; background: var(--td-bg-color-container); color: var(--td-brand-color); font-size: 12px; cursor: pointer; }
 .action-row.completed { color: #10b981; opacity: .76; }
+.action-row.completed.editable { cursor: pointer; }
+.action-row.completed.editable:focus-visible { outline: 2px solid var(--td-brand-color); outline-offset: -2px; }
+.action-row.completed > svg { flex: 0 0 auto; }
+.completed-row-actions { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+.completed-detail-button { min-height: 32px; padding: 0 10px; }
+.completed-reopen-button { white-space: nowrap; }
+.action-detail-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 15px 0 4px; color: var(--td-text-color-secondary); font-size: 12px; }
+.action-detail-note { margin: 10px 0 0; padding: 10px 12px; border-radius: 10px; color: var(--td-text-color-secondary); background: var(--td-bg-color-component); font-size: 13px; line-height: 1.6; }
 .attachment-picker { position: relative; padding: 12px; border: 1px dashed var(--td-component-stroke); border-radius: 12px; cursor: pointer; }
 .attachment-picker input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .attachment-picker small { display: block; margin-top: 5px; word-break: break-all; }
@@ -1059,7 +1067,11 @@ t-chat-sender::part(send-btn):disabled,
   .action-row { align-items: flex-start; flex-wrap: wrap; padding: 14px; }
   .action-row .complete-button { margin-left: 21px; }
   .suspended-todo-head { align-items: flex-start; padding-inline: 14px; }
-  .suspended-todo-row .suspended-todo-actions { width: 100%; margin-left: 21px; }
+  .suspended-todo-row { flex-wrap: nowrap; align-items: center; padding-inline: 14px; }
+  .suspended-todo-row .suspended-todo-actions { width: auto; margin-left: auto; }
+  .suspended-todo-row .complete-button { margin-left: 0; }
+  .completed-row-actions { flex-direction: column; align-items: stretch; }
+  .completed-detail-button, .completed-reopen-button { min-height: 30px; padding-inline: 8px; }
   .suspended-todo-empty { padding-inline: 14px; }
   .template-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ai-import-page { padding: 20px 14px 46px; }
@@ -1371,6 +1383,10 @@ t-chat-sender::part(send-btn):disabled,
 .calendar-rail-trigger { color: var(--td-text-color-secondary); }
 .calendar-v2-root .calendar-toolbar-date { font-size: 16px; font-weight: 760; white-space: nowrap; }
 .calendar-toolbar-meta { max-width: 170px; overflow: hidden; padding-left: 2px; color: var(--td-text-color-secondary); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-conflict-banner { min-width: 0; }
+.calendar-conflict-banner > span:nth-of-type(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calendar-conflict-dismiss { display: grid; place-items: center; flex: 0 0 auto; width: 26px; height: 26px; margin-left: auto; border: 0; border-radius: 7px; color: #b91c1c; background: transparent; cursor: pointer; }
+.calendar-conflict-dismiss:hover { background: rgba(220, 38, 38, .1); }
 .calendar-view-switch { padding: 3px; gap: 2px; border: 0 !important; border-radius: 10px !important; background: var(--td-bg-color-component); }
 .calendar-view-switch button { min-width: 52px; justify-content: center; border-radius: 7px; }
 .calendar-v2-root [data-schedule-id] { outline: 0; }

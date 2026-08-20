@@ -55,6 +55,12 @@ function dateInTimezone(value: string, timezone: string): string {
   return `${part('year')}-${part('month')}-${part('day')}`;
 }
 
+function scheduleDateInTimezone(value: string, timezone: string): string {
+  // 日程表单保存的是不带时区的本地日历时间，不能让 Node 服务器时区再次把它跨日转换。
+  // AI 或导入数据若带 Z/偏移量，则按用户时区换算真实日期。
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? dateInTimezone(value, timezone) : dateOnly(value);
+}
+
 function endOfWindow(today: string, days: number): string {
   return reminderStore.addDays(today, days);
 }
@@ -108,7 +114,7 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
   for (const schedule of scheduleStore.getAllSchedules(userId)) {
     // 周期事务会生成日历全天待办；行动中心仍使用周期事务本体，避免重复两条。
     if (schedule.id.startsWith('reminder-cycle:')) continue;
-    const dueDate = dateOnly(schedule.start_time);
+    const dueDate = scheduleDateInTimezone(schedule.start_time, timezone);
     const completion = latestCompletion.get(`schedule:${schedule.id}:`);
     const completed = schedule.is_completed || !!completion;
     const isUnscheduled = schedule.is_unscheduled === true;
@@ -209,7 +215,7 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
   const todayItems = sortItems(items.filter(item => item.status === 'today'));
   const unscheduled = sortItems(unscheduledItems);
   const tomorrowDate = endOfWindow(today, 1);
-  const tomorrow = sortItems(items.filter(item => item.status === 'upcoming' && dateOnly(item.dueAt) === tomorrowDate));
+  const tomorrow = sortItems(items.filter(item => item.status === 'upcoming' && scheduleDateInTimezone(item.dueAt, timezone) === tomorrowDate));
   const upcoming = sortItems(items.filter(item => item.status === 'upcoming'));
   const overdue = sortItems(items.filter(item => item.status === 'overdue'));
   const completedToday = items.filter(item => item.status === 'completed').sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));

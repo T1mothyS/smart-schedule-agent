@@ -1,7 +1,7 @@
 import { KeyboardEvent, useCallback, useEffect, useState } from 'react';
 import { CalendarClock, CheckCircle2, ChevronDown, Mail, Paperclip, RefreshCw, Trash2, X } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
-import { Schedule, ScheduleFormModal } from './CalendarView';
+import { Schedule, ScheduleDetailModal, ScheduleFormModal } from './CalendarView';
 
 interface ActionItem {
   id: string;
@@ -15,6 +15,7 @@ interface ActionItem {
   priority: 'high' | 'medium' | 'low';
   nextAction: string;
   itemType: 'event' | 'todo' | 'recurring';
+  completedAt: string | null;
   completionId: string | null;
   proof: {
     note: string | null;
@@ -143,7 +144,10 @@ export function ActionCenterPage() {
   const [days, setDays] = useState(7);
   const [loading, setLoading] = useState(true);
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
+  const [detailSchedule, setDetailSchedule] = useState<Schedule | null>(null);
+  const [completedDetail, setCompletedDetail] = useState<ActionItem | null>(null);
   const [completingId, setCompletingId] = useState<string | null>(null);
+  const [reopeningId, setReopeningId] = useState<string | null>(null);
   const [deletingSuspendedId, setDeletingSuspendedId] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
   const [showSendDialog, setShowSendDialog] = useState(false);
@@ -247,6 +251,73 @@ export function ActionCenterPage() {
     }
   };
 
+  const openCompletedDetails = async (item: ActionItem) => {
+    if (item.sourceType !== 'schedule') {
+      setCompletedDetail(item);
+      return;
+    }
+    try {
+      const response = await fetch('/api/schedules/' + item.sourceId, { headers: authHeaders() });
+      const result = await response.json();
+      if (!response.ok || !result.schedule) throw new Error(result.error || '读取日程详情失败');
+      setDetailSchedule(result.schedule as Schedule);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '读取日程详情失败');
+    }
+  };
+
+  const reopenCompleted = async (item: ActionItem) => {
+    if (reopeningId) return;
+    setReopeningId(item.id);
+    try {
+      const response = item.completionId
+        ? await fetch('/api/completions/' + item.completionId + '/reopen', {
+          method: 'POST',
+          headers: authHeaders(),
+        })
+        : item.sourceType === 'schedule'
+        ? await fetch('/api/schedules/' + item.sourceId + '/toggle', {
+          method: 'POST',
+          headers: authHeaders(),
+        })
+        : null;
+      if (!response) throw new Error('当前完成记录无法恢复为未完成');
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '设为未完成失败');
+      setCompletedDetail(null);
+      setDetailSchedule(null);
+      await loadActions(false);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '设为未完成失败');
+    } finally {
+      setReopeningId(null);
+    }
+  };
+
+  const deleteScheduleFromDetails = async (id: string) => {
+    try {
+      const response = await fetch('/api/schedules/' + id, { method: 'DELETE', headers: authHeaders() });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '删除日程失败');
+      setDetailSchedule(null);
+      await loadActions(false);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '删除日程失败');
+    }
+  };
+
+  const toggleScheduleFromDetails = async (id: string) => {
+    try {
+      const response = await fetch('/api/schedules/' + id + '/toggle', { method: 'POST', headers: authHeaders() });
+      const result = await response.json();
+      if (!response.ok || !result.schedule) throw new Error(result.error || '更新完成状态失败');
+      setDetailSchedule(null);
+      await loadActions(false);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '更新完成状态失败');
+    }
+  };
+
   const saveScheduleEdit = async (form: Partial<Schedule>) => {
     if (!editingSchedule) return;
     try {
@@ -293,10 +364,77 @@ export function ActionCenterPage() {
       <div className="action-section-head standalone"><div><h2>即将到期</h2></div><select value={days} onChange={event => setDays(Number(event.target.value))}><option value={3}>未来 3 天</option><option value={7}>未来 7 天</option><option value={14}>未来 14 天</option></select></div>
       <ActionList title="" hint="" items={data.upcoming} tone="warning" onComplete={complete} onEdit={openScheduleEditor} completingId={completingId} />
       <ActionList title="已经逾期" hint="逾期周期仍可手动完成，不会消失" items={data.overdue} tone="danger" onComplete={complete} onEdit={openScheduleEditor} completingId={completingId} />
-      <section className="completed-section"><button onClick={() => setShowCompleted(value => !value)}><CheckCircle2 size={17} /> 今天已完成 {data.completedToday.length} 项 <ChevronDown size={15} className={showCompleted ? 'rotated' : ''} /></button>{showCompleted && <div className="action-list">{data.completedToday.map(item => <div className="action-row completed" key={item.id}><CheckCircle2 size={16} /><div className="action-row-main"><div className="action-row-title">{item.title}</div><div className="action-row-meta">{item.nextAction && <span>{item.nextAction}</span>}{item.proof?.note && <span>备注：{item.proof.note}</span>}</div>{item.proof?.attachments.length ? <div className="proof-files">{item.proof.attachments.map(file => <button key={file.id} onClick={() => openAttachment(file)}><Paperclip size={13} />{file.originalName}</button>)}</div> : null}</div></div>)}</div>}</section>
+      <section className="completed-section">
+        <button type="button" onClick={() => setShowCompleted(value => !value)}>
+          <CheckCircle2 size={17} /> 今天已完成 {data.completedToday.length} 项 <ChevronDown size={15} className={showCompleted ? 'rotated' : ''} />
+        </button>
+        {showCompleted && <div className="action-list">
+          {data.completedToday.map(item => <article
+            className="action-row completed editable"
+            key={item.id}
+            onClick={() => openCompletedDetails(item)}
+            onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                openCompletedDetails(item);
+              }
+            }}
+            tabIndex={0}
+            role="button"
+            aria-label={`查看已完成事项：${item.title}`}
+          >
+            <CheckCircle2 size={16} />
+            <div className="action-row-main">
+              <div className="action-row-title">{item.title}</div>
+              <div className="action-row-meta">
+                <span>{item.itemType === 'recurring' ? '周期事务' : item.itemType === 'todo' ? '待办' : '日程'}</span>
+                <span>{formatDate(item.dueAt, item.allDay)}</span>
+                {item.completedAt && <span>完成于 {formatDate(item.completedAt)}</span>}
+                {item.nextAction && <span>{item.nextAction}</span>}
+                {item.proof?.note && <span>备注：{item.proof.note}</span>}
+              </div>
+              {item.proof?.attachments.length ? <div className="proof-files">{item.proof.attachments.map(file => <button key={file.id} onClick={event => { event.stopPropagation(); openAttachment(file); }}><Paperclip size={13} />{file.originalName}</button>)}</div> : null}
+            </div>
+            <div className="completed-row-actions">
+              <button type="button" className="secondary-button completed-detail-button" onClick={event => { event.stopPropagation(); openCompletedDetails(item); }}>详情</button>
+              <button type="button" className="complete-button completed-reopen-button" onClick={event => { event.stopPropagation(); reopenCompleted(item); }} disabled={reopeningId === item.id || (!item.completionId && item.sourceType !== 'schedule')}>
+                {reopeningId === item.id ? '处理中…' : '设为未完成'}
+              </button>
+            </div>
+          </article>)}
+        </div>}
+      </section>
     </>}
 
     {showSendDialog && <div className="modal-backdrop" onMouseDown={() => { if (!sendingEmail) setShowSendDialog(false); }}><div className="complete-modal send-schedule-modal" onMouseDown={event => event.stopPropagation()}><button className="icon-button modal-close" onClick={() => setShowSendDialog(false)} disabled={sendingEmail}><X size={16} /></button><div className="send-schedule-icon"><Mail size={23} /></div><h2>发送今天的日程？</h2><p>确认后会立即把今天的日程和今天的待办发送到你绑定的通知邮箱。</p><div className="modal-foot"><button className="secondary-button" onClick={() => setShowSendDialog(false)} disabled={sendingEmail}>取消</button><button className="primary-button" onClick={sendTodayEmail} disabled={sendingEmail}>{sendingEmail ? '发送中…' : '确认发送'}</button></div></div></div>}
+
+    {completedDetail && <div className="modal-backdrop" onMouseDown={() => setCompletedDetail(null)}>
+      <div className="complete-modal action-detail-modal" onMouseDown={event => event.stopPropagation()}>
+        <button type="button" className="icon-button modal-close" onClick={() => setCompletedDetail(null)} aria-label="关闭详情"><X size={16} /></button>
+        <div className="send-schedule-icon"><CheckCircle2 size={23} /></div>
+        <h2>{completedDetail.title}</h2>
+        <div className="action-detail-meta">
+          <span>{completedDetail.itemType === 'recurring' ? '周期事务' : completedDetail.itemType === 'todo' ? '待办' : '日程'}</span>
+          <span>计划时间：{formatDate(completedDetail.dueAt, completedDetail.allDay)}</span>
+          {completedDetail.completedAt && <span>完成时间：{formatDate(completedDetail.completedAt)}</span>}
+        </div>
+        {completedDetail.nextAction && <p className="action-detail-note">{completedDetail.nextAction}</p>}
+        {completedDetail.proof?.note && <p className="action-detail-note">备注：{completedDetail.proof.note}</p>}
+        {completedDetail.proof?.attachments.length ? <div className="proof-files">{completedDetail.proof.attachments.map(file => <button key={file.id} onClick={() => openAttachment(file)}><Paperclip size={13} />{file.originalName}</button>)}</div> : null}
+        <div className="modal-foot">
+          <button type="button" className="secondary-button" onClick={() => setCompletedDetail(null)}>关闭</button>
+          <button type="button" className="primary-button" onClick={() => reopenCompleted(completedDetail)} disabled={reopeningId === completedDetail.id}>{reopeningId === completedDetail.id ? '处理中…' : '设为未完成'}</button>
+        </div>
+      </div>
+    </div>}
+
+    {detailSchedule && <ScheduleDetailModal
+      schedule={detailSchedule}
+      onClose={() => setDetailSchedule(null)}
+      onDelete={deleteScheduleFromDetails}
+      onToggle={toggleScheduleFromDetails}
+      onEdit={schedule => { setDetailSchedule(null); setEditingSchedule(schedule); }}
+    />}
 
     {editingSchedule && <ScheduleFormModal
       defaultDate={new Date(editingSchedule.start_time)}

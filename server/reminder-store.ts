@@ -149,6 +149,13 @@ function monthDate(year: number, monthIndex: number, day: number): string {
   return dateFromParts(year, monthIndex + 1, Math.min(Math.max(day, 1), lastDay));
 }
 
+function creditCardCycleDates(year: number, monthIndex: number, config: CreditCardConfig): { periodStart: string; dueDate: string } {
+  const periodStart = monthDate(year, monthIndex, config.statementDay);
+  const dueMonth = monthIndex + config.paymentMonthOffset;
+  const dueDate = monthDate(year + Math.floor(dueMonth / 12), dueMonth % 12, config.paymentDay);
+  return { periodStart, dueDate };
+}
+
 export function clampDateForMonth(year: number, month: number, day: number): string {
   return monthDate(year, month - 1, day);
 }
@@ -429,6 +436,21 @@ function refreshOpenCycleDeliveries(task: ReminderTask, cycle: ReminderCycle): v
   for (const item of cycleReminderDates(task, cycle)) createDelivery(task, cycle, item.type, item.date);
 }
 
+function resetOpenCreditCardCycle(task: ReminderTask, cycle: ReminderCycle, config: CreditCardConfig): ReminderCycle {
+  const [year, month] = cycle.periodStart.split('-').map(Number);
+  const dates = creditCardCycleDates(year, month - 1, config);
+  const status: ReminderCycleStatus = dates.dueDate < todayInTimezone(task.timezone) ? 'expired' : 'pending';
+  const updatedAt = nowIso();
+  run('DELETE FROM reminder_deliveries WHERE cycle_id = ?', [cycle.id]);
+  run(
+    'UPDATE reminder_cycles SET period_start = ?, due_date = ?, status = ?, updated_at = ? WHERE id = ?',
+    [dates.periodStart, dates.dueDate, status, updatedAt, cycle.id],
+  );
+  const updated = { ...cycle, periodStart: dates.periodStart, dueDate: dates.dueDate, status, updatedAt };
+  for (const item of cycleReminderDates(task, updated)) createDelivery(task, updated, item.type, item.date);
+  return updated;
+}
+
 function ensureCurrentCycle(task: ReminderTask, today = todayInTimezone(task.timezone)): ReminderCycle {
   const latest = queryOne<any>(
     `SELECT * FROM reminder_cycles WHERE task_id = ? ORDER BY created_at DESC LIMIT 1`,
@@ -468,10 +490,8 @@ function ensureCurrentCycle(task: ReminderTask, today = todayInTimezone(task.tim
 
   const card = task.config as CreditCardConfig;
   const [year, month] = today.split('-').map(Number);
-  const periodStart = monthDate(year, month - 1, card.statementDay);
-  const dueMonth = month - 1 + card.paymentMonthOffset;
-  const dueDate = monthDate(year + Math.floor(dueMonth / 12), dueMonth % 12, card.paymentDay);
-  return createCycle(task, `${year}-${String(month).padStart(2, '0')}`, periodStart, dueDate);
+  const dates = creditCardCycleDates(year, month - 1, card);
+  return createCycle(task, `${year}-${String(month).padStart(2, '0')}`, dates.periodStart, dates.dueDate);
 }
 
 export function listReminderTasks(userId: string): ReminderTaskSummary[] {
@@ -570,6 +590,8 @@ export function updateReminderTask(
         } else {
           refreshOpenCycleDeliveries(next, cycle);
         }
+      } else if (next.type === 'credit_card' && (cycle.status === 'pending' || cycle.status === 'expired')) {
+        resetOpenCreditCardCycle(next, cycle, next.config as CreditCardConfig);
       } else if (cycle.status === 'pending' || cycle.status === 'expired') {
         refreshOpenCycleDeliveries(next, cycle);
       }

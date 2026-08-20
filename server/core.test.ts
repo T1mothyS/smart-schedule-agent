@@ -100,6 +100,37 @@ test('编辑 SIM 卡提前天数会重建当前周期的待发送提醒', () => 
   assert.notEqual(updated?.nextReminderDate, firstNextDate);
 });
 
+test('编辑信用卡日期会同步当前周期的账单日和还款日', () => {
+  const task = reminders.createReminderTask({
+    userId,
+    type: 'credit_card',
+    name: '信用卡日期编辑测试',
+    config: {
+      statementDay: 22,
+      paymentDay: 20,
+      paymentMonthOffset: 1,
+      reminderOffsets: [7, 1, 0],
+      reminderTime: '09:00',
+      priority: 'high',
+    },
+  });
+  const originalPeriodStart = task.currentCycle!.periodStart;
+  const periodMonth = originalPeriodStart.slice(0, 7);
+  const [year, month] = periodMonth.split('-').map(Number);
+  const updated = reminders.updateReminderTask(task.id, userId, {
+    config: {
+      ...(task.config as reminders.CreditCardConfig),
+      statementDay: 5,
+      paymentDay: 28,
+      paymentMonthOffset: 0,
+    },
+  });
+
+  assert.equal(updated?.currentCycle?.periodStart, `${periodMonth}-05`);
+  assert.equal(updated?.currentCycle?.dueDate, `${year}-${String(month).padStart(2, '0')}-28`);
+  assert.notEqual(updated?.currentCycle?.periodStart, originalPeriodStart);
+});
+
 test('邮件测试时间按 GMT+8 输出', () => {
   assert.equal(
     email.formatDateTimeInTimezone(new Date('2026-07-15T15:11:00.000Z'), 'Asia/Shanghai'),
@@ -257,6 +288,28 @@ test('行动中心聚合待办并记录完成证明', () => {
   assert.equal(activity.getAttachment(file.id, 'other-user'), null);
   const updated = activity.updateCompletion(completion.id, userId, { note: '更新后的证明，金额 123.45 元' });
   assert.equal(updated?.note, '更新后的证明，金额 123.45 元');
+});
+
+test('行动中心显示未完成的历史待办，并按用户时区识别带偏移量的今天', () => {
+  const today = reminders.todayInTimezone();
+  const overdue = schedules.createSchedule({
+    id: 'schedule-overdue-action-center', user_id: userId, calendar_id: 'personal', type: 'todo', title: '历史逾期待办',
+    description: undefined, start_time: reminders.addDays(today, -2) + 'T09:00:00', end_time: undefined,
+    all_day: false, location: undefined, notes: undefined, category: 'other', priority: 'high', is_completed: false,
+    is_repeated: false, repeat_rule: undefined, reminders: [], is_high_risk: false,
+  });
+  const todayWithOffset = new Date(`${today}T00:30:00+08:00`).toISOString();
+  const todaySchedule = schedules.createSchedule({
+    id: 'schedule-today-offset-action-center', user_id: userId, calendar_id: 'personal', type: 'todo', title: '带偏移量的今天待办',
+    description: undefined, start_time: todayWithOffset, end_time: undefined,
+    all_day: false, location: undefined, notes: undefined, category: 'other', priority: 'medium', is_completed: false,
+    is_repeated: false, repeat_rule: undefined, reminders: [], is_high_risk: false,
+  });
+
+  const center = actionCenter.getActionCenter(userId, 7);
+  assert.ok(center.overdue.some(item => item.sourceId === overdue.id));
+  assert.ok(center.today.some(item => item.sourceId === todaySchedule.id));
+  assert.equal(center.overdue.some(item => item.sourceId === todaySchedule.id), false);
 });
 
 test('无日期待办只出现在行动中心的挂起区域', () => {
