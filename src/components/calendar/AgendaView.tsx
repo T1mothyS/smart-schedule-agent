@@ -3,6 +3,7 @@ import { CalendarDays, CheckCircle2, Circle, Clock3, MapPin } from 'lucide-react
 import type { Schedule } from '../CalendarView';
 import { addCalendarDays, getCalendarDayMeta, toLocalDateKey } from './calendarMeta';
 import { getScheduleCategory } from '../../utils/scheduleCategories';
+import { parseScheduleDate } from '../../utils/scheduleConflict';
 
 interface AgendaViewProps {
   schedules: Schedule[];
@@ -13,6 +14,7 @@ interface AgendaViewProps {
   onOpenSchedule: (schedule: Schedule) => void;
   onToggleSchedule: (id: string) => void;
   onOpenContextMenu: (schedule: Schedule, x: number, y: number) => void;
+  conflictingIds?: Set<string>;
 }
 
 function startOfLocalDay(date: Date): Date {
@@ -22,10 +24,7 @@ function startOfLocalDay(date: Date): Date {
 }
 
 function parseLocal(value: string): Date {
-  const [datePart, timePart = '00:00:00'] = value.split('T');
-  const [year, month, day] = datePart.split('-').map(Number);
-  const [hour, minute, second] = timePart.split(':').map(Number);
-  return new Date(year, month - 1, day, hour || 0, minute || 0, second || 0);
+  return parseScheduleDate(value);
 }
 
 function formatTime(schedule: Schedule): string {
@@ -45,6 +44,7 @@ export function AgendaView({
   onOpenSchedule,
   onToggleSchedule,
   onOpenContextMenu,
+  conflictingIds,
 }: AgendaViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const selectedKey = toLocalDateKey(selectedDate);
@@ -122,6 +122,7 @@ export function AgendaView({
               {group.schedules.map(schedule => {
                 const category = getScheduleCategory(schedule.category);
                 const color = category.color;
+                const isConflicting = conflictingIds?.has(schedule.id) === true;
                 return (
                   <article
                     key={schedule.id}
@@ -155,6 +156,15 @@ export function AgendaView({
                     >
                       {schedule.is_completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
                     </button>
+                    {isConflicting && (
+                      <span
+                        title="时间冲突"
+                        aria-label="时间冲突"
+                        style={{ backgroundColor: '#EF4444', color: '#fff', borderRadius: '999px', width: 16, height: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, flexShrink: 0 }}
+                      >
+                        !
+                      </span>
+                    )}
                     <div className="agenda-schedule-time">
                       <Clock3 size={14} />
                       <span>{formatTime(schedule)}</span>

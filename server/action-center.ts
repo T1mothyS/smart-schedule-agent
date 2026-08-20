@@ -115,14 +115,16 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
     // 周期事务会生成日历全天待办；行动中心仍使用周期事务本体，避免重复两条。
     if (schedule.id.startsWith('reminder-cycle:')) continue;
     const dueDate = scheduleDateInTimezone(schedule.start_time, timezone);
-    const completion = latestCompletion.get(`schedule:${schedule.id}:`);
-    const completed = schedule.is_completed || !!completion;
+    // 日历项的当前完成状态以 schedule.is_completed 为准。
+    // 旧版本可能留下未同步的 completion 记录；不能让这类脏记录把未完成日程从逾期栏吞掉。
+    const completion = schedule.is_completed ? latestCompletion.get(`schedule:${schedule.id}:`) : null;
+    const completed = schedule.is_completed;
     const isUnscheduled = schedule.is_unscheduled === true;
     let status: ActionItemStatus | null = null;
     if (completed && dateInTimezone(completion?.completedAt || schedule.updated_at, timezone) === today) status = 'completed';
     else if (completed) continue;
     else if (isUnscheduled) status = 'today';
-    else if (schedule.type === 'todo' && dueDate < today) status = 'overdue';
+    else if (dueDate < today) status = 'overdue';
     else if (dueDate === today) status = 'today';
     else if (dueDate > today && dueDate <= windowEnd) status = 'upcoming';
     if (!status) continue;

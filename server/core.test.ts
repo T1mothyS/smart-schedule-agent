@@ -298,6 +298,19 @@ test('行动中心显示未完成的历史待办，并按用户时区识别带�
     all_day: false, location: undefined, notes: undefined, category: 'other', priority: 'high', is_completed: false,
     is_repeated: false, repeat_rule: undefined, reminders: [], is_high_risk: false,
   });
+  const overdueEvent = schedules.createSchedule({
+    id: 'schedule-overdue-event-action-center', user_id: userId, calendar_id: 'personal', type: 'event', title: '历史逾期日程',
+    description: undefined, start_time: reminders.addDays(today, -2) + 'T10:00:00', end_time: reminders.addDays(today, -2) + 'T11:00:00',
+    all_day: false, location: undefined, notes: undefined, category: 'work', priority: 'medium', is_completed: false,
+    is_repeated: false, repeat_rule: undefined, reminders: [], is_high_risk: false,
+  });
+  const staleCompletionEvent = schedules.createSchedule({
+    id: 'schedule-stale-completion-event-action-center', user_id: userId, calendar_id: 'personal', type: 'event', title: '带历史完成脏记录的逾期日程',
+    description: undefined, start_time: reminders.addDays(today, -3) + 'T12:00:00', end_time: reminders.addDays(today, -3) + 'T13:00:00',
+    all_day: false, location: undefined, notes: undefined, category: 'work', priority: 'medium', is_completed: false,
+    is_repeated: false, repeat_rule: undefined, reminders: [], is_high_risk: false,
+  });
+  activity.createCompletion({ userId, sourceType: 'schedule', sourceId: staleCompletionEvent.id, note: '遗留完成记录' });
   const todayWithOffset = new Date(`${today}T00:30:00+08:00`).toISOString();
   const todaySchedule = schedules.createSchedule({
     id: 'schedule-today-offset-action-center', user_id: userId, calendar_id: 'personal', type: 'todo', title: '带偏移量的今天待办',
@@ -308,6 +321,9 @@ test('行动中心显示未完成的历史待办，并按用户时区识别带�
 
   const center = actionCenter.getActionCenter(userId, 7);
   assert.ok(center.overdue.some(item => item.sourceId === overdue.id));
+  assert.ok(center.overdue.some(item => item.sourceId === overdueEvent.id));
+  assert.ok(center.overdue.some(item => item.sourceId === staleCompletionEvent.id));
+  assert.equal(center.overdue.find(item => item.sourceId === staleCompletionEvent.id)?.completionId, null);
   assert.ok(center.today.some(item => item.sourceId === todaySchedule.id));
   assert.equal(center.overdue.some(item => item.sourceId === todaySchedule.id), false);
 });

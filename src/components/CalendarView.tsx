@@ -12,6 +12,18 @@ import { AgendaView } from './calendar/AgendaView';
 import { ScheduleContextMenu } from './calendar/ScheduleContextMenu';
 import { getCalendarDayMeta } from './calendar/calendarMeta';
 import { getScheduleCategory, SCHEDULE_CATEGORIES, SCHEDULE_CATEGORY_COLORS, SCHEDULE_CATEGORY_LABELS } from '../utils/scheduleCategories';
+import {
+  buildConflictKey,
+  CONFLICT_DISMISS_TTL_MS,
+  getConflictExpiryAt,
+  getConflictPairs,
+  getConflictingScheduleIds,
+  groupConflictingSchedulesByTimeSlot,
+  isConflictDismissed,
+  isTimedConflictSchedule,
+  parseScheduleDate,
+  type ConflictDismissal,
+} from '../utils/scheduleConflict';
 
 // ==================== 类型定义 ====================
 
@@ -61,6 +73,7 @@ const PRIORITY_COLORS_DARK: Record<string, { bg: string; border: string; dot: st
 const WEEK_DAYS = ['一', '二', '三', '四', '五', '六', '日'];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const WEEKDAY_LABELS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+const CONFLICT_DISMISS_STORAGE_KEY = 'calendar-conflict-dismissal-v1';
 
 // ==================== 工具函数 ====================
 
@@ -102,13 +115,7 @@ function startOfDay(date: Date): Date {
 
 // 解析日期字符串为本地时区的 Date 对象
 function parseLocalDate(dateStr: string): Date {
-  const [datePart, timePart] = dateStr.split('T');
-  const [year, month, day] = datePart.split('-').map(Number);
-  if (timePart) {
-    const [hour, minute, second] = timePart.split(':').map(Number);
-    return new Date(year, month - 1, day, hour || 0, minute || 0, second || 0);
-  }
-  return new Date(year, month - 1, day);
+  return parseScheduleDate(dateStr);
 }
 
 function getWeekStart(date: Date): Date {
@@ -161,94 +168,6 @@ function getDurationMinutes(s: Schedule): number {
 function getScheduleColor(schedule: Schedule): string {
   const pColors = PRIORITY_COLORS[schedule.priority] || PRIORITY_COLORS.medium;
   return pColors.dot;
-}
-
-// ==================== 冲突检测工具函数 ====================
-
-// 检测日程之间的冲突（两个日程时间重叠）
-function checkScheduleConflict(a: Schedule, b: Schedule): boolean {
-  // 跳过全天事件
-  if (a.all_day || b.all_day) return false;
-  const aStart = parseLocalDate(a.start_time).getTime();
-  const aEnd = a.end_time ? parseLocalDate(a.end_time).getTime() : aStart + 3600000;
-  const bStart = parseLocalDate(b.start_time).getTime();
-  const bEnd = b.end_time ? parseLocalDate(b.end_time).getTime() : bStart + 3600000;
-  // 冲突：a开始 < b结束 且 a结束 > b开始
-  return aStart < bEnd && aEnd > bStart;
-}
-
-function isVisibleScheduleConflict(a: Schedule, b: Schedule, nowMs = Date.now()): boolean {
-  if (!checkScheduleConflict(a, b)) return false;
-  const aStart = parseLocalDate(a.start_time).getTime();
-  const aEnd = a.end_time ? parseLocalDate(a.end_time).getTime() : aStart + 3600000;
-  const bStart = parseLocalDate(b.start_time).getTime();
-  const bEnd = b.end_time ? parseLocalDate(b.end_time).getTime() : bStart + 3600000;
-  // 冲突提醒只保留到重叠时段结束；历史日程不再持续显示红色冲突提示。
-  return Math.min(aEnd, bEnd) > nowMs;
-}
-
-// 获取一天的冲突日程组（返回冲突日程ID集合）
-// includeTodos: 是否包括待办任务（用于排版，但不提示冲突）
-function getConflictingScheduleIds(schedules: Schedule[], includeTodos = false, nowMs = Date.now()): Set<string> {
-  const conflictingIds = new Set<string>();
-  // 所有非全天日程都参与冲突检测（包括已完成）
-  const filter = includeTodos
-    ? (s: Schedule) => !s.all_day
-    : (s: Schedule) => !s.all_day && s.type === 'event';
-  const activeSchedules = schedules.filter(filter);
-  
-  for (let i = 0; i < activeSchedules.length; i++) {
-    for (let j = i + 1; j < activeSchedules.length; j++) {
-      if (isVisibleScheduleConflict(activeSchedules[i], activeSchedules[j], nowMs)) {
-        conflictingIds.add(activeSchedules[i].id);
-        conflictingIds.add(activeSchedules[j].id);
-      }
-    }
-  }
-  return conflictingIds;
-}
-
-// 按时间段分组冲突日程（用于从左到右排列）
-// includeTodos: 是否包括待办任务（用于排版，但不提示冲突）
-function groupConflictingSchedulesByTimeSlot(schedules: Schedule[], includeTodos = false, nowMs = Date.now()): Map<string, Schedule[]> {
-  const conflictMap = new Map<string, Schedule[]>();
-  // 所有非全天日程都参与冲突检测（包括已完成）
-  const filter = includeTodos
-    ? (s: Schedule) => !s.all_day
-    : (s: Schedule) => !s.all_day && s.type === 'event';
-  const activeSchedules = schedules.filter(filter);
-  
-  // 检测所有冲突对
-  const conflictPairs: [Schedule, Schedule][] = [];
-  for (let i = 0; i < activeSchedules.length; i++) {
-    for (let j = i + 1; j < activeSchedules.length; j++) {
-      if (isVisibleScheduleConflict(activeSchedules[i], activeSchedules[j], nowMs)) {
-        conflictPairs.push([activeSchedules[i], activeSchedules[j]]);
-      }
-    }
-  }
-  
-  // 按开始时间排序
-  conflictPairs.sort((a, b) => new Date(a[0].start_time).getTime() - new Date(b[0].start_time).getTime());
-  
-  // 分组（同一时间段的冲突日程放一起）
-  const processedIds = new Set<string>();
-  conflictPairs.forEach(([a, b]) => {
-    const key = `${Math.floor(new Date(a.start_time).getTime() / 60000)}_${Math.floor(new Date(b.start_time).getTime() / 60000)}`;
-    if (!conflictMap.has(key)) {
-      conflictMap.set(key, []);
-    }
-    if (!processedIds.has(a.id)) {
-      conflictMap.get(key)!.push(a);
-      processedIds.add(a.id);
-    }
-    if (!processedIds.has(b.id)) {
-      conflictMap.get(key)!.push(b);
-      processedIds.add(b.id);
-    }
-  });
-  
-  return conflictMap;
 }
 
 // 获取日程在冲突组中的位置索引
@@ -1297,6 +1216,7 @@ function DayView({
                     {hourTodos.map(s => {
                       const pColor = PRIORITY_COLORS[s.priority] || PRIORITY_COLORS.medium;
                       const catColor = CATEGORY_COLORS[s.category] || '#6B7280';
+                      const isConflicting = conflictingIds?.has(s.id) === true;
                       
                       return (
                         <div
@@ -1307,13 +1227,16 @@ function DayView({
                           style={{
                             height: '44px',
                             backgroundColor: s.is_completed ? 'var(--td-bg-color-component)' : `${pColor.dot}15`,
-                            border: s.is_completed ? `1px solid var(--td-component-stroke)` : `1px dashed ${pColor.dot}50`,
-                            borderLeft: s.is_completed ? `3px solid #9CA3AF` : `3px dashed ${pColor.dot}`,
+                            border: isConflicting ? '1px solid #EF4444' : s.is_completed ? `1px solid var(--td-component-stroke)` : `1px dashed ${pColor.dot}50`,
+                            borderLeft: isConflicting ? '3px solid #EF4444' : s.is_completed ? `3px solid #9CA3AF` : `3px dashed ${pColor.dot}`,
                             opacity: s.is_completed ? 0.65 : 1,
                           }}
                           onClick={() => onClickSchedule(s)}
                         >
                           <div className="flex items-center gap-0.5">
+                            {isConflicting && (
+                              <span title="时间冲突" aria-label="时间冲突" className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full flex-shrink-0 text-white font-bold text-xs" style={{ backgroundColor: '#EF4444' }}>!</span>
+                            )}
                             <button
                               onClick={e => { e.stopPropagation(); onToggle(s.id); }}
                               className="opacity-60 hover:opacity-100 flex-shrink-0"
@@ -1634,6 +1557,9 @@ function WeekView({
                   }}
                   onClick={() => onClickSchedule(s)}
                 >
+                  {conflictingIds?.has(s.id) && (
+                    <span title="时间冲突" aria-label="时间冲突" className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full flex-shrink-0 text-white font-bold text-xs" style={{ backgroundColor: '#EF4444' }}>!</span>
+                  )}
                   <button
                     onClick={e => { e.stopPropagation(); onToggle(s.id); }}
                     className="flex-shrink-0"
@@ -1856,28 +1782,33 @@ function MonthView({
               {/* 有时间待办区域 */}
               {timedTodos.length > 0 && (
                 <div className="mb-1">
-                  {timedTodos.slice(0, 1).map(s => (
-                    <div
-                      key={s.id}
-                      data-schedule-id={s.id}
-                      tabIndex={0}
-                      className="rounded px-1 py-0.5 text-xs truncate cursor-pointer flex items-center gap-0.5"
-                      style={{
-                        backgroundColor: `${PRIORITY_COLORS[s.priority]?.dot || '#F59E0B'}15`,
-                        color: PRIORITY_COLORS[s.priority]?.dot || '#F59E0B',
-                      }}
-                      onClick={event => { event.stopPropagation(); onClickSchedule?.(s); }}
-                    >
-                      <button
-                        onClick={e => { e.stopPropagation(); onToggle?.(s.id); }}
-                        className="flex-shrink-0"
+                  {timedTodos.slice(0, 1).map(s => {
+                    const isConflicting = conflictingIds?.has(s.id) === true;
+                    return (
+                      <div
+                        key={s.id}
+                        data-schedule-id={s.id}
+                        tabIndex={0}
+                        className="rounded px-1 py-0.5 text-xs truncate cursor-pointer flex items-center gap-0.5"
+                        style={{
+                          backgroundColor: `${PRIORITY_COLORS[s.priority]?.dot || '#F59E0B'}15`,
+                          color: PRIORITY_COLORS[s.priority]?.dot || '#F59E0B',
+                          border: isConflicting ? '1px solid #EF4444' : '1px solid transparent',
+                        }}
+                        onClick={event => { event.stopPropagation(); onClickSchedule?.(s); }}
                       >
-                        {s.is_completed ? <CheckCircle2 className="w-2.5 h-2.5" /> : <Circle className="w-2.5 h-2.5" />}
-                      </button>
-                      <span className="opacity-70 text-[10px]">{formatTime(s.start_time)}</span>
-                      <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
-                    </div>
-                  ))}
+                        {isConflicting && <span title="时间冲突" aria-label="时间冲突" className="inline-flex items-center justify-center w-3 h-3 rounded-full flex-shrink-0 text-white font-bold text-xs" style={{ backgroundColor: '#EF4444', fontSize: '8px' }}>!</span>}
+                        <button
+                          onClick={e => { e.stopPropagation(); onToggle?.(s.id); }}
+                          className="flex-shrink-0"
+                        >
+                          {s.is_completed ? <CheckCircle2 className="w-2.5 h-2.5" /> : <Circle className="w-2.5 h-2.5" />}
+                        </button>
+                        <span className="opacity-70 text-[10px]">{formatTime(s.start_time)}</span>
+                        <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
+                      </div>
+                    );
+                  })}
                   {timedTodos.length > 1 && (
                     <div className="text-xs px-1" style={{ color: 'var(--td-text-color-placeholder)' }}>
                       +{timedTodos.length - 1}个待办
@@ -2065,7 +1996,8 @@ export function CalendarView({
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
   const [notifPermission, setNotifPermission] = useState<string>('default');
   const [contextMenu, setContextMenu] = useState<{ schedule: Schedule; x: number; y: number } | null>(null);
-  const [dismissedConflictKey, setDismissedConflictKey] = useState<string | null>(null);
+  const [conflictClock, setConflictClock] = useState(() => Date.now());
+  const [dismissedConflict, setDismissedConflict] = useState<ConflictDismissal | null>(null);
 
   const updateCurrentDate = useCallback((date: Date) => {
     const next = new Date(date);
@@ -2165,6 +2097,68 @@ export function CalendarView({
   const visibleSchedules = ((activeCategoryIds && activeCategoryIds.length > 0)
     ? schedules.filter(s => activeCategoryIds.includes(s.category))
     : schedules).filter(schedule => !schedule.is_unscheduled);
+
+  // 冲突提醒覆盖当前仍有重叠的日程/待办；已经结束的历史冲突由 getConflictPairs 自动排除。
+  // 这样跨午夜仍在持续的日程也能参与“今天”的冲突判断。
+  const bannerConflictSchedules = visibleSchedules.filter(isTimedConflictSchedule);
+  const bannerConflictPairs = getConflictPairs(bannerConflictSchedules, conflictClock);
+  const bannerConflictingIds = new Set<string>();
+  bannerConflictPairs.forEach(({ a, b }) => {
+    bannerConflictingIds.add(a.id);
+    bannerConflictingIds.add(b.id);
+  });
+  const bannerConflictKey = buildConflictKey(bannerConflictSchedules, bannerConflictingIds);
+  const bannerConflictExpiryAt = getConflictExpiryAt(bannerConflictPairs);
+
+  useEffect(() => {
+    if (!bannerConflictExpiryAt) return;
+    const remaining = bannerConflictExpiryAt - Date.now();
+    const delay = Math.min(Math.max(50, remaining + 50), 24 * 60 * 60 * 1000);
+    const timer = window.setTimeout(() => setConflictClock(Date.now()), delay);
+    return () => window.clearTimeout(timer);
+  }, [bannerConflictExpiryAt, bannerConflictKey]);
+
+  useEffect(() => {
+    if (!bannerConflictKey) {
+      setDismissedConflict(null);
+      return;
+    }
+    try {
+      const stored = window.localStorage.getItem(CONFLICT_DISMISS_STORAGE_KEY);
+      const parsed = stored ? JSON.parse(stored) as ConflictDismissal : null;
+      if (parsed && isConflictDismissed(parsed, bannerConflictKey)) {
+        setDismissedConflict(parsed);
+      } else {
+        setDismissedConflict(null);
+        if (parsed) window.localStorage.removeItem(CONFLICT_DISMISS_STORAGE_KEY);
+      }
+    } catch {
+      setDismissedConflict(null);
+    }
+  }, [bannerConflictKey]);
+
+  useEffect(() => {
+    if (!bannerConflictKey || !dismissedConflict || dismissedConflict.key !== bannerConflictKey) return;
+    const remaining = CONFLICT_DISMISS_TTL_MS - (Date.now() - dismissedConflict.dismissedAt);
+    if (remaining <= 0) {
+      setDismissedConflict(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setDismissedConflict(null);
+      try { window.localStorage.removeItem(CONFLICT_DISMISS_STORAGE_KEY); } catch {}
+    }, remaining + 50);
+    return () => window.clearTimeout(timer);
+  }, [bannerConflictKey, dismissedConflict]);
+
+  const showConflictBanner = bannerConflictPairs.length > 0 && !isConflictDismissed(dismissedConflict, bannerConflictKey);
+
+  const dismissConflict = () => {
+    if (!bannerConflictKey) return;
+    const dismissal: ConflictDismissal = { key: bannerConflictKey, dismissedAt: Date.now() };
+    setDismissedConflict(dismissal);
+    try { window.localStorage.setItem(CONFLICT_DISMISS_STORAGE_KEY, JSON.stringify(dismissal)); } catch {}
+  };
 
   const navigatePrev = () => {
     const d = new Date(currentDate);
@@ -2437,36 +2431,7 @@ export function CalendarView({
 
       {/* 冲突检测警告 + 通知权限提示 */}
       {(() => {
-        // 检测当前视图日期的冲突（包括已完成日程）
-        const viewDateSchedules = visibleSchedules.filter(
-          s => !s.all_day && s.type === 'event' && isSameDay(parseLocalDate(s.start_time), currentDate)
-        );
-        
-        const conflictingIds = getConflictingScheduleIds(viewDateSchedules);
-        const conflictMap = groupConflictingSchedulesByTimeSlot(viewDateSchedules);
-        
-        // 收集冲突详情用于Banner显示
-        const conflictDetails: { a: Schedule; b: Schedule }[] = [];
-        const processed = new Set<string>();
-        viewDateSchedules.forEach(s => {
-          if (conflictingIds.has(s.id)) {
-            viewDateSchedules.forEach(other => {
-              if (other.id !== s.id && !processed.has(other.id) && isVisibleScheduleConflict(s, other)) {
-                conflictDetails.push({ a: s, b: other });
-                processed.add(s.id);
-                processed.add(other.id);
-              }
-            });
-          }
-        });
-
         const showNotifBanner = notifPermission === 'default' && visibleSchedules.some(s => s.reminders?.length > 0);
-        
-        const hasConflicts = conflictingIds.size > 0;
-        const conflictKey = hasConflicts
-          ? `${viewMode}:${toDateKey(currentDate)}:${Array.from(conflictingIds).sort().join('|')}`
-          : null;
-        const showConflictBanner = hasConflicts && dismissedConflictKey !== conflictKey;
 
         return (
           <>
@@ -2478,23 +2443,23 @@ export function CalendarView({
               >
                 <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                 <span className="font-semibold">
-                  {conflictingIds.size} 个日程存在时间冲突
+                  {bannerConflictingIds.size} 个事项存在时间冲突
                 </span>
                 <span style={{ color: '#991B1B' }}>
-                  {conflictDetails.slice(0, 3).map(({ a, b }, i) => (
+                  {bannerConflictPairs.slice(0, 3).map(({ a, b }, i) => (
                     <span key={i}>
                       「{a.title}」与「{b.title}」
-                      {i < Math.min(conflictDetails.length, 3) - 1 && '、'}
+                      {i < Math.min(bannerConflictPairs.length, 3) - 1 && '、'}
                     </span>
                   ))}
-                  {conflictDetails.length > 3 && ` 等${conflictDetails.length}组`}
+                  {bannerConflictPairs.length > 3 && ` 等${bannerConflictPairs.length}组`}
                 </span>
                 <button
                   type="button"
                   className="calendar-conflict-dismiss"
-                  onClick={() => conflictKey && setDismissedConflictKey(conflictKey)}
+                  onClick={dismissConflict}
                   aria-label="关闭冲突提醒"
-                  title="关闭提醒"
+                  title="关闭提醒，4小时后可再次出现"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -2541,41 +2506,41 @@ export function CalendarView({
                   onOpenSchedule={setSelectedSchedule}
                   onToggleSchedule={handleToggle}
                   onOpenContextMenu={(schedule, x, y) => setContextMenu({ schedule, x, y })}
+                  conflictingIds={bannerConflictingIds}
                 />
               );
             }
 
-            // 计算当前视图日期范围的冲突信息（统一计算，供所有视图使用）
-            // 日视图：包括待办任务用于冲突排版（但不提示冲突）
+            // 计算当前视图日期范围的冲突信息（事件和待办统一处理）
             const getViewDateSchedules = () => {
               if (viewMode === 'day') {
                 return visibleSchedules.filter(
-                  s => !s.all_day && (s.type === 'event' || s.type === 'todo') && isSameDay(new Date(s.start_time), currentDate)
+                  s => isTimedConflictSchedule(s) && isSameDay(parseLocalDate(s.start_time), currentDate)
                 );
               } else if (viewMode === 'week') {
                 const weekStart = getWeekStart(currentDate);
                 const weekEnd = new Date(weekStart);
                 weekEnd.setDate(weekEnd.getDate() + 7);
                 return visibleSchedules.filter(
-                  s => !s.all_day && s.type === 'event' &&
-                    new Date(s.start_time) >= weekStart && new Date(s.start_time) < weekEnd
+                  s => isTimedConflictSchedule(s) &&
+                    parseLocalDate(s.start_time) >= weekStart && parseLocalDate(s.start_time) < weekEnd
                 );
               } else {
                 // 月视图：整月的日程
                 const year = currentDate.getFullYear();
                 const month = currentDate.getMonth();
                 return visibleSchedules.filter(
-                  s => !s.all_day && s.type === 'event' &&
-                    new Date(s.start_time).getFullYear() === year &&
-                    new Date(s.start_time).getMonth() === month
+                  s => isTimedConflictSchedule(s) &&
+                    parseLocalDate(s.start_time).getFullYear() === year &&
+                    parseLocalDate(s.start_time).getMonth() === month
                 );
               }
             };
             
             const viewDateSchedules = getViewDateSchedules();
             // 日视图冲突检测包括待办任务（用于排版）
-            const conflictingIds = getConflictingScheduleIds(viewDateSchedules, viewMode === 'day');
-            const conflictMap = groupConflictingSchedulesByTimeSlot(viewDateSchedules, viewMode === 'day');
+            const conflictingIds = getConflictingScheduleIds(viewDateSchedules, conflictClock);
+            const conflictMap = groupConflictingSchedulesByTimeSlot(viewDateSchedules, conflictClock);
             
             if (viewMode === 'day') {
               return (
