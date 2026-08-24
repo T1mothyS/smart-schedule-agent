@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildCodeBuddyEnv } from './codebuddy-env.js';
+import { buildCodeBuddyEnv, normaliseCodeBuddyBaseUrl } from './codebuddy-env.js';
 
 test('每位用户的 CodeBuddy 环境相互隔离且不会写入进程环境', () => {
   const before = process.env.CODEBUDDY_API_KEY;
@@ -12,4 +12,11 @@ test('每位用户的 CodeBuddy 环境相互隔离且不会写入进程环境', 
   assert.equal(second.CODEBUDDY_API_KEY, 'user-b-key');
   assert.equal(second.CODEBUDDY_BASE_URL, undefined);
   assert.equal(process.env.CODEBUDDY_API_KEY, before);
+});
+
+test('CodeBuddy 自定义地址只接受公网 HTTPS 域名', () => {
+  assert.equal(normaliseCodeBuddyBaseUrl('https://api.codebuddy.cn/v1/'), 'https://api.codebuddy.cn/v1');
+  assert.throws(() => normaliseCodeBuddyBaseUrl('http://api.codebuddy.cn'), /HTTPS URL/);
+  assert.throws(() => normaliseCodeBuddyBaseUrl('https://127.0.0.1:8443'), /公网域名/);
+  assert.throws(() => normaliseCodeBuddyBaseUrl('https://metadata.internal'), /公网域名/);
 });

@@ -115,12 +115,11 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
     if (!window.confirm(`确定要清空用户 ${user.email} 的所有数据吗？\n包括：日程、待办、AI对话历史、API Key 等。\n该用户的账号和密码将保留。`)) return;
 
     try {
-      console.log('[Admin] Clearing data for user:', user.id);
       const res = await fetch(`/api/admin/users/${user.id}/clear-data`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeadersRef.current() },
+        body: JSON.stringify({ confirmEmail: user.email }),
       });
-      console.log('[Admin] Clear data response:', res.status, await res.clone().text());
       
       if (res.ok) {
         MessagePlugin.success(`已清空 ${user.email} 的数据`);
@@ -139,12 +138,11 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
     if (!window.confirm(`⚠️ 危险操作！\n\n确定要删除用户 ${user.email} 吗？\n\n此操作将：\n- 删除该用户的所有日程和待办\n- 删除 AI 对话历史\n- 删除 API Key\n- 删除用户账号\n\n此操作不可恢复！`)) return;
 
     try {
-      console.log('[Admin] Deleting user:', user.id);
       const res = await fetch(`/api/admin/users/${user.id}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json', ...authHeadersRef.current() },
+        body: JSON.stringify({ confirmEmail: user.email }),
       });
-      console.log('[Admin] Delete response:', res.status, await res.clone().text());
       
       if (res.ok) {
         MessagePlugin.success(`已删除用户 ${user.email}`);
@@ -240,6 +238,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
               { label: '管理员', value: 'admin' },
               { label: '用户', value: 'user' },
             ]}
+            disabled={row.role === 'admin'}
           />
           {/* 启用/禁用 */}
           <Button
@@ -247,6 +246,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             variant="outline"
             onClick={() => handleToggleDisabled(row.id, !row.disabled)}
             loading={loadingAction === row.id}
+            disabled={row.role === 'admin'}
           >
             {row.disabled ? '启用' : '禁用'}
           </Button>
@@ -256,6 +256,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             variant="outline"
             onClick={() => handleClearData(row)}
             loading={loadingAction === row.id}
+            disabled={row.role === 'admin'}
           >
             清空数据
           </Button>
@@ -266,6 +267,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             theme="danger"
             onClick={() => handleDeleteUser(row)}
             loading={loadingAction === row.id}
+            disabled={row.role === 'admin'}
           >
             删除
           </Button>

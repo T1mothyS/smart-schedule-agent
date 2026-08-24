@@ -222,7 +222,7 @@ function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan,
 
   // AI 回复
   const intentLabel: Record<string, string> = {
-    create: '创建', update: '修改', delete: '删除', query: '查询', chat: '对话'
+    create: '创建', update: '修改', delete: '删除', query: '查询', chat: '对话', weather: '天气'
   };
 
   return (
@@ -256,8 +256,11 @@ function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan,
             {/* 文字回复 */}
             {msg.text && (
               <div className="flex items-start gap-1.5 mb-2">
-                <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: '#10B981' }} />
-                <span className="text-xs leading-relaxed font-medium whitespace-pre-line" style={{ color: '#10B981' }}>
+                {msg.type !== 'text' && <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" style={{ color: '#10B981' }} />}
+                <span
+                  className={`text-xs leading-relaxed whitespace-pre-line ${msg.type === 'text' ? 'font-normal' : 'font-medium'}`}
+                  style={{ color: msg.type === 'text' ? 'var(--td-text-color-primary)' : '#10B981' }}
+                >
                   {msg.text}
                 </span>
               </div>
@@ -418,7 +421,7 @@ export function AiSchedulePanel({
       const aiMsg: ChatMessage = {
         id: data.historyMessageId || (Date.now() + 1).toString(),
         role: 'assistant',
-        type: data.requiresConfirmation ? 'plan' : data.intent === 'chat' || data.intent === 'query' ? 'text' :
+        type: data.requiresConfirmation ? 'plan' : data.intent === 'chat' || data.intent === 'query' || data.intent === 'weather' ? 'text' :
               data.intent === 'update' || data.intent === 'delete' ? 'update' : 'schedules',
         intent: data.intent,
         text: data.reply,
@@ -539,7 +542,8 @@ export function AiSchedulePanel({
     '今天上午去车站接人，下午两点开会，晚上约朋友吃饭',
     '把晚饭时间改成7点',
     '今天有什么安排？',
-    '明天下午3点有个重要会议',
+    '北京明天天气怎么样？',
+    '帮我分析一下如何安排深度工作时间',
   ];
 
   return (
@@ -599,6 +603,7 @@ export function AiSchedulePanel({
         <>
           {/* 对话区域 */}
           <div ref={messagesContainerRef} className="flex-1 overflow-y-auto px-3 py-3">
+          <div className="schedule-ai-reading-column">
         {/* 空状态：快捷示例 */}
         {messages.length === 0 && !isLoading && (
           <div>
@@ -664,6 +669,8 @@ export function AiSchedulePanel({
             </div>
           </div>
         )}
+
+          </div>
 
             <div />
           </div>

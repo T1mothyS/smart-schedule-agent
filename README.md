@@ -12,8 +12,11 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - 周期事务会按当前周期到期日同步为日历全天待办，完成后继续生成下一周期事项。
 - 通知支持邮件、站内消息、浏览器通知、免打扰、失败重试和发送记录。
 - 完成时可保存备注、金额、账单日期、图片或 PDF 证明。
-- 支持用户加密导出/恢复和管理员全站快照。
+- 支持可读 JSON/CSV 导出、用户加密导出/恢复和管理员全站快照。
 - AI 可从自然语言或截图生成待确认草稿；确认前不会写入正式数据。
+- AI 助手支持普通问答；配置常驻城市/区县后，可查询 Open-Meteo 实时与未来天气。
+- 每日邮件摘要包含天气、进度、分类日程和完整明细，不与单项提醒混用。
+- 可生成仅展示一次的只读日报令牌，供独立日报程序按日期读取当前账号日程；服务端只保存令牌哈希。
 - 可选通过 163 邮箱 IMAP 接收转发邮件并生成待确认草稿。
 - 支持 Web 页面和 Electron 桌面壳。
 
@@ -44,7 +47,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 ### 3.1 环境要求
 
-- Node.js 20 或更高版本。
+- Node.js 22.12 或更高版本。
 - npm（随 Node.js 安装）。
 - 需要使用 AI 功能时准备 CodeBuddy API Key。
 - 需要发送邮件时准备官方 163 邮箱的客户端授权码。
@@ -219,6 +222,7 @@ cp .env.example .env
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
 | `JWT_SECRET` | 是 | JWT 签名密钥，生产环境必须使用随机长字符串 |
+| `EMAIL_CODE_PEPPER` | 建议 | 验证码 HMAC 独立密钥；留空时回退到 `JWT_SECRET` |
 | `ADMIN_INVITE_CODE` | 是 | 注册管理员账号时使用的邀请码 |
 | `USER_INVITE_CODE` | 是 | 注册普通账号时使用的邀请码 |
 
@@ -236,11 +240,15 @@ cp .env.example .env
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
 | `CODEBUDDY_API_KEY` | AI 功能必需 | 服务器默认使用的 CodeBuddy API Key |
-| `CODEBUDDY_BASE_URL` | 否 | 自定义 CodeBuddy API 地址 |
+| `CODEBUDDY_BASE_URL` | 否 | 自定义 CodeBuddy API 地址；只接受不含账号、查询参数和片段的公网 HTTPS 域名，不接受 IP、本机或内部域名 |
 | `PORT` | 否 | 后端监听端口，默认 `3000` |
 | `APP_TIMEZONE` | 建议 | 业务时区，当前建议 `Asia/Shanghai` |
 | `APP_URL` | 是 | 邮件按钮跳转地址；生产环境填写 HTTPS 域名，例如 `https://example.com/today` |
 | `APP_ENV` | 是 | 本地为 `development`，服务器为 `production`；避免 Vite 读取 `NODE_ENV` 产生构建警告 |
+| `TRUST_PROXY_HOPS` | 反向代理时必需 | Nginx 直接代理到 Node 时通常为 `1`；本地直连保持 `0` |
+| `BACKGROUND_JOBS_ENABLED` | 是 | 仅唯一生产 worker 设为 `true`；本地、测试和额外实例保持 `false`，防止重复发信 |
+| `ELECTRON_APP_URL` | Electron 打包必需 | 写入安装包的公开 HTTPS 页面地址，不包含任何密钥 |
+| `VITE_DEV_HOST` / `VITE_ALLOWED_HOST` | 局域网调试可选 | 默认只允许本机访问；确需局域网调试时同时显式配置监听地址和允许主机 |
 
 ### 6.4 备份与 OSS
 
@@ -278,8 +286,8 @@ cp .env.example .env
 | `.gitignore` | 排除密钥、数据库、附件、依赖和构建产物 |
 | `README.md` | 项目主说明，也就是本文档 |
 | `DEPLOY.md` | 阿里云服务器、Nginx、HTTPS、PM2 和升级部署的详细步骤 |
-| `DEVELOPMENT.md` | 原项目较长的开发参考和历史实现说明；实际行为以当前代码和本 README 为准 |
 | `package.json` | npm 脚本、依赖版本范围、Electron 打包配置和项目元数据 |
+| `electron-builder.yml` | 只针对 `dist-desktop/` 最小桌面壳的跨平台打包配置 |
 | `package-lock.json` | npm 锁定依赖树，保证不同机器安装一致，应该提交 |
 | `index.html` | Vite 前端 HTML 入口，挂载 React 根节点 |
 | `vite.config.ts` | Vite 配置；定义 5173 端口、Less 和 `/api` 后端代理 |
@@ -289,11 +297,12 @@ cp .env.example .env
 | `tailwind.config.js` | Tailwind CSS 内容扫描和主题配置 |
 | `postcss.config.js` | PostCSS、Tailwind 和 Autoprefixer 配置 |
 | `go.bat` | Windows 双击启动脚本；缺依赖时安装并打开 5173 页面 |
-| `deploy.sh` | Ubuntu/Debian 首次部署第一步；安装 Node.js 20、PM2 并创建目录 |
-| `deploy-continue.sh` | 上传代码后的部署第二步；安装、构建、复制静态文件并用 PM2 启动 |
+| `deploy.sh` | Ubuntu/Debian 首次部署第一步；安装 Node.js 22、PM2 并创建目录 |
+| `deploy-continue.sh` | 上传代码后的部署第二步；检查 Node/生产配置、安装、测试、构建并用 PM2 启动 |
 | `node_modules/` | npm 安装的第三方依赖，可由 `npm ci` 重建，不提交 |
 | `dist/` | Vite 构建后的 Web 静态文件，可由 `npm run build:client` 重建 |
 | `dist-electron/` | Electron TypeScript 编译结果，可由 `npm run build:electron` 重建 |
+| `dist-desktop/` | Electron 打包前生成的最小桌面壳目录，不包含服务器依赖 |
 | `release/` | Electron 安装包输出目录，仅在执行桌面打包后产生 |
 
 ### 7.2 `src/` 前端
@@ -304,33 +313,19 @@ cp .env.example .env
 | `src/App.tsx` | 顶层路由和登录后页面组织 |
 | `src/index.css` | 全局样式、主题变量和页面基础视觉 |
 | `src/config.ts` | 应用名称、描述和版本等前端常量 |
-| `src/types.ts` | AI 对话、会话和公共前端类型 |
 | `src/reminder-types.ts` | 周期事务、通知偏好、行动中心和完成记录等类型 |
 | `src/pages/LoginPage.tsx` | 登录、注册和验证码流程页面 |
-| `src/pages/ChatPage.tsx` | AI 对话页面容器 |
 | `src/components/AppShell.tsx` | 登录后统一页面框架、顶部导航和内容区域 |
 | `src/components/ActionCenterPage.tsx` | 今日行动中心：下一步、今天、临期、逾期和已完成 |
 | `src/components/ScheduleView.tsx` | 日历主页面和日程管理容器 |
 | `src/components/CalendarView.tsx` | 日历日期网格/时间视图展示 |
 | `src/components/ScheduleSidebar.tsx` | 日历侧栏、日历源和分类操作 |
 | `src/components/ReminderPage.tsx` | 周期事务模板、任务、完成和提醒历史页面 |
-| `src/components/SettingsPage.tsx` | 全局设置、提醒收件邮箱、通知偏好、备份和邮箱导入设置 |
+| `src/components/SettingsPage.tsx` | 模型、常驻地、提醒、数据导出、只读日报令牌、备份和邮箱导入设置 |
 | `src/components/AiImportPage.tsx` | 自然语言/截图智能导入、草稿校对与确认 |
-| `src/components/AiSchedulePanel.tsx` | 原 AI 日程助手面板 |
-| `src/components/Header.tsx` | 原对话界面顶部栏 |
-| `src/components/Sidebar.tsx` | AI 会话列表侧栏 |
-| `src/components/ChatMessages.tsx` | AI 对话消息列表和流式结果展示 |
-| `src/components/ChatInput.tsx` | AI 对话输入和发送控制 |
-| `src/components/NewChatView.tsx` | 新建对话的空状态页面 |
-| `src/components/NewChatDialog.tsx` | 新建对话弹窗 |
+| `src/components/AiSchedulePanel.tsx` | 普通问答、天气查询和待确认日程建议的 AI 助手 |
 | `src/components/AdminModal.tsx` | 管理员用户管理弹窗 |
-| `src/components/PermissionDialog.tsx` | AI 工具权限确认弹窗 |
-| `src/components/InlinePermissionCard.tsx` | 对话流中的内嵌权限确认卡片 |
-| `src/components/ToolCallsCollapse.tsx` | AI 工具调用记录的折叠展示 |
 | `src/hooks/useAuth.ts` | 登录状态、令牌和当前用户逻辑 |
-| `src/hooks/useChat.ts` | AI 对话发送、流式响应和状态管理 |
-| `src/hooks/useModels.ts` | 可用 AI 模型获取和选择 |
-| `src/hooks/useSessions.ts` | 对话会话列表、新建、重命名和删除 |
 | `src/hooks/useTheme.ts` | 明暗主题读取、切换和持久化 |
 | `src/utils/iconMap.ts` | 工具名称到界面图标的映射 |
 
@@ -349,13 +344,17 @@ cp .env.example .env
 | `server/activity-store.ts` | `activity.db` 的完成记录、附件元数据、通知队列、偏好和 AI 草稿访问层 |
 | `server/notification-service.ts` | 持久化通知调度、免打扰、幂等去重、失败重试和发送状态 |
 | `server/email-service.ts` | 固定 163 官方发件邮箱、邮件模板、SMTP 校验和错误转换 |
+| `server/daily-email-template.ts` | 每日摘要邮件的天气、进度、分类与完整日程模板 |
+| `server/weather-service.ts` | Open-Meteo 地点搜索、天气读取、缓存、超时和天气代码转换 |
+| `server/export-service.ts` | 当前账号的可读 JSON/CSV 数据导出与表格公式注入防护 |
+| `server/daily-report-token-service.ts` | 只读日报令牌生成、哈希保存、轮换、吊销和鉴权 |
+| `server/http-security.ts` | 安全响应头、请求体限制和分接口频率限制 |
 | `server/email-import-service.ts` | 可选 IMAP 邮箱轮询、令牌匹配和 Message-ID 去重 |
 | `server/attachment-service.ts` | 附件类型/大小校验、哈希存储、配额和鉴权读取辅助 |
 | `server/backup-service.ts` | 用户加密备份、恢复预览、全站快照和可选 OSS 上传 |
 | `server/ai-import-service.ts` | 自然语言/截图解析、置信度草稿、确认和过期清理 |
 | `server/core.test.ts` | 核心业务测试：月末、逾期完成、附件、用户隔离、备份和 AI 草稿等 |
 | `server/sql-js.d.ts` | 为 `sql.js` 补充项目所需的 TypeScript 类型声明 |
-| `server/public/` | 旧版静态产物目录，仅为兼容历史部署保留；当前生产服务直接读取 `dist/` |
 
 ### 7.4 `electron/` 桌面端
 
@@ -368,7 +367,7 @@ cp .env.example .env
 
 | 文件或目录 | 作用 |
 | --- | --- |
-| `data/chat.db` | 用户、验证码、登录、AI 会话和账号级设置 |
+| `data/chat.db` | 用户、验证码、登录、AI 历史、日报令牌哈希和账号级设置 |
 | `data/chat.db-wal` / `data/chat.db-shm` | SQLite 正在运行时的 WAL 临时文件，不要单独复制或删除 |
 | `data/schedule.db` | 日历、分类和日程数据 |
 | `data/reminder.db` | 周期事务、周期实例和完成历史兼容数据 |
@@ -390,7 +389,7 @@ cp .env.example .env
 | `npm run typecheck` | TypeScript 类型检查，不生成文件 |
 | `npm test` | 运行 `server/*.test.ts` 核心测试 |
 | `npm run build:client` | 构建 Web 前端到 `dist/` |
-| `npm run build:electron` | 编译 Electron 代码到 `dist-electron/` |
+| `npm run build:electron` | 编译 Electron 并生成不含服务器依赖的 `dist-desktop/` 最小打包目录 |
 | `npm run build` | 依次构建 Web 和 Electron 代码 |
 | `npm run preview` | 本地预览 Vite 构建结果 |
 | `npm run electron:dev` | 启动后端、Vite 和 Electron 开发窗口 |
@@ -447,6 +446,14 @@ npm run build
 
 智能导入接受自然语言或最多 3 张图片，每张最大 8MB。AI 首先生成草稿并标注低置信度字段；只有用户检查并确认后，系统才创建日程或周期事务。
 
+### 9.6 常驻地、天气与普通问答
+
+在“设置”中搜索并确认常驻城市/区县后，AI 助手可回答今天、明天及未来天气；地点和天气来自 Open-Meteo，网络失败时会明确提示不可用，不会编造数据。非日程问题走普通问答，日程写入仍必须经过用户确认。
+
+### 9.7 导出与日报联动
+
+“设置”提供可读 JSON 和 CSV 导出，均只包含当前账号的非敏感业务数据。日报联动令牌只在生成/轮换时展示一次，可随时吊销；日报接口只读、限定当前账号，并要求显式日期。
+
 ## 10. API 模块概览
 
 后端 API 统一以 `/api` 开头，主要模块为：
@@ -456,8 +463,12 @@ npm run build
 - `/api/schedules`、`/api/calendars`、`/api/categories`：日历数据。
 - `/api/cycle-reminders`：周期事务、模板、完成和测试邮件。
 - `/api/notification-preferences`、`/api/notifications`：提醒偏好与发送记录。
+- `/api/weather/locations`、`/api/weather`：常驻地搜索和天气读取。
 - `/api/completions`、`/api/history`、`/api/attachments`：完成证明和附件。
+- `/api/exports/user-data.json`、`/api/exports/schedules.csv`：当前账号可读导出。
+- `/api/integrations/daily-report-token`、`/api/integrations/daily-report/agenda`：令牌管理和只读日报日程。
 - `/api/backups`、`/api/admin/backups`：用户备份和全站灾备。
+- `/api/ai-chat`：普通问答、天气问答和待确认日程建议。
 - `/api/ai/imports`：AI 导入草稿、确认和删除。
 - `/api/email-import/settings`：可选邮箱自动导入设置。
 - `/api/admin/users`：管理员用户管理。
@@ -527,9 +538,9 @@ pm2 restart smart-schedule --update-env
 
 不建议。程序虽然不直接读取它，但首次部署、团队协作、灾后重建和新增配置都依赖这份模板。它也能在不泄露秘密的前提下说明环境要求。
 
-### 能否直接编辑 `server/public/assets` 或 `dist`
+### 能否直接编辑 `dist`
 
-不要。它们是构建产物，下一次构建会覆盖。应修改 `src/`，然后重新执行 `npm run build:client`；生产服务会直接读取最新的 `dist/`。
+不要。它是构建产物，下一次构建会覆盖。应修改 `src/`，然后重新执行 `npm run build:client`；生产服务会直接读取最新的 `dist/`。
 
 ## 14. 安全边界
 

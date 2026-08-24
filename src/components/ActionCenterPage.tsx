@@ -19,6 +19,8 @@ interface ActionItem {
   completionId: string | null;
   proof: {
     note: string | null;
+    amountCents: number | null;
+    currency: string;
     billDate: string | null;
     attachments: Array<{ id: string; originalName: string; mimeType: string; sizeBytes: number }>;
   } | null;
@@ -46,6 +48,15 @@ interface NotificationItem {
 }
 
 const emptyData: ActionCenterData = { next: null, today: [], tomorrow: [], upcoming: [], overdue: [], unscheduled: [], completedToday: [], upcomingDays: 7 };
+
+function fileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error(`无法读取附件：${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
 
 function formatDate(value: string, allDay = false): string {
   if (allDay) {
@@ -153,6 +164,11 @@ export function ActionCenterPage() {
   const [showSendDialog, setShowSendDialog] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [sendNotice, setSendNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const [completionTarget, setCompletionTarget] = useState<ActionItem | null>(null);
+  const [completionNote, setCompletionNote] = useState('');
+  const [completionAmount, setCompletionAmount] = useState('');
+  const [completionBillDate, setCompletionBillDate] = useState('');
+  const [completionFiles, setCompletionFiles] = useState<File[]>([]);
 
   const loadActions = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true);
@@ -221,6 +237,23 @@ export function ActionCenterPage() {
 
   const complete = async (item: ActionItem) => {
     if (completingId) return;
+    setCompletionTarget(item);
+    setCompletionNote('');
+    setCompletionAmount('');
+    setCompletionBillDate('');
+    setCompletionFiles([]);
+  };
+
+  const confirmComplete = async () => {
+    const item = completionTarget;
+    if (!item || completingId) return;
+    const amount = completionAmount.trim();
+    if (amount && (!/^\d+(?:\.\d{1,2})?$/.test(amount) || Number(amount) > 100_000_000)) {
+      return window.alert('金额应为非负数字，最多保留两位小数');
+    }
+    if (completionFiles.length > 5 || completionFiles.some(file => file.size > 10 * 1024 * 1024)) {
+      return window.alert('最多上传 5 个附件，每个附件不能超过 10MB');
+    }
     setCompletingId(item.id);
     try {
       const response = await fetch('/api/completions', {
@@ -230,10 +263,36 @@ export function ActionCenterPage() {
           sourceType: item.sourceType,
           sourceId: item.sourceId,
           instanceId: item.instanceId,
+          note: completionNote.trim() || null,
+          amountCents: amount ? Math.round(Number(amount) * 100) : null,
+          currency: 'CNY',
+          billDate: completionBillDate || null,
         }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || '登记完成失败');
+      if (completionFiles.length) {
+        try {
+          const files = await Promise.all(completionFiles.map(async file => ({
+            name: file.name,
+            mimeType: file.type,
+            base64: await fileAsBase64(file),
+          })));
+          const upload = await fetch(`/api/completions/${result.completion.id}/attachments`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files }),
+          });
+          const uploadResult = await upload.json();
+          if (!upload.ok) throw new Error(uploadResult.error || '上传失败');
+        } catch (attachmentError) {
+          setCompletionTarget(null);
+          await loadActions(false);
+          window.alert(`事项已完成，但附件未保存：${attachmentError instanceof Error ? attachmentError.message : '上传失败'}。如需重试，请先在已完成详情中设为未完成后重新登记。`);
+          return;
+        }
+      }
+      setCompletionTarget(null);
       await loadActions(false);
     } catch (error) { window.alert(error instanceof Error ? error.message : '登记完成失败'); }
     finally { setCompletingId(null); }
@@ -392,6 +451,8 @@ export function ActionCenterPage() {
                 {item.completedAt && <span>完成于 {formatDate(item.completedAt)}</span>}
                 {item.nextAction && <span>{item.nextAction}</span>}
                 {item.proof?.note && <span>备注：{item.proof.note}</span>}
+                {item.proof?.amountCents != null && <span>金额：{(item.proof.amountCents / 100).toFixed(2)} {item.proof.currency}</span>}
+                {item.proof?.billDate && <span>账单日：{item.proof.billDate}</span>}
               </div>
               {item.proof?.attachments.length ? <div className="proof-files">{item.proof.attachments.map(file => <button key={file.id} onClick={event => { event.stopPropagation(); openAttachment(file); }}><Paperclip size={13} />{file.originalName}</button>)}</div> : null}
             </div>
@@ -408,6 +469,28 @@ export function ActionCenterPage() {
 
     {showSendDialog && <div className="modal-backdrop" onMouseDown={() => { if (!sendingEmail) setShowSendDialog(false); }}><div className="complete-modal send-schedule-modal" onMouseDown={event => event.stopPropagation()}><button className="icon-button modal-close" onClick={() => setShowSendDialog(false)} disabled={sendingEmail}><X size={16} /></button><div className="send-schedule-icon"><Mail size={23} /></div><h2>发送今天的日程？</h2><p>确认后会立即把今天的日程和今天的待办发送到你绑定的通知邮箱。</p><div className="modal-foot"><button className="secondary-button" onClick={() => setShowSendDialog(false)} disabled={sendingEmail}>取消</button><button className="primary-button" onClick={sendTodayEmail} disabled={sendingEmail}>{sendingEmail ? '发送中…' : '确认发送'}</button></div></div></div>}
 
+    {completionTarget && <div className="modal-backdrop" onMouseDown={() => { if (!completingId) setCompletionTarget(null); }}>
+      <div className="complete-modal completion-proof-modal" onMouseDown={event => event.stopPropagation()}>
+        <button type="button" className="icon-button modal-close" onClick={() => setCompletionTarget(null)} disabled={!!completingId} aria-label="关闭"><X size={16} /></button>
+        <div className="complete-icon"><CheckCircle2 size={24} /></div>
+        <h2>完成“{completionTarget.title}”</h2>
+        <p>证明信息均为可选；附件仅支持 JPEG、PNG、WebP 和 PDF，最多 5 个、每个 10MB。</p>
+        <div className="completion-proof-grid">
+          <label className="form-label">金额（元）<input inputMode="decimal" value={completionAmount} onChange={event => setCompletionAmount(event.target.value)} placeholder="例如 128.50" /></label>
+          <label className="form-label">账单日期<input type="date" value={completionBillDate} onChange={event => setCompletionBillDate(event.target.value)} /></label>
+          <label className="form-label full">完成备注<textarea rows={3} value={completionNote} onChange={event => setCompletionNote(event.target.value)} placeholder="例如：已核对账单并完成付款" /></label>
+          <label className="form-label full completion-file-picker">完成证明附件
+            <input type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" onChange={event => setCompletionFiles(Array.from(event.target.files || []).slice(0, 5))} />
+            {completionFiles.length > 0 && <small>{completionFiles.map(file => file.name).join('、')}</small>}
+          </label>
+        </div>
+        <div className="modal-foot">
+          <button className="secondary-button" onClick={() => setCompletionTarget(null)} disabled={!!completingId}>取消</button>
+          <button className="primary-button" onClick={confirmComplete} disabled={!!completingId}>{completingId ? '保存中…' : '确认完成'}</button>
+        </div>
+      </div>
+    </div>}
+
     {completedDetail && <div className="modal-backdrop" onMouseDown={() => setCompletedDetail(null)}>
       <div className="complete-modal action-detail-modal" onMouseDown={event => event.stopPropagation()}>
         <button type="button" className="icon-button modal-close" onClick={() => setCompletedDetail(null)} aria-label="关闭详情"><X size={16} /></button>
@@ -420,6 +503,8 @@ export function ActionCenterPage() {
         </div>
         {completedDetail.nextAction && <p className="action-detail-note">{completedDetail.nextAction}</p>}
         {completedDetail.proof?.note && <p className="action-detail-note">备注：{completedDetail.proof.note}</p>}
+        {completedDetail.proof?.amountCents != null && <p className="action-detail-note">金额：{(completedDetail.proof.amountCents / 100).toFixed(2)} {completedDetail.proof.currency}</p>}
+        {completedDetail.proof?.billDate && <p className="action-detail-note">账单日：{completedDetail.proof.billDate}</p>}
         {completedDetail.proof?.attachments.length ? <div className="proof-files">{completedDetail.proof.attachments.map(file => <button key={file.id} onClick={() => openAttachment(file)}><Paperclip size={13} />{file.originalName}</button>)}</div> : null}
         <div className="modal-foot">
           <button type="button" className="secondary-button" onClick={() => setCompletedDetail(null)}>关闭</button>

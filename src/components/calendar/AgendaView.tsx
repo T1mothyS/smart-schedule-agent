@@ -47,6 +47,10 @@ export function AgendaView({
   conflictingIds,
 }: AgendaViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const selectionFromScrollRef = useRef<string | null>(null);
+  const programmaticScrollRef = useRef(false);
+  const scrollIdleTimerRef = useRef<number | null>(null);
+  const frameRef = useRef<number | null>(null);
   const selectedKey = toLocalDateKey(selectedDate);
   const todayKey = toLocalDateKey(new Date());
 
@@ -86,9 +90,58 @@ export function AgendaView({
   }, [schedules, selectedKey, todayKey, showFestivals]);
 
   useEffect(() => {
+    if (selectionFromScrollRef.current === selectedKey) {
+      selectionFromScrollRef.current = null;
+      return;
+    }
     const element = containerRef.current?.querySelector<HTMLElement>(`[data-agenda-date="${selectedKey}"]`);
-    element?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    if (!element) return;
+    programmaticScrollRef.current = true;
+    element.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }, [selectedKey]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const syncDateFromScroll = () => {
+      if (programmaticScrollRef.current) return;
+      const containerTop = container.getBoundingClientRect().top + 10;
+      const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-agenda-date]'));
+      let active = rows[0];
+      for (const row of rows) {
+        if (row.getBoundingClientRect().top <= containerTop) active = row;
+        else break;
+      }
+      const key = active?.dataset.agendaDate;
+      if (!key || key === selectedKey) return;
+      const group = groups.find(item => item.key === key);
+      if (!group) return;
+      selectionFromScrollRef.current = key;
+      onSelectDate(group.date);
+    };
+    const onScroll = () => {
+      if (scrollIdleTimerRef.current != null) window.clearTimeout(scrollIdleTimerRef.current);
+      scrollIdleTimerRef.current = window.setTimeout(() => {
+        programmaticScrollRef.current = false;
+        if (frameRef.current != null) window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = window.requestAnimationFrame(syncDateFromScroll);
+      }, 120);
+      if (programmaticScrollRef.current) return;
+      if (frameRef.current != null) window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = window.requestAnimationFrame(syncDateFromScroll);
+    };
+    const cancelProgrammaticScroll = () => { programmaticScrollRef.current = false; };
+    container.addEventListener('scroll', onScroll, { passive: true });
+    container.addEventListener('wheel', cancelProgrammaticScroll, { passive: true });
+    container.addEventListener('touchstart', cancelProgrammaticScroll, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', onScroll);
+      container.removeEventListener('wheel', cancelProgrammaticScroll);
+      container.removeEventListener('touchstart', cancelProgrammaticScroll);
+      if (scrollIdleTimerRef.current != null) window.clearTimeout(scrollIdleTimerRef.current);
+      if (frameRef.current != null) window.cancelAnimationFrame(frameRef.current);
+    };
+  }, [groups, selectedKey, onSelectDate]);
 
   return (
     <div ref={containerRef} className="agenda-view" aria-label="日程列表">
@@ -105,7 +158,7 @@ export function AgendaView({
           >
             {monthChanged && <div className="agenda-month-divider">{group.date.getFullYear()}年{group.date.getMonth() + 1}月</div>}
             <button type="button" className="agenda-date-column" onClick={() => onSelectDate(group.date)}>
-              <span className="agenda-date-number">{group.date.getDate()}</span>
+              <span className="agenda-date-number"><b>{group.date.getDate()}</b><small>/{group.date.getMonth() + 1}</small></span>
               <span className="agenda-date-weekday">{group.date.toLocaleDateString('zh-CN', { weekday: 'short' })}</span>
               {showLunar && <span className="agenda-date-lunar">{group.meta.lunarFullLabel}</span>}
               {isToday && <strong>今天</strong>}
@@ -148,23 +201,17 @@ export function AgendaView({
                       }
                     }}
                   >
-                    <button
-                      type="button"
-                      className="agenda-complete-button"
-                      onClick={event => { event.stopPropagation(); onToggleSchedule(schedule.id); }}
-                      aria-label={schedule.is_completed ? '标记未完成' : '标记完成'}
-                    >
-                      {schedule.is_completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                    </button>
-                    {isConflicting && (
-                      <span
-                        title="时间冲突"
-                        aria-label="时间冲突"
-                        style={{ backgroundColor: '#EF4444', color: '#fff', borderRadius: '999px', width: 16, height: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, flexShrink: 0 }}
+                    <span className="schedule-status-slot agenda-status-slot">
+                      <button
+                        type="button"
+                        className="agenda-complete-button"
+                        onClick={event => { event.stopPropagation(); onToggleSchedule(schedule.id); }}
+                        aria-label={schedule.is_completed ? '标记未完成' : '标记完成'}
                       >
-                        !
-                      </span>
-                    )}
+                        {schedule.is_completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                      </button>
+                      {isConflicting && <span title="时间冲突" aria-label="时间冲突" className="schedule-conflict-dot">!</span>}
+                    </span>
                     <div className="agenda-schedule-time">
                       <Clock3 size={14} />
                       <span>{formatTime(schedule)}</span>

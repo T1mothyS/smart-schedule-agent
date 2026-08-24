@@ -1,9 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Routes, Route, useNavigate, useParams, useLocation, Navigate } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { useTheme } from './hooks/useTheme';
-import { useSessions } from './hooks/useSessions';
-import { useModels } from './hooks/useModels';
-import { useChat } from './hooks/useChat';
 import { useAuth } from './hooks/useAuth';
 import { CalendarDays, Check, MoonStar, PartyPopper, X } from 'lucide-react';
 
@@ -28,8 +25,6 @@ interface SchedulePageProps {
   onOpenSettings?: () => void;
   onOpenAdmin?: () => void;
   onOpenReminders?: () => void;
-  models?: any[];
-  onRefreshModels?: () => void;
   user?: { id: string; email: string; role: 'admin' | 'user' } | null;
   onLogout?: () => void;
 }
@@ -234,7 +229,6 @@ function App() {
 
 function AppContent() {
   const { theme, toggleTheme } = useTheme();
-  const { models, fetchModels } = useModels();
   const { user, logout } = useAuth();
   const [showSettings, setShowSettings] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -265,11 +259,7 @@ function AppContent() {
         onLogout={logout}
       >
         {activeSection === 'today' ? <ActionCenterPage /> : activeSection === 'schedule' ? (
-          <SchedulePage
-            models={models}
-            onRefreshModels={fetchModels}
-            user={user}
-          />
+          <SchedulePage user={user} />
         ) : activeSection === 'assistant' ? <AiAssistantPage /> : activeSection === 'reminders' ? (
           <ReminderPage />
         ) : <AiImportPage />}

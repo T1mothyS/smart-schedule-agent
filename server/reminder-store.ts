@@ -160,13 +160,13 @@ export function clampDateForMonth(year: number, month: number, day: number): str
   return monthDate(year, month - 1, day);
 }
 
-export function todayInTimezone(timezone = process.env.APP_TIMEZONE || 'Asia/Shanghai'): string {
+export function todayInTimezone(timezone = process.env.APP_TIMEZONE || 'Asia/Shanghai', date = new Date()): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).formatToParts(new Date());
+  }).formatToParts(date);
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return dateFromParts(Number(values.year), Number(values.month), Number(values.day));
 }
@@ -245,7 +245,9 @@ export async function initReminderDb(): Promise<void> {
   db = fs.existsSync(DB_PATH) ? new SQL.Database(fs.readFileSync(DB_PATH)) : new SQL.Database();
 
   const taskSql = queryOne<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reminder_tasks'");
-  if (taskSql?.sql && !taskSql.sql.includes("'generic'")) {
+  // 只有旧表仍带不包含 generic 的 CHECK 约束时才迁移。新版表不再依赖
+  // sqlite_master 字符串作为版本哨兵，避免每次启动重复备份和重建。
+  if (taskSql?.sql && /\bCHECK\b/i.test(taskSql.sql) && !taskSql.sql.includes("'generic'")) {
     const backupDir = path.join(DATA_DIR, 'migration-backups');
     fs.mkdirSync(backupDir, { recursive: true });
     fs.copyFileSync(DB_PATH, path.join(backupDir, 'reminder-generic-' + new Date().toISOString().replace(/[:.]/g, '-') + '.db'));
@@ -253,7 +255,7 @@ export async function initReminderDb(): Promise<void> {
       CREATE TABLE reminder_tasks_v2 (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
-        type TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('credit_card', 'sim', 'generic')),
         name TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
         timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
@@ -271,7 +273,7 @@ export async function initReminderDb(): Promise<void> {
     CREATE TABLE IF NOT EXISTS reminder_tasks (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
-      type TEXT NOT NULL,
+      type TEXT NOT NULL CHECK (type IN ('credit_card', 'sim', 'generic')),
       name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',

@@ -231,6 +231,7 @@ export interface Category {
   name: string;
   color: string;
   icon: string;
+  created_at?: string;
 }
 
 const SCHEDULE_CATEGORY_IDS = new Set(['travel', 'work', 'social', 'life', 'health', 'other']);
@@ -371,6 +372,15 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
   const merged = { ...existing, ...updates, updated_at: now };
   const isUnscheduled = merged.is_unscheduled === true;
   const startTimeValue = merged.start_time || now;
+  let calendarId = existing.calendar_id;
+  if (updates.calendar_id !== undefined) {
+    const requested = String(updates.calendar_id || '');
+    const calendars = getAllCalendars(existing.user_id);
+    const calendar = calendars.find(item => item.id === requested)
+      || calendars.find(item => item.id.endsWith(':' + requested));
+    if (!calendar) throw new Error('目标日历不存在或无权访问');
+    calendarId = calendar.id;
+  }
 
   // 兼容旧数据库：无固定期限待办的 end_time 继续保存内部占位值。
   const endTimeValue = isUnscheduled
@@ -379,6 +389,7 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
 
   run(
     `UPDATE schedules SET
+      calendar_id = ?,
       type = ?,
       title = ?,
       description = ?,
@@ -394,9 +405,11 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
       is_repeated = ?,
       repeat_rule = ?,
       reminders = ?,
+      is_high_risk = ?,
       updated_at = ?
     WHERE id = ?`,
     [
+      calendarId,
       merged.type || 'event',
       merged.title,
       safeNull(merged.description),
@@ -412,6 +425,7 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
       merged.is_repeated ? 1 : 0,
       safeNull(merged.repeat_rule),
       JSON.stringify(merged.reminders || []),
+      merged.is_high_risk ? 1 : 0,
       now,
       id
     ]
@@ -542,6 +556,13 @@ export function deleteCalendar(id: string, userId?: string): boolean {
 export function deleteSchedulesByUser(userId: string): number {
   const result = run('DELETE FROM schedules WHERE user_id = ?', [userId]);
   return result.changes;
+}
+
+export function deleteUserScheduleData(userId: string): { schedules: number; calendars: number; categories: number } {
+  const schedules = run('DELETE FROM schedules WHERE user_id = ?', [userId]).changes;
+  const calendars = run('DELETE FROM calendars WHERE user_id = ?', [userId]).changes;
+  const categories = run('DELETE FROM categories WHERE user_id = ?', [userId]).changes;
+  return { schedules, calendars, categories };
 }
 
 export function exportUserScheduleData(userId: string): { schedules: Schedule[]; calendars: Calendar[]; categories: Category[] } {

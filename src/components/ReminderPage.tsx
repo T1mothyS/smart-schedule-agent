@@ -53,6 +53,15 @@ interface FormState {
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+function fileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error(`无法读取附件：${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
 const initialForm: FormState = {
   type: 'credit_card',
   name: '',
@@ -173,6 +182,9 @@ export function ReminderPage() {
   const [completeTarget, setCompleteTarget] = useState<ReminderTask | null>(null);
   const [completeDate, setCompleteDate] = useState(today());
   const [completeNote, setCompleteNote] = useState('');
+  const [completeAmount, setCompleteAmount] = useState('');
+  const [completeBillDate, setCompleteBillDate] = useState('');
+  const [completeFiles, setCompleteFiles] = useState<File[]>([]);
 
   const loadTasks = useCallback(async () => {
     setLoading(true);
@@ -255,17 +267,59 @@ export function ReminderPage() {
 
   const completeTask = async () => {
     if (!completeTarget?.currentCycle) return;
+    const amount = completeAmount.trim();
+    if (amount && (!/^\d+(?:\.\d{1,2})?$/.test(amount) || Number(amount) > 100_000_000)) {
+      return setNotice({ type: 'error', message: '金额应为非负数字，最多保留两位小数' });
+    }
+    if (completeFiles.length > 5 || completeFiles.some(file => file.size > 10 * 1024 * 1024)) {
+      return setNotice({ type: 'error', message: '最多上传 5 个附件，每个附件不能超过 10MB' });
+    }
     setSaving(true);
     try {
       const response = await fetch('/api/cycle-reminders/' + completeTarget.id + '/complete', {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cycleId: completeTarget.currentCycle.id, completedDate: completeDate, note: completeNote }),
+        body: JSON.stringify({
+          cycleId: completeTarget.currentCycle.id,
+          completedDate: completeDate,
+          note: completeNote,
+          amountCents: amount ? Math.round(Number(amount) * 100) : null,
+          currency: 'CNY',
+          billDate: completeBillDate || null,
+        }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || '标记完成失败');
+      if (completeFiles.length && data.completion?.id) {
+        try {
+          const files = await Promise.all(completeFiles.map(async file => ({
+            name: file.name,
+            mimeType: file.type,
+            base64: await fileAsBase64(file),
+          })));
+          const upload = await fetch(`/api/completions/${data.completion.id}/attachments`, {
+            method: 'POST',
+            headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ files }),
+          });
+          const uploadResult = await upload.json();
+          if (!upload.ok) throw new Error(uploadResult.error || '上传失败');
+        } catch (attachmentError) {
+          setCompleteTarget(null);
+          setCompleteNote('');
+          setCompleteAmount('');
+          setCompleteBillDate('');
+          setCompleteFiles([]);
+          setNotice({ type: 'error', message: `事务已完成，但附件未保存：${attachmentError instanceof Error ? attachmentError.message : '上传失败'}。如需重试，请先设为未完成后重新登记。` });
+          await loadTasks();
+          return;
+        }
+      }
       setCompleteTarget(null);
       setCompleteNote('');
+      setCompleteAmount('');
+      setCompleteBillDate('');
+      setCompleteFiles([]);
       setNotice({ type: 'success', message: '已完成登记，下一周期已生成' });
       await loadTasks();
     } catch (error) {
@@ -332,7 +386,7 @@ export function ReminderPage() {
               <div className="task-card-head"><div className={'task-type-icon ' + (task.type === 'credit_card' ? 'card' : task.type === 'sim' ? 'sim' : 'generic')}>{task.type === 'credit_card' ? <CreditCard size={20} /> : task.type === 'sim' ? <Smartphone size={20} /> : <Repeat2 size={20} />}</div><div className="task-title-wrap"><h3>{task.name}</h3></div><span className={'status-badge ' + status.tone}>{status.label}</span></div>
               <div className="task-due-block"><span>{task.type === 'credit_card' ? '本期还款日' : task.type === 'sim' ? '本次保号截止' : '本周期到期日'}</span><strong>{formatDue(cycle?.dueDate || null)}</strong><em>{remaining === null ? '—' : remaining < 0 ? '已逾期 ' + Math.abs(remaining) + ' 天' : remaining === 0 ? '今天到期' : '还有 ' + remaining + ' 天'}</em></div>
               <div className="task-details">{task.type === 'credit_card' ? <><span>账单日每月 {cardConfig.statementDay} 日</span><span>{cardConfig.paymentMonthOffset === 1 ? '次月' : '当月'} {cardConfig.paymentDay} 日还款</span><span>提前提醒：{(cardConfig.reminderOffsets || [15, 7, 1, 0]).map(value => value + ' 天').join(' · ')}</span></> : task.type === 'sim' ? <><span>{simConfig.provider || '未填写运营商'} · {simConfig.numberMasked || '未填写号码'}</span><span>每 {simConfig.intervalDays} 天检查一次</span><span>提前提醒：{(simConfig.reminderOffsets || [30, 15, 7, 1, 0]).map(value => value + ' 天').join(' · ')}</span></> : <><span>{genericConfig.actionGuide}</span><span>{genericConfig.reminderOffsets.map(value => '提前 ' + value + ' 天').join(' · ')}</span></>}</div>
-              <div className="task-card-foot"><div className="task-reminder-meta"><span className="next-reminder">{task.enabled && task.nextReminderDate ? '下一提醒 ' + formatDue(task.nextReminderDate) : task.enabled ? '暂无待发送提醒' : '已暂停提醒'}</span><small className="last-reminder">{task.lastReminderDate ? '上次提醒 ' + formatDue(task.lastReminderDate) : '上次提醒：尚未发送'}</small></div><div className="card-actions">{task.enabled && cycle && cycle.status !== 'completed' && <button className="complete-button" onClick={() => { setCompleteTarget(task); setCompleteDate(today()); }}><CheckCircle2 size={15} /> 标记完成</button>}<button className="icon-button small" onClick={() => openEdit(task)} title="编辑"><Edit3 size={15} /></button><button className="icon-button small" onClick={() => toggleTask(task)} title={task.enabled ? '暂停' : '启用'}>{task.enabled ? <PauseCircle size={15} /> : <PlayCircle size={15} />}</button><button className="icon-button small danger-button" onClick={() => deleteTask(task)} title="删除"><Trash2 size={15} /></button></div></div>
+              <div className="task-card-foot"><div className="task-reminder-meta"><span className="next-reminder">{task.enabled && task.nextReminderDate ? '下一提醒 ' + formatDue(task.nextReminderDate) : task.enabled ? '暂无待发送提醒' : '已暂停提醒'}</span><small className="last-reminder">{task.lastReminderDate ? '上次提醒 ' + formatDue(task.lastReminderDate) : '上次提醒：尚未发送'}</small></div><div className="card-actions">{task.enabled && cycle && cycle.status !== 'completed' && <button className="complete-button" onClick={() => { setCompleteTarget(task); setCompleteDate(today()); setCompleteNote(''); setCompleteAmount(''); setCompleteBillDate(''); setCompleteFiles([]); }}><CheckCircle2 size={15} /> 标记完成</button>}<button className="icon-button small" onClick={() => openEdit(task)} title="编辑"><Edit3 size={15} /></button><button className="icon-button small" onClick={() => toggleTask(task)} title={task.enabled ? '暂停' : '启用'}>{task.enabled ? <PauseCircle size={15} /> : <PlayCircle size={15} />}</button><button className="icon-button small danger-button" onClick={() => deleteTask(task)} title="删除"><Trash2 size={15} /></button></div></div>
             </article>;
           })}</section>
         )}
@@ -380,7 +434,7 @@ export function ReminderPage() {
         </form>
       </div>}
 
-      {completeTarget && <div className="modal-backdrop" onMouseDown={() => setCompleteTarget(null)}><div className="complete-modal" onMouseDown={event => event.stopPropagation()}><div className="complete-icon"><CheckCircle2 size={24} /></div><h2>登记“{completeTarget.name}”已完成</h2><p>{completeTarget.type === 'sim' ? '请填写实际充值、消费或其他有效操作日期。' : '确认本期账单已经完成还款。'}</p><label className="form-label">实际完成日期<input type="date" value={completeDate} onChange={event => setCompleteDate(event.target.value)} /></label><label className="form-label">备注（可选）<textarea value={completeNote} onChange={event => setCompleteNote(event.target.value)} placeholder="例如：已开启自动还款" rows={3} /></label><div className="modal-foot"><button className="secondary-button" onClick={() => setCompleteTarget(null)}>取消</button><button className="primary-button" onClick={completeTask} disabled={saving}>{saving ? '保存中…' : '确认完成'}</button></div></div></div>}
+      {completeTarget && <div className="modal-backdrop" onMouseDown={() => { if (!saving) setCompleteTarget(null); }}><div className="complete-modal completion-proof-modal" onMouseDown={event => event.stopPropagation()}><div className="complete-icon"><CheckCircle2 size={24} /></div><h2>登记“{completeTarget.name}”已完成</h2><p>{completeTarget.type === 'sim' ? '请填写实际充值、消费或其他有效操作日期。' : '可同时登记金额、账单日期和完成证明。'}</p><div className="completion-proof-grid"><label className="form-label">实际完成日期<input type="date" value={completeDate} onChange={event => setCompleteDate(event.target.value)} /></label><label className="form-label">金额（元，可选）<input inputMode="decimal" value={completeAmount} onChange={event => setCompleteAmount(event.target.value)} placeholder="例如 128.50" /></label><label className="form-label">账单日期（可选）<input type="date" value={completeBillDate} onChange={event => setCompleteBillDate(event.target.value)} /></label><label className="form-label full">备注（可选）<textarea value={completeNote} onChange={event => setCompleteNote(event.target.value)} placeholder="例如：已开启自动还款" rows={3} /></label><label className="form-label full completion-file-picker">完成证明附件<input type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf" onChange={event => setCompleteFiles(Array.from(event.target.files || []).slice(0, 5))} />{completeFiles.length > 0 && <small>{completeFiles.map(file => file.name).join('、')}</small>}</label></div><div className="modal-foot"><button className="secondary-button" onClick={() => setCompleteTarget(null)} disabled={saving}>取消</button><button className="primary-button" onClick={completeTask} disabled={saving}>{saving ? '保存中…' : '确认完成'}</button></div></div></div>}
     </div>
   );
 }

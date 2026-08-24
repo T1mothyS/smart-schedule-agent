@@ -1234,15 +1234,15 @@ function DayView({
                           onClick={() => onClickSchedule(s)}
                         >
                           <div className="flex items-center gap-0.5">
-                            {isConflicting && (
-                              <span title="时间冲突" aria-label="时间冲突" className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full flex-shrink-0 text-white font-bold text-xs" style={{ backgroundColor: '#EF4444' }}>!</span>
-                            )}
-                            <button
-                              onClick={e => { e.stopPropagation(); onToggle(s.id); }}
-                              className="opacity-60 hover:opacity-100 flex-shrink-0"
-                            >
-                              {s.is_completed ? <CheckCircle2 className="w-3 h-3 text-green-500" /> : <Circle className="w-3 h-3" style={{ color: pColor.dot }} />}
-                            </button>
+                            <span className="schedule-status-slot compact">
+                              <button
+                                onClick={e => { e.stopPropagation(); onToggle(s.id); }}
+                                className="opacity-60 hover:opacity-100 flex-shrink-0"
+                              >
+                                {s.is_completed ? <CheckCircle2 className="w-3 h-3 text-green-500" /> : <Circle className="w-3 h-3" style={{ color: pColor.dot }} />}
+                              </button>
+                              {isConflicting && <span title="时间冲突" aria-label="时间冲突" className="schedule-conflict-dot">!</span>}
+                            </span>
                             <span className="schedule-title-primary schedule-title-compact truncate" style={{ color: s.is_completed ? '#9CA3AF' : pColor.dot }}>
                               {s.title}
                             </span>
@@ -1557,15 +1557,15 @@ function WeekView({
                   }}
                   onClick={() => onClickSchedule(s)}
                 >
-                  {conflictingIds?.has(s.id) && (
-                    <span title="时间冲突" aria-label="时间冲突" className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full flex-shrink-0 text-white font-bold text-xs" style={{ backgroundColor: '#EF4444' }}>!</span>
-                  )}
-                  <button
-                    onClick={e => { e.stopPropagation(); onToggle(s.id); }}
-                    className="flex-shrink-0"
-                  >
-                    {s.is_completed ? <CheckCircle2 className="w-3 h-3" /> : <Circle className="w-3 h-3" />}
-                  </button>
+                  <span className="schedule-status-slot compact">
+                    <button
+                      onClick={e => { e.stopPropagation(); onToggle(s.id); }}
+                      className="flex-shrink-0"
+                    >
+                      {s.is_completed ? <CheckCircle2 className="w-3 h-3" /> : <Circle className="w-3 h-3" />}
+                    </button>
+                    {conflictingIds?.has(s.id) && <span title="时间冲突" aria-label="时间冲突" className="schedule-conflict-dot">!</span>}
+                  </span>
                   <span className="opacity-70">{formatTime(s.start_time)}</span>
                   <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
                 </div>
@@ -1608,7 +1608,7 @@ function WeekView({
                           key={s.id}
                           data-schedule-id={s.id}
                           tabIndex={0}
-                          className="rounded px-1 py-0.5 cursor-pointer text-xs truncate mb-0.5 flex items-center gap-1"
+                          className="relative rounded px-1 py-0.5 cursor-pointer text-xs truncate mb-0.5 flex items-center gap-1"
                           style={{
                             backgroundColor: `${pColor.dot}22`,
                             borderLeft: `2.5px solid ${pColor.dot}`,
@@ -1617,16 +1617,7 @@ function WeekView({
                           }}
                           onClick={() => onClickSchedule(s)}
                         >
-                          {/* 冲突标记 */}
-                          {isConflicting && (
-                            <span 
-                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full flex-shrink-0 text-white font-bold text-xs"
-                              style={{ backgroundColor: '#EF4444', fontSize: '9px' }}
-                              title="时间冲突"
-                            >
-                              !
-                            </span>
-                          )}
+                          {isConflicting && <span className="schedule-conflict-overlay" title="时间冲突" aria-label="时间冲突">!</span>}
                           <span className="opacity-70">{formatTime(s.start_time)}</span><span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
                           <span
                             className="rounded px-0.5 flex-shrink-0"
@@ -1797,13 +1788,15 @@ function MonthView({
                         }}
                         onClick={event => { event.stopPropagation(); onClickSchedule?.(s); }}
                       >
-                        {isConflicting && <span title="时间冲突" aria-label="时间冲突" className="inline-flex items-center justify-center w-3 h-3 rounded-full flex-shrink-0 text-white font-bold text-xs" style={{ backgroundColor: '#EF4444', fontSize: '8px' }}>!</span>}
-                        <button
-                          onClick={e => { e.stopPropagation(); onToggle?.(s.id); }}
-                          className="flex-shrink-0"
-                        >
-                          {s.is_completed ? <CheckCircle2 className="w-2.5 h-2.5" /> : <Circle className="w-2.5 h-2.5" />}
-                        </button>
+                        <span className="schedule-status-slot compact">
+                          <button
+                            onClick={e => { e.stopPropagation(); onToggle?.(s.id); }}
+                            className="flex-shrink-0"
+                          >
+                            {s.is_completed ? <CheckCircle2 className="w-2.5 h-2.5" /> : <Circle className="w-2.5 h-2.5" />}
+                          </button>
+                          {isConflicting && <span title="时间冲突" aria-label="时间冲突" className="schedule-conflict-dot">!</span>}
+                        </span>
                         <span className="opacity-70 text-[10px]">{formatTime(s.start_time)}</span>
                         <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
                       </div>
@@ -1822,17 +1815,8 @@ function MonthView({
                 {timedEvents.slice(0, maxShow).map(s => {
                   const isConflicting = conflictingIds?.has(s.id);
                   return (
-                    <div key={s.id} className="flex items-center gap-0.5">
-                      {/* 冲突标记 */}
-                      {isConflicting && (
-                        <span 
-                          className="inline-flex items-center justify-center w-3 h-3 rounded-full flex-shrink-0 text-white font-bold text-xs"
-                          style={{ backgroundColor: '#EF4444', fontSize: '8px' }}
-                          title="时间冲突"
-                        >
-                          !
-                        </span>
-                      )}
+                    <div key={s.id} className="calendar-chip-conflict-slot flex items-center gap-0.5">
+                      {isConflicting && <span className="schedule-conflict-overlay" title="时间冲突" aria-label="时间冲突">!</span>}
                       <ScheduleChip schedule={s} compact onClick={onClickSchedule} />
                     </div>
                   );
@@ -2162,7 +2146,7 @@ export function CalendarView({
 
   const navigatePrev = () => {
     const d = new Date(currentDate);
-    if (viewMode === 'day') d.setDate(d.getDate() - 1);
+    if (viewMode === 'agenda' || viewMode === 'day') d.setDate(d.getDate() - 1);
     else if (viewMode === 'week') d.setDate(d.getDate() - 7);
     else { d.setMonth(d.getMonth() - 1); d.setDate(1); }
     updateCurrentDate(d);
@@ -2171,7 +2155,7 @@ export function CalendarView({
 
   const navigateNext = () => {
     const d = new Date(currentDate);
-    if (viewMode === 'day') d.setDate(d.getDate() + 1);
+    if (viewMode === 'agenda' || viewMode === 'day') d.setDate(d.getDate() + 1);
     else if (viewMode === 'week') d.setDate(d.getDate() + 7);
     else { d.setMonth(d.getMonth() + 1); d.setDate(1); }
     updateCurrentDate(d);

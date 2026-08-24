@@ -1,203 +1,179 @@
-/**
- * Electron 主进程入口
- */
-import { app, BrowserWindow, shell, Menu, Tray, nativeImage, Notification } from 'electron';
-import path from 'path';
-import { fileURLToPath } from 'url';
+/** Electron desktop shell for the hosted AI Calendar application. */
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  shell,
+  Tray,
+} from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
-// 主窗口
 let mainWindow: BrowserWindow | null = null;
-
-// 系统托盘
 let tray: Tray | null = null;
+let quitting = false;
+let rendererUrl = '';
 
-// 创建主窗口
-function createWindow() {
+function safeHttpUrl(value: string, allowLocalHttp: boolean): URL {
+  let parsed: URL;
+  try { parsed = new URL(value); }
+  catch { throw new Error('桌面端地址必须是完整 URL'); }
+  const local = ['127.0.0.1', 'localhost', '::1'].includes(parsed.hostname);
+  if (parsed.protocol !== 'https:' && !(allowLocalHttp && local && parsed.protocol === 'http:')) {
+    throw new Error('桌面端生产地址必须使用 HTTPS');
+  }
+  if (parsed.username || parsed.password) throw new Error('桌面端地址不能包含账号密码');
+  return parsed;
+}
+
+function resolveRendererUrl(): string {
+  if (isDev) return safeHttpUrl(process.env.ELECTRON_DEV_URL || 'http://localhost:5173', true).toString();
+  let bundledUrl = '';
+  const bundledConfig = path.join(__dirname, 'app-url.json');
+  if (fs.existsSync(bundledConfig)) {
+    try { bundledUrl = String(JSON.parse(fs.readFileSync(bundledConfig, 'utf8')).appUrl || ''); }
+    catch { throw new Error('安装包内的 app-url.json 已损坏'); }
+  }
+  const configured = process.env.ELECTRON_APP_URL || process.env.APP_URL || bundledUrl;
+  if (!configured) throw new Error('缺少 ELECTRON_APP_URL，安装包无法连接 AI Calendar 服务');
+  return safeHttpUrl(configured, false).toString();
+}
+
+function iconPath(): string | undefined {
+  const candidates = isDev
+    ? [path.resolve(__dirname, '../public/navigation-icons/schedule.png')]
+    : [path.resolve(__dirname, 'schedule.png')];
+  return candidates.find(candidate => fs.existsSync(candidate));
+}
+
+function openExternal(url: string): void {
+  try {
+    const parsed = safeHttpUrl(url, isDev);
+    void shell.openExternal(parsed.toString());
+  } catch {
+    // Ignore file:, javascript:, custom protocols, and malformed external URLs.
+  }
+}
+
+function createWindow(): void {
+  const icon = iconPath();
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
-    minWidth: 1000,
-    minHeight: 700,
-    title: '智能日程表',
-    icon: path.join(__dirname, '../public/icon.png'),
+    minWidth: 390,
+    minHeight: 640,
+    title: 'AI Calendar',
+    ...(icon ? { icon } : {}),
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
       preload: path.join(__dirname, 'preload.js'),
     },
-    show: false, // 先隐藏，等 ready-to-show 再显示
   });
 
-  // 加载应用
-  if (isDev) {
-    // 开发模式：从 Vite 开发服务器加载
-    mainWindow.loadURL('http://localhost:5173');
-    mainWindow.webContents.openDevTools();
-  } else {
-    // 生产模式：从构建目录加载
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-  }
+  const allowedOrigin = new URL(rendererUrl).origin;
+  void mainWindow.loadURL(rendererUrl);
+  if (isDev && process.env.ELECTRON_OPEN_DEVTOOLS === 'true') mainWindow.webContents.openDevTools();
 
-  // 窗口准备好后显示
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
-  });
-
-  // 处理外部链接
+  mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    try {
+      if (new URL(url).origin !== allowedOrigin) openExternal(url);
+    } catch { /* malformed URL is denied */ }
     return { action: 'deny' };
   });
-
-  // 窗口关闭时隐藏到托盘（可选）
-  mainWindow.on('close', (event) => {
-    if (process.platform !== 'darwin') {
-      // 非 macOS 系统直接退出
-      app.quit();
-    }
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    try {
+      if (new URL(url).origin === allowedOrigin) return;
+    } catch { /* deny malformed navigation */ }
+    event.preventDefault();
+    openExternal(url);
   });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
+  mainWindow.on('close', event => {
+    if (quitting || process.platform === 'darwin') return;
+    event.preventDefault();
+    mainWindow?.hide();
   });
+  mainWindow.on('closed', () => { mainWindow = null; });
 }
 
-// 创建系统托盘
-function createTray() {
-  // 创建一个简单的托盘图标
-  const icon = nativeImage.createFromDataURL(
-    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAA7AAAAOwBeShxvQAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAGHSURBVFiF7ZcxTsMwFIb/N0lLF6VgZWFhYOcKLDyBDXegsLGx8BAewNID2LgBS09AaWmhTZMQC6lS4iSO4ziO1f4kie348pMlO3YWQgghhBBCCCGE0BNjvAfOQoi/gL8Ef0IIf0BfgB4YAzPgEvgCpoD/gB8hxLqN7wP+gH7A2B7xM8CPEMJvgCj9gKk9YALcCCHOgO8BxC8g0x54FkK8DCEsgF/AdQjxdQ/4NYR4F0K8CyEuhBCXwOMQ4nUI8SqE+LEH/BJC3AshXgYQr4GPIcTHI+BXCPFzD/gthPgcQrwKIS6FEBfAkxDiVQjx4wj4LYT4egT8DiE+7QG/hRAfhxCfQ4gP+8DfIcSnI+C3EOJTCPEphPgUQrwH/B5CfDoCfocQn4YQn4cQn4YQH4+A3yHE5yPgtxDicwjx6Qj4LYT4fAT8DiE+HQG/Q4jPR8DvEOLTEfA7hPh8BPwOIT4fAb9DiM9HwO8Q4vMR8DuE+HIE/A4hPh0Bv0OIz0fA7xDi8xHwO4T4fAT8DiE+HQG/Q4hPR8DvEOLTEfA7hPh8BPwOIT4fAb9DiM9HwO8Q4vMR8DuE+HIE/A4hPh8Bv0OIz0fA7xDi8xHwO4T4fAT8DiE+HQG/Q4hPR8DvEOLTEfA7hPh8BPwOIT4fAb9DiM9HwO8Q4vMR8PsDvgH/AG5D4nQAAAAASUVORK5CYII='
-  );
-  
-  tray = new Tray(icon);
-  tray.setToolTip('智能日程表');
-  
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: '显示主窗口',
-      click: () => {
-        mainWindow?.show();
-      },
-    },
-    {
-      label: '退出',
-      click: () => {
-        app.quit();
-      },
-    },
-  ]);
-  
-  tray.setContextMenu(contextMenu);
-  
-  tray.on('click', () => {
-    mainWindow?.show();
-  });
+function createTray(): void {
+  const icon = iconPath();
+  if (!icon) return;
+  tray = new Tray(nativeImage.createFromPath(icon).resize({ width: 24, height: 24 }));
+  tray.setToolTip('AI Calendar');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '显示 AI Calendar', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+    { type: 'separator' },
+    { label: '退出', click: () => { quitting = true; app.quit(); } },
+  ]));
+  tray.on('click', () => { mainWindow?.show(); mainWindow?.focus(); });
 }
 
-// 创建应用菜单
-function createMenu() {
-  const template: Electron.MenuItemConstructorOptions[] = [
+function createMenu(): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: '文件',
       submenu: [
-        {
-          label: '新建对话',
-          accelerator: 'CmdOrCtrl+N',
-          click: () => {
-            mainWindow?.webContents.send('new-chat');
-          },
-        },
+        { label: '显示主窗口', accelerator: 'CmdOrCtrl+Shift+A', click: () => mainWindow?.show() },
         { type: 'separator' },
-        {
-          label: '退出',
-          accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Alt+F4',
-          click: () => {
-            app.quit();
-          },
-        },
+        { label: '退出', accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Alt+F4', click: () => { quitting = true; app.quit(); } },
       ],
     },
-    {
-      label: '编辑',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectAll' },
-      ],
-    },
-    {
-      label: '视图',
-      submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' },
-      ],
-    },
-    {
-      label: '窗口',
-      submenu: [
-        { role: 'minimize' },
-        { role: 'close' },
-        ...(process.platform === 'darwin'
-          ? [
-              { type: 'separator' as const },
-              { role: 'front' as const },
-            ]
-          : []),
-      ],
-    },
-  ];
-
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
+    { label: '编辑', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
+    { label: '视图', submenu: [{ role: 'reload' }, ...(isDev ? [{ role: 'toggleDevTools' as const }] : []), { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { role: 'togglefullscreen' }] },
+  ]));
 }
 
-// 显示系统通知
-export function showNotification(title: string, body: string) {
-  if (Notification.isSupported()) {
-    new Notification({ title, body }).show();
-  }
-}
+ipcMain.on('window-minimize', event => BrowserWindow.fromWebContents(event.sender)?.minimize());
+ipcMain.on('window-maximize', event => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) return;
+  if (window.isMaximized()) window.unmaximize();
+  else window.maximize();
+});
+ipcMain.on('window-close', event => BrowserWindow.fromWebContents(event.sender)?.close());
+ipcMain.handle('show-notification', (_event, input: unknown) => {
+  if (!Notification.isSupported() || !input || typeof input !== 'object') return false;
+  const record = input as Record<string, unknown>;
+  const title = String(record.title || '').trim().slice(0, 120);
+  const body = String(record.body || '').trim().slice(0, 500);
+  if (!title) return false;
+  new Notification({ title, body }).show();
+  return true;
+});
 
-// 导出主窗口实例
-export function getMainWindow() {
-  return mainWindow;
-}
-
-// App 事件
 app.whenReady().then(() => {
+  try { rendererUrl = resolveRendererUrl(); }
+  catch (error) {
+    dialog.showErrorBox('AI Calendar 无法启动', error instanceof Error ? error.message : '桌面端配置不正确');
+    app.quit();
+    return;
+  }
   createMenu();
   createWindow();
   createTray();
-
   app.on('activate', () => {
-    // macOS: 点击 Dock 图标时重新创建窗口
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    } else {
-      mainWindow?.show();
-    }
+    if (!mainWindow) createWindow();
+    else { mainWindow.show(); mainWindow.focus(); }
   });
 });
 
-// 所有窗口关闭时
+app.on('before-quit', () => { quitting = true; });
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  if (process.platform === 'darwin') return;
+  // The tray intentionally keeps the desktop shell alive.
 });

@@ -1,0 +1,125 @@
+import type { Schedule } from './schedule-store.js';
+import type { DailyWeather } from './weather-service.js';
+
+const CATEGORY_META: Record<string, { label: string; color: string; background: string }> = {
+  work: { label: '工作', color: '#2563eb', background: '#eff6ff' },
+  life: { label: '生活', color: '#16a34a', background: '#f0fdf4' },
+  travel: { label: '出行', color: '#d97706', background: '#fffbeb' },
+  social: { label: '社交', color: '#9333ea', background: '#faf5ff' },
+  health: { label: '健康', color: '#dc2626', background: '#fef2f2' },
+  other: { label: '其他', color: '#64748b', background: '#f8fafc' },
+};
+
+export function escapeEmailHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function greeting(hour: number): string {
+  if (hour < 6) return '夜深了';
+  if (hour < 11) return '早上好';
+  if (hour < 14) return '中午好';
+  if (hour < 18) return '下午好';
+  return '晚上好';
+}
+
+function dateLabel(date: string): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+  return `${year}年${month}月${day}日 ${weekday}`;
+}
+
+function scheduleTime(schedule: Schedule): string {
+  if (schedule.all_day) return '全天';
+  const start = schedule.start_time?.slice(11, 16) || '待定';
+  const end = schedule.end_time?.slice(11, 16);
+  return end && end !== start ? `${start}–${end}` : start;
+}
+
+function weatherLine(weather: DailyWeather | null, locationName?: string | null, weatherError?: string | null): string {
+  if (weather) {
+    const temperature = weather.temperatureMin == null || weather.temperatureMax == null
+      ? ''
+      : ` · ${Math.round(weather.temperatureMin)}～${Math.round(weather.temperatureMax)}℃`;
+    const rain = weather.precipitationProbabilityMax == null ? '' : ` · 降雨概率最高 ${Math.round(weather.precipitationProbabilityMax)}%`;
+    return `${locationName ? escapeEmailHtml(locationName) + ' · ' : ''}${escapeEmailHtml(weather.description)}${temperature}${rain}`;
+  }
+  if (weatherError) return `${locationName ? escapeEmailHtml(locationName) + ' · ' : ''}天气暂不可用，不影响日程提醒`;
+  return locationName ? `${escapeEmailHtml(locationName)} · 尚未取得天气信息` : '设置常驻城市或区县后，可在邮件中查看天气';
+}
+
+export function renderDailyReminderEmail(input: {
+  date: string;
+  hour: number;
+  schedules: Schedule[];
+  appUrl: string;
+  locationName?: string | null;
+  weather?: DailyWeather | null;
+  weatherError?: string | null;
+}): { subject: string; html: string } {
+  const schedules = [...input.schedules].sort((left, right) => left.start_time.localeCompare(right.start_time));
+  const pending = schedules.filter(schedule => !schedule.is_completed);
+  const allCompleted = schedules.length > 0 && pending.length === 0;
+  const subject = schedules.length === 0
+    ? '太好了，今天没有安排日程'
+    : allCompleted
+      ? '今天的安排已全部完成'
+      : `${input.date.slice(5)} 今日还有 ${pending.length} 项安排`;
+  const intro = schedules.length === 0
+    ? '今天没有安排，留一点时间给休息、阅读或临时灵感。'
+    : allCompleted
+      ? '今天安排的事项已经全部完成，辛苦了。'
+      : `今天共有 ${schedules.length} 项安排，其中 ${pending.length} 项尚未完成。`;
+  const rows = schedules.map(schedule => {
+    const meta = CATEGORY_META[schedule.category] || CATEGORY_META.other;
+    const detailRows = [
+      schedule.location ? `<div style="margin-top:5px;color:#475569;font-size:13px">地点：${escapeEmailHtml(schedule.location)}</div>` : '',
+      schedule.notes ? `<div style="margin-top:5px;color:#64748b;font-size:13px;line-height:1.55">备注：${escapeEmailHtml(schedule.notes)}</div>` : '',
+    ].join('');
+    return `
+      <tr><td style="padding:0 0 12px">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:${meta.background};border:1px solid #e2e8f0;border-left:5px solid ${meta.color};border-radius:10px">
+          <tr>
+            <td style="padding:14px 15px;vertical-align:top">
+              <div style="font-size:12px;color:${meta.color};font-weight:700;margin-bottom:5px">${meta.label} · ${escapeEmailHtml(scheduleTime(schedule))}</div>
+              <div style="font-size:16px;line-height:1.45;color:#0f172a;font-weight:700;${schedule.is_completed ? 'text-decoration:line-through;opacity:.65' : ''}">${escapeEmailHtml(schedule.title)}</div>
+              ${detailRows}
+            </td>
+            <td style="width:74px;padding:14px 14px 14px 4px;text-align:right;vertical-align:top;font-size:12px;color:${schedule.is_completed ? '#15803d' : '#64748b'}">${schedule.is_completed ? '已完成' : schedule.priority === 'high' ? '高优先级' : '待处理'}</td>
+          </tr>
+        </table>
+      </td></tr>`;
+  }).join('');
+
+  return {
+    subject,
+    html: `<!doctype html>
+<html lang="zh-CN"><body style="margin:0;padding:0;background:#f1f5f9;font-family:Arial,'PingFang SC','Microsoft YaHei',sans-serif;color:#0f172a">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;background:#f1f5f9">
+    <tr><td align="center" style="padding:24px 12px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:620px;border-collapse:separate;background:#ffffff;border:1px solid #e2e8f0;border-radius:16px">
+        <tr><td style="padding:28px 26px 16px">
+          <div style="font-size:13px;color:#2563eb;font-weight:700;letter-spacing:.04em">AI CALENDAR · 每日提醒</div>
+          <h1 style="font-size:24px;line-height:1.35;margin:9px 0 6px;color:#0f172a">${greeting(input.hour)}</h1>
+          <div style="font-size:14px;color:#64748b">${dateLabel(input.date)}</div>
+        </td></tr>
+        <tr><td style="padding:0 26px 18px">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:#eff6ff;border-radius:10px">
+            <tr><td style="padding:12px 14px;font-size:13px;line-height:1.6;color:#1e3a8a">${weatherLine(input.weather || null, input.locationName, input.weatherError)}</td></tr>
+          </table>
+        </td></tr>
+        <tr><td style="padding:0 26px 15px;font-size:14px;line-height:1.7;color:#475569">${intro}</td></tr>
+        ${schedules.length ? `<tr><td style="padding:0 26px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">${rows}</table></td></tr>` : ''}
+        <tr><td style="padding:10px 26px 28px;text-align:center">
+          <a href="${escapeEmailHtml(input.appUrl)}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:11px 20px;border-radius:9px">打开今日行动中心</a>
+          <div style="margin-top:16px;font-size:11px;line-height:1.5;color:#94a3b8">天气来自 Open-Meteo；提醒内容以 AI Calendar 当前数据为准。</div>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`,
+  };
+}

@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import type { CreditCardConfig, GenericReminderConfig, SimConfig } from './reminder-store.js';
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicalendar-test-'));
 process.env.DATA_DIR = tempDir;
@@ -19,6 +21,7 @@ const actionCenter = await import('./action-center.js');
 const scheduleCompletion = await import('./schedule-completion-service.js');
 const email = await import('./email-service.js');
 const emailImport = await import('./email-import-service.js');
+const dailyReportTokens = await import('./daily-report-token-service.js');
 
 await db.initDb();
 await schedules.initScheduleDb();
@@ -42,6 +45,12 @@ test('不存在的账单日按该月最后一天计算', () => {
   assert.equal(reminders.clampDateForMonth(2026, 4, 31), '2026-04-30');
 });
 
+test('同一时刻按用户时区计算各自的本地日期', () => {
+  const instant = new Date('2026-08-24T16:30:00.000Z');
+  assert.equal(reminders.todayInTimezone('Asia/Shanghai', instant), '2026-08-25');
+  assert.equal(reminders.todayInTimezone('America/Los_Angeles', instant), '2026-08-24');
+});
+
 test('未来年度周期使用明确填写的本期到期日，编辑后同步当前周期', () => {
   const task = reminders.createReminderTask({
     userId,
@@ -61,7 +70,7 @@ test('未来年度周期使用明确填写的本期到期日，编辑后同步�
 
   const updated = reminders.updateReminderTask(task.id, userId, {
     config: {
-      ...(task.config as reminders.GenericReminderConfig),
+      ...(task.config as GenericReminderConfig),
       rule: { frequency: 'yearly', anchorDate: '2028-05-19', month: 5, dayOfMonth: 19, interval: 1, advancePolicy: 'calendar' },
     },
   });
@@ -90,7 +99,7 @@ test('编辑 SIM 卡提前天数会重建当前周期的待发送提醒', () => 
   const firstNextDate = task.nextReminderDate;
   const updated = reminders.updateReminderTask(task.id, userId, {
     config: {
-      ...(task.config as reminders.SimConfig),
+      ...(task.config as SimConfig),
       reminderOffsets: [3],
     },
   });
@@ -119,7 +128,7 @@ test('编辑信用卡日期会同步当前周期的账单日和还款日', () =>
   const [year, month] = periodMonth.split('-').map(Number);
   const updated = reminders.updateReminderTask(task.id, userId, {
     config: {
-      ...(task.config as reminders.CreditCardConfig),
+      ...(task.config as CreditCardConfig),
       statementDay: 5,
       paymentDay: 28,
       paymentMonthOffset: 0,
@@ -144,6 +153,40 @@ test('邮箱导入令牌只接受完整的 32 位十六进制格式', () => {
     '0123456789abcdef0123456789abcdef',
   );
   assert.equal(emailImport.extractEmailImportToken('[AI-IMPORT short-token] 测试'), null);
+});
+
+test('邮箱验证码以带密钥摘要保存并仍可正常校验', () => {
+  const now = new Date();
+  db.createEmailCode({
+    id: 'email-code-hash-test',
+    email: 'test@example.com',
+    code: '123456',
+    purpose: 'register',
+    expires_at: new Date(now.getTime() + 60_000).toISOString(),
+    created_at: now.toISOString(),
+  });
+  const verified = db.verifyEmailCode('test@example.com', '123456', 'register');
+  assert.ok(verified);
+  assert.notEqual(verified?.code, '123456');
+  assert.equal(db.verifyEmailCode('test@example.com', '000000', 'register'), undefined);
+});
+
+test('日报令牌只保存哈希，可轮换、撤销并按账号隔离', () => {
+  const generated = dailyReportTokens.generateDailyReportToken(userId);
+  assert.match(generated.token, /^drr_/);
+  const stored = db.getDailyReportToken(userId)!;
+  assert.notEqual(stored.token_hash, generated.token);
+  assert.equal(stored.token_hash, dailyReportTokens.hashDailyReportToken(generated.token));
+  assert.deepEqual(dailyReportTokens.authenticateDailyReportToken(generated.token), { userId });
+
+  const rotated = dailyReportTokens.generateDailyReportToken(userId);
+  assert.notEqual(rotated.token, generated.token);
+  assert.equal(dailyReportTokens.authenticateDailyReportToken(generated.token), null);
+  assert.deepEqual(dailyReportTokens.authenticateDailyReportToken(rotated.token), { userId });
+
+  dailyReportTokens.revokeDailyReportToken(userId);
+  assert.equal(dailyReportTokens.authenticateDailyReportToken(rotated.token), null);
+  assert.equal(dailyReportTokens.getDailyReportTokenStatus(userId).active, false);
 });
 
 test('日历按用户隔离并自动迁移默认日历', () => {
@@ -290,6 +333,33 @@ test('行动中心聚合待办并记录完成证明', () => {
   assert.equal(updated?.note, '更新后的证明，金额 123.45 元');
 });
 
+test('完成证明拒绝非法金额、日期和过长备注', () => {
+  assert.throws(() => activity.createCompletion({
+    userId,
+    sourceType: 'schedule',
+    sourceId: 'invalid-completion',
+    amountCents: -1,
+  }), /金额/);
+  assert.throws(() => activity.createCompletion({
+    userId,
+    sourceType: 'schedule',
+    sourceId: 'invalid-completion',
+    billDate: '2026-99-99',
+  }), /账单日期/);
+  assert.throws(() => activity.createCompletion({
+    userId,
+    sourceType: 'schedule',
+    sourceId: 'invalid-completion',
+    billDate: '2026-02-31',
+  }), /账单日期/);
+  assert.throws(() => activity.createCompletion({
+    userId,
+    sourceType: 'schedule',
+    sourceId: 'invalid-completion',
+    note: 'x'.repeat(10_001),
+  }), /完成备注/);
+});
+
 test('行动中心显示未完成的历史待办，并按用户时区识别带偏移量的今天', () => {
   const today = reminders.todayInTimezone();
   const overdue = schedules.createSchedule({
@@ -400,6 +470,79 @@ test('用户加密备份可检查并合并恢复', () => {
   assert.throws(() => backups.inspectUserBackup(damaged, password), /密码错误|损坏/);
   const restored = backups.restoreUserBackup(userId, encrypted, password, 'merge') as any;
   assert.equal(restored.mode, 'merge');
+});
+
+test('跨账号恢复会重映射关联 ID，替换恢复会清理旧附件文件', () => {
+  const targetUserId = 'other-session-user';
+  const password = 'cross-account-password';
+  const sourceScheduleIds = new Set(schedules.getAllSchedules(userId).map(item => item.id));
+  const encrypted = backups.createUserBackup(userId, password);
+  const merged = backups.restoreUserBackup(targetUserId, encrypted, password, 'merge') as any;
+  assert.equal(merged.idsRemapped, true);
+  const targetSchedules = schedules.getAllSchedules(targetUserId);
+  assert.ok(targetSchedules.length > 0);
+  assert.equal(targetSchedules.some(item => sourceScheduleIds.has(item.id)), false);
+
+  const completion = activity.createCompletion({
+    userId: targetUserId,
+    sourceType: 'schedule',
+    sourceId: targetSchedules[0].id,
+    note: '等待替换恢复清理',
+  });
+  const uniquePdf = Buffer.from('%PDF-1.4\nunique-target-attachment\n%%EOF', 'utf8');
+  const orphan = attachments.saveBase64Attachment({
+    userId: targetUserId,
+    completionId: completion.id,
+    originalName: 'old-proof.pdf',
+    mimeType: 'application/pdf',
+    base64: uniquePdf.toString('base64'),
+  });
+  const orphanPath = path.join(tempDir, orphan.storagePath);
+  assert.equal(fs.existsSync(orphanPath), true);
+
+  const replaced = backups.restoreUserBackup(targetUserId, encrypted, password, 'replace') as any;
+  assert.equal(replaced.idsRemapped, true);
+  assert.equal(fs.existsSync(orphanPath), false);
+  assert.equal(activity.getAttachment(orphan.id, targetUserId), null);
+});
+
+test('全站恢复统一替换四个数据库和附件且不遗留暂存文件', () => {
+  const previousKey = process.env.BACKUP_ENCRYPTION_KEY;
+  const previousMaintenance = process.env.MAINTENANCE_MODE;
+  process.env.BACKUP_ENCRYPTION_KEY = 'system-restore-test-password';
+  process.env.MAINTENANCE_MODE = 'true';
+  try {
+    const attachmentRoot = attachments.attachmentsRoot();
+    const originalAttachment = path.join(attachmentRoot, 'system-restore-test', 'proof.txt');
+    fs.mkdirSync(path.dirname(originalAttachment), { recursive: true });
+    fs.writeFileSync(originalAttachment, 'original attachment', 'utf8');
+    const snapshot = backups.createSystemSnapshot(false);
+    const encrypted = backups.readSystemSnapshot(snapshot.filename);
+    const databaseNames = ['chat.db', 'schedule.db', 'reminder.db', 'activity.db'];
+    const expectedHashes = new Map(databaseNames.map(name => [
+      name,
+      crypto.createHash('sha256').update(fs.readFileSync(path.join(tempDir, name))).digest('hex'),
+    ]));
+
+    for (const name of databaseNames) fs.appendFileSync(path.join(tempDir, name), 'changed-after-snapshot');
+    fs.writeFileSync(originalAttachment, 'changed attachment', 'utf8');
+    fs.writeFileSync(path.join(attachmentRoot, 'extra.txt'), 'remove me', 'utf8');
+
+    backups.restoreSystemSnapshot(encrypted, 'RESTORE AI CALENDAR');
+
+    for (const name of databaseNames) {
+      const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(tempDir, name))).digest('hex');
+      assert.equal(actual, expectedHashes.get(name));
+    }
+    assert.equal(fs.readFileSync(originalAttachment, 'utf8'), 'original attachment');
+    assert.equal(fs.existsSync(path.join(attachmentRoot, 'extra.txt')), false);
+    assert.equal(fs.readdirSync(tempDir).some(name => name.includes('.restore-') || name.includes('.pre-restore-')), false);
+  } finally {
+    if (previousKey === undefined) delete process.env.BACKUP_ENCRYPTION_KEY;
+    else process.env.BACKUP_ENCRYPTION_KEY = previousKey;
+    if (previousMaintenance === undefined) delete process.env.MAINTENANCE_MODE;
+    else process.env.MAINTENANCE_MODE = previousMaintenance;
+  }
 });
 
 test.after(() => {

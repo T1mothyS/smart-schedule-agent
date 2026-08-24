@@ -48,8 +48,8 @@ export function LoginPage() {
       MessagePlugin.warning('请输入有效的邮箱地址');
       return;
     }
-    if (password.length < 6) {
-      MessagePlugin.warning('密码至少6位');
+    if (password.length < 8) {
+      MessagePlugin.warning('密码至少8位');
       return;
     }
     setSending(true);
@@ -92,8 +92,8 @@ export function LoginPage() {
         MessagePlugin.warning('两次密码不一致');
         return;
       }
-      if (password.length < 6) {
-        MessagePlugin.warning('密码至少6位');
+      if (password.length < 8) {
+        MessagePlugin.warning('密码至少8位');
         return;
       }
       setLoading(true);

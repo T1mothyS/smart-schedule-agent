@@ -21,6 +21,8 @@ export interface ActionItem {
   completionId: string | null;
   proof: {
     note: string | null;
+    amountCents: number | null;
+    currency: string;
     billDate: string | null;
     attachments: Array<{ id: string; originalName: string; mimeType: string; sizeBytes: number }>;
   } | null;
@@ -100,6 +102,8 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
 
   const proofFor = (completion?: activityStore.CompletionRecord | null): ActionItem['proof'] => completion ? {
     note: completion.note,
+    amountCents: completion.amountCents,
+    currency: completion.currency,
     billDate: completion.billDate,
     attachments: activityStore.listAttachments(userId, completion.id).map(file => ({
       id: file.id,

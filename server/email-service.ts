@@ -6,6 +6,10 @@
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import type { ReminderCycle, ReminderTask, SimConfig, CreditCardConfig, GenericReminderConfig } from './reminder-store.js';
+import * as db from './db.js';
+import { getSchedulesByDate } from './schedule-store.js';
+import { renderDailyReminderEmail } from './daily-email-template.js';
+import { getDailyWeather } from './weather-service.js';
 
 const OFFICIAL_SENDER_EMAIL = 'aicalendarofficial@163.com';
 
@@ -140,38 +144,39 @@ export async function sendVerificationEmail(to: string, code: string, purpose: '
 }
 
 // 发送每日提醒邮件
-export async function sendDailyReminderEmail(to: string, userId: string): Promise<void> {
-  // 动态导入避免循环依赖
-  const { getSchedulesByDate } = await import('./schedule-store.js');
-  const { formatScheduleList } = await import('./schedule-format.js');
-
-  const today = new Date();
-  const dateStr = dateInTimezone(today);
+export async function sendDailyReminderEmail(to: string, userId: string, dateOverride?: string): Promise<void> {
+  const preference = db.getReminder(userId);
+  const timezone = preference?.timezone || 'Asia/Shanghai';
+  const dateStr = dateOverride || dateInTimezone(new Date(), timezone);
   const schedules = getSchedulesByDate(dateStr, userId);
-  const content = formatScheduleList(schedules, today);
-  const htmlContent = escapeHtml(content)
-    .replace(/\n/g, '<br>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  const totalCount = schedules.length;
-
-  const html = `
-    <div style="font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f0f4ff; min-height: 100vh;">
-      <div style="background: #fff; border-radius: 16px; padding: 32px; box-shadow: 0 4px 20px rgba(0,0,0,0.1);">
-        <h2 style="color: #1a1a1a; font-size: 22px; margin-bottom: 8px;">📅 ${today.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })} 日程提醒</h2>
-        <p style="color: #6b7280; font-size: 14px; margin-bottom: 24px;">来自 AI Calendar 的每日提醒</p>
-        <div style="background: #f9fafb; border-radius: 12px; padding: 24px; line-height: 2; color: #374151; font-size: 15px; white-space: pre-line;">${htmlContent}</div>
-        <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #e5e7eb; text-align: center;">
-          <a href="${process.env.APP_URL || 'http://47.95.114.137:3000/schedule'}" style="display: inline-block; background: linear-gradient(135deg, #3b82f6, #6366f1); color: #fff; padding: 12px 32px; border-radius: 8px; text-decoration: none; font-size: 15px; font-weight: 500;">打开 AI Calendar</a>
-        </div>
-      </div>
-    </div>
-  `;
+  let weather = null;
+  let weatherError: string | null = null;
+  if (preference?.home_latitude != null && preference.home_longitude != null) {
+    try {
+      weather = await getDailyWeather({
+        latitude: Number(preference.home_latitude),
+        longitude: Number(preference.home_longitude),
+        timezone: preference.home_timezone || timezone,
+      }, dateStr);
+    } catch (error) {
+      weatherError = error instanceof Error ? error.message : '天气服务暂不可用';
+    }
+  }
+  const rendered = renderDailyReminderEmail({
+    date: dateStr,
+    hour: preference?.hour ?? 8,
+    schedules,
+    appUrl: process.env.APP_URL || 'http://localhost:3000/today',
+    locationName: preference?.home_location_name || null,
+    weather,
+    weatherError,
+  });
 
   await sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
-    subject: `📅 ${today.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })} 您有 ${totalCount} 项安排待处理`,
-    html,
+    subject: rendered.subject,
+    html: rendered.html,
   });
 }
 

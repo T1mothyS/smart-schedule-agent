@@ -20,8 +20,9 @@ AI Calendar 是面向个人和小规模使用的智能日程与周期事务中�
 - 邮件、站内消息和浏览器通知，包含免打扰、失败重试和发送记录；
 - 完成证明，包括备注、金额、账单日期、图片和 PDF 附件；
 - 用户加密备份/恢复、管理员全站快照和可选阿里云 OSS 离机备份；
-- AI 从自然语言或账单截图生成待确认草稿；
+- AI 普通常识问答、基于 Open-Meteo 的真实天气查询，以及从自然语言或账单截图生成待确认草稿；
 - 可选通过 163 邮箱 IMAP 接收转发邮件并生成待确认草稿；
+- 可读 JSON/CSV 导出、只读日报令牌和外部日报日程接口；
 - Web 页面和 Electron 桌面端。
 
 产品行为的基本原则：
@@ -96,17 +97,18 @@ AI Calendar 是面向个人和小规模使用的智能日程与周期事务中�
 | .env.example | 无秘密的环境变量模板 | 新增配置变量时同步更新并提交 |
 | dist/ | Vite 生成的 Web 静态产物 | 不手工编辑，由 npm run build:client 生成 |
 | dist-electron/ | Electron 编译产物 | 不手工编辑，由 npm run build:electron 生成 |
+| dist-desktop/ | Electron 最小打包暂存目录 | 不手工编辑，不携带服务器端生产依赖 |
 | release/ | Electron 安装包输出目录 | 只作为打包产物，不作为 Web 服务部署源 |
-| server/public/ | 历史静态产物目录 | 当前生产服务读取 dist/，不要把这里当作主前端源码 |
 | node_modules/ | npm 依赖安装目录 | 不提交，需要时用 npm ci 重建 |
 | .git/ | 本地版本、分支和 reflog | 只通过 Git 命令使用，不手工修改内部文件 |
 | README.md | 项目能力、配置、目录和常见问题 | 行为或配置变化时同步更新 |
 | DEPLOY.md | 阿里云、Nginx、PM2、升级、备份和回滚说明 | 生产操作的主要参考 |
 | deploy.sh | 首次服务器部署的准备步骤 | 不用于普通版本升级 |
 | deploy-continue.sh | 上传代码后的安装、检查、构建和 PM2 启动/重启 | 手动上传或首次部署时使用 |
-| DEVELOPMENT.md | 原始/较长的开发参考 | 与当前源码或 README.md 冲突时，以当前实现和当前 README 为准 |
+| scripts/ | 可重复执行的维护、迁移和构建辅助脚本 | 默认安全模式，不写入秘密；破坏性动作必须要求显式参数 |
+| electron-builder.yml | Electron 最小桌面壳打包配置 | 打包项目目录必须保持为 dist-desktop/，不得携带服务器依赖 |
 
-源码、生成物和运行数据的边界必须保持清晰：修改 src/、server/ 或 electron/，不要直接修改 dist/、server/public/ 或 data/ 来“修复”问题。
+源码、生成物和运行数据的边界必须保持清晰：修改 src/、server/、electron/ 或 scripts/，不要直接修改 dist/ 或 data/ 来“修复”问题。
 
 ## 4. 技术结构和运行方式
 
@@ -360,7 +362,7 @@ P0/P1 任务先于视觉优化和架构扩展。只有当用户量、附件量�
 
     $releaseId = "workspace-" + (Get-Date -Format "yyyyMMdd-HHmmss")
     $archivePath = Join-Path $env:TEMP "smart-schedule-$releaseId.tar.gz"
-    tar -czf $archivePath --exclude=node_modules --exclude=data --exclude=.env --exclude=.git --exclude=*.tar.gz dist public server src electron package.json package-lock.json index.html vite.config.ts tsconfig.json tsconfig.node.json tsconfig.electron.json tailwind.config.js postcss.config.js .env.example .gitignore deploy.sh deploy-continue.sh DEPLOY.md README.md DEVELOPMENT.md design-qa.md go.bat
+    tar -czf $archivePath --exclude=node_modules --exclude=data --exclude=.env --exclude=.git --exclude=*.tar.gz dist public server src electron scripts package.json package-lock.json index.html vite.config.ts tsconfig.json tsconfig.node.json tsconfig.electron.json tailwind.config.js postcss.config.js .env.example .gitignore deploy.sh deploy-continue.sh DEPLOY.md README.md design-qa.md go.bat
     Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath
 
 通过已有 SSH/SCP 入口上传到服务器临时位置，并在服务器再次执行 `sha256sum`，确认本地和服务器的 SHA256 完全一致。不要把服务器地址、密钥、`.env` 或用户数据写入仓库或对话。
@@ -419,7 +421,7 @@ P0/P1 任务先于视觉优化和架构扩展。只有当用户量、附件量�
 
 ### 8.4 首次部署或无法使用 Git 时
 
-首次部署使用 deploy.sh 准备 Node.js 20、PM2 和目录，再把代码放到 ~/smart-schedule-agent，最后使用 deploy-continue.sh 完成安装、检查、构建和启动。
+首次部署使用 deploy.sh 准备 Node.js 22、PM2 和目录，再把代码放到 ~/smart-schedule-agent，最后使用 deploy-continue.sh 完成安装、检查、构建和启动。当前工具链要求至少 Node.js 22.12；升级生产前必须先核对实际版本并保留回滚路径。
 
 项目没有记录固定的 SCP、SFTP、SSH 上传地址或服务器密码，因此不要凭空生成主机地址、密钥参数或传输命令。普通版本升级优先走 GitHub + git pull --ff-only；手动压缩包上传只在服务器无法访问 GitHub 或任务明确要求时使用。
 
@@ -599,13 +601,23 @@ Git 历史显示项目已经经历了基础架构、日历工作区、AI 客户�
 - 路径说明：`APP_URL` 是带 `/today` 的页面入口，公网 API 和静态资源由根路径提供；`/today/api/health` 会回退到前端页面，因此健康检查以根路径 `/api/health` 为准。
 - Git/部署状态：提交 `0547280` 已上线；本条部署记录随后建立本地文档 checkpoint，未推送。
 
+### 2026-08-24：功能改进计划与全项目审计修复
+
+- 用户意图：落实下载目录中由对话 `01a02e44-c3a9-7a52-aef2-ba1467ad5376` 形成的功能计划，并把本轮全项目审计确认的缺陷、冗余和规范偏差一并修复；保持方案简单、可逆，不直接部署生产。
+- 新功能：AI 助手支持普通问答和基于 Open-Meteo 的真实天气查询，设置中可搜索并保存常驻城市/区县；AI 正文采用最大 `960px` 阅读栏。日历增加前后日期导航、滚动与选中日期同步提示、固定冲突时段显示；完成记录支持金额、账单日期和附件。每日邮件按问候、天气、分类日程和完成状态生成兼容邮件客户端的内联样式正文；设置页增加可读 JSON/CSV 导出，以及只显示一次明文、数据库只存哈希的只读日报令牌。
+- 日报联动：在 `C:\Users\Elysia\Documents\Codex\2026-08-05\日报` 增加标准库实现的只读日程读取器、示例配置、测试和日报章节；明确区分“当天 0 条日程”“鉴权失败”和“接口不可用”，令牌撤销后立即失效。日报项目修改前备份在 `var/checkpoints/calendar-integration-20260824-093440`。
+- 审计修复：认证改为每次请求核对实时用户状态和 `auth_version`；限制用户及日历更新字段并补齐跨账号所有权检查；修复 AI 日程更新返回值、部分失败重复执行、周期事项创建后的日历同步边界、完成记录幂等、严格日期校验和附件失败反馈；修复提醒迁移、按账号时区运行每日提醒、备份跨账号 ID 重映射，以及四个数据库与附件的全站恢复回滚。管理员清空或删除用户前必须核对邮箱并先生成加密系统快照；验证码改为带密钥摘要保存。旧数据库 chat WAL 提供默认 dry-run 的核对脚本和启动保护，审计前备份位于忽略目录 `data/pre-fix-backups/`。
+- 安全与维护：新增安全响应头、请求体上限、接口分级限流和有界内存缓存；普通问答不再加载用户日程上下文，日志不再写入用户 AI 正文，设置接口不再回传已保存 API Key 明文，自定义 CodeBuddy 地址仅接受公网 HTTPS 域名；用户级 AI 凭据和模型统一应用到聊天、模型检查和邮箱导入。修复依赖审计并固定 Node.js `>=22.12.0`。Electron 改为最小远程桌面壳，只允许生产 HTTPS 入口并启用沙箱、上下文隔离和导航校验；打包不再携带服务器依赖。删除未被当前产品使用的旧 Chat 前端、旧物理 API 实现、过时 `server/public` 构建物和重复 `DEVELOPMENT.md`。
+- 验证结果：主项目 `npm run typecheck`、54 项 `npm test`、通过 npm 官方 registry 执行的 `npm audit --audit-level=high`（0 vulnerabilities）和生产构建通过；Windows Electron 解包目录构建通过，`app.asar` 仅包含桌面壳必要文件。隔离临时数据目录的首轮 API 烟雾测试通过 31 项断言，管理与输入边界复测通过 23 项断言；最后又通过真实 HTTP 确认重复完成只保留一条记录及非法日期返回 `400`，所有隔离测试均未启动后台任务或 SMTP。日报项目 88 项 Python 测试通过，并以临时令牌完成一次跨项目读取后撤销。
+- 未验证内容：当前应用内浏览器运行环境没有可用浏览器实例，因此最终 UI 没有完成真实截图、窄屏、hover/selected/loading/empty/error 状态复核；生产服务器、真实 SMTP/IMAP、真实用户数据恢复和部署均未执行。Vite 仍提示主 JavaScript chunk 超过 500 kB，属于性能风险而非本轮功能错误。
+- Git/部署状态：在 `feature/calendar-improvements-audit-fixes` 分支建立本地 checkpoint，未 push、未部署；本地运行数据备份和日报项目 checkpoint 均不进入 Git。本轮不发送真实邮件，不修改生产服务器。
+
 ## 13. 参考文件
 
 - README.md：当前能力、配置、目录、常见问题和资源边界；
 - DEPLOY.md：阿里云、Nginx、PM2、备份、升级和回滚；
 - deploy.sh：首次部署准备；
 - deploy-continue.sh：上传代码后的安装、检查、构建和启动；
-- DEVELOPMENT.md：较完整的历史开发参考；
 - package.json：npm scripts、依赖和 Electron 打包配置；
 - .env.example：安全的环境变量模板；
 - .gitignore：禁止进入 Git 的运行和构建文件。
