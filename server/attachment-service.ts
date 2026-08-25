@@ -79,6 +79,18 @@ export function deleteAttachmentFileIfUnused(record: activityStore.AttachmentRec
   if (absolutePath.startsWith(root + path.sep) && fs.existsSync(absolutePath)) fs.unlinkSync(absolutePath);
 }
 
+export function deleteUserAttachmentFiles(records: activityStore.AttachmentRecord[]): number {
+  let deleted = 0;
+  for (const record of records) {
+    const root = path.resolve(DATA_DIR);
+    const absolutePath = path.resolve(root, record.storagePath);
+    if (!absolutePath.startsWith(root + path.sep) || !fs.existsSync(absolutePath)) continue;
+    fs.unlinkSync(absolutePath);
+    deleted++;
+  }
+  return deleted;
+}
+
 export function attachmentsRoot(): string {
   fs.mkdirSync(ROOT, { recursive: true });
   return ROOT;

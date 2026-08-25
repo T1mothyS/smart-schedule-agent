@@ -8,6 +8,25 @@ import {
 } from 'tdesign-react';
 import { CheckCircleFilledIcon } from 'tdesign-icons-react';
 import { useAuth } from '../hooks/useAuth';
+import { saveNotificationPreferences } from '../services/notification-preferences';
+
+interface HomeLocation {
+  name: string;
+  admin1: string | null;
+  country: string | null;
+  latitude: number;
+  longitude: number;
+  timezone: string;
+}
+
+interface DailyReportTokenStatus {
+  exists: boolean;
+  active: boolean;
+  prefix: string | null;
+  createdAt: string | null;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
 
 // ==================== 工具函数 ====================
 
@@ -131,7 +150,7 @@ export function SettingsPage() {
       if (res.ok) {
         const data = await res.json();
         if (data.hasKey) {
-          setEnvConfig({ apiKey: data.apiKey, baseUrl: data.baseUrl || '' });
+          setEnvConfig({ apiKey: '', baseUrl: data.baseUrl || '' });
         }
       }
     } catch {}
@@ -245,11 +264,20 @@ export function SettingsPage() {
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
   const [quietStart, setQuietStart] = useState('22:00');
   const [quietEnd, setQuietEnd] = useState('08:00');
+  const [homeLocation, setHomeLocation] = useState<HomeLocation | null>(null);
+  const [locationQuery, setLocationQuery] = useState('');
+  const [locationResults, setLocationResults] = useState<HomeLocation[]>([]);
+  const [locationSearching, setLocationSearching] = useState(false);
+  const [locationSaving, setLocationSaving] = useState(false);
   const [loadingReminder, setLoadingReminder] = useState(false);
   const [backupPassword, setBackupPassword] = useState('');
   const [backupFile, setBackupFile] = useState<File | null>(null);
   const [backupPreview, setBackupPreview] = useState<any>(null);
   const [backupBusy, setBackupBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState<'json' | 'csv' | null>(null);
+  const [dailyReportStatus, setDailyReportStatus] = useState<DailyReportTokenStatus | null>(null);
+  const [dailyReportToken, setDailyReportToken] = useState('');
+  const [dailyReportBusy, setDailyReportBusy] = useState(false);
 
   const loadReminder = useCallback(async () => {
     try {
@@ -267,6 +295,7 @@ export function SettingsPage() {
         setQuietHoursEnabled(!!preference.quietHoursEnabled);
         setQuietStart(preference.quietStart || '22:00');
         setQuietEnd(preference.quietEnd || '08:00');
+        setHomeLocation(preference.homeLocation || null);
       }
     } catch {}
   }, [authHeaders]);
@@ -282,25 +311,35 @@ export function SettingsPage() {
     quietHoursEnabled,
     quietStart,
     quietEnd,
+    homeLocation,
     ...overrides,
   });
 
   const saveReminderEmail = async () => {
     setLoadingReminder(true);
     try {
-      const response = await fetch('/api/notification-preferences', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(notificationPayload()),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || '保存失败');
-      setReminderEmail(data.reminder?.reminderEmail || reminderEmail.trim());
-      MessagePlugin.success('提醒邮箱已保存');
+      await saveNotificationPreferences(notificationPayload(), authHeaders());
+      setReminderEmail(reminderEmail.trim());
+      MessagePlugin.success('通知设置已保存');
     } catch (error: any) {
       MessagePlugin.error(error?.message || '保存失败');
     } finally {
       setLoadingReminder(false);
+    }
+  };
+
+  const saveHomeLocation = async (location: HomeLocation | null) => {
+    setLocationSaving(true);
+    try {
+      await saveNotificationPreferences(notificationPayload({ homeLocation: location }), authHeaders());
+      setHomeLocation(location);
+      setLocationQuery('');
+      setLocationResults([]);
+      MessagePlugin.success(location ? `常驻地点已保存：${location.name}` : '常驻地点已清除');
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || '常驻地点保存失败');
+    } finally {
+      setLocationSaving(false);
     }
   };
 
@@ -367,9 +406,121 @@ export function SettingsPage() {
     } catch (error: any) { MessagePlugin.error(error?.message || '恢复失败'); }
     finally { setBackupBusy(false); }
   };
+
   useEffect(() => {
-    if (isAuthenticated) loadReminder();
-  }, [isAuthenticated]);
+    const query = locationQuery.trim();
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(query)) {
+      // Chrome 可能忽略 autocomplete 并把登录邮箱误填到后面的文本框；地点搜索不接受邮箱。
+      setLocationQuery('');
+      setLocationResults([]);
+      setLocationSearching(false);
+      return;
+    }
+    if (query.length < 2) {
+      setLocationResults([]);
+      setLocationSearching(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setLocationSearching(true);
+      try {
+        const response = await fetch('/api/weather/locations?q=' + encodeURIComponent(query), {
+          headers: authHeaders(),
+          signal: controller.signal,
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || '地点搜索失败');
+        setLocationResults(result.locations || []);
+      } catch (error: any) {
+        if (error?.name !== 'AbortError') {
+          setLocationResults([]);
+          MessagePlugin.error(error?.message || '地点搜索失败');
+        }
+      } finally {
+        if (!controller.signal.aborted) setLocationSearching(false);
+      }
+    }, 350);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [locationQuery, authHeaders]);
+
+  const downloadReadableExport = async (format: 'json' | 'csv') => {
+    setExportBusy(format);
+    try {
+      const response = await fetch(format === 'json' ? '/api/exports/user-data.json' : '/api/exports/schedules.csv', {
+        headers: authHeaders(),
+      });
+      if (!response.ok) {
+        const result = await response.json();
+        throw new Error(result.error || '导出失败');
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = format === 'json'
+        ? `ai-calendar-data-${new Date().toISOString().slice(0, 10)}.json`
+        : `ai-calendar-schedules-${new Date().toISOString().slice(0, 10)}.csv`;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      MessagePlugin.success(format === 'json' ? 'JSON 数据已导出' : 'CSV 日程表已导出');
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || '导出失败');
+    } finally {
+      setExportBusy(null);
+    }
+  };
+
+  const loadDailyReportStatus = useCallback(async () => {
+    try {
+      const response = await fetch('/api/integrations/daily-report-token', { headers: authHeaders() });
+      if (!response.ok) return;
+      const result = await response.json();
+      setDailyReportStatus(result.status);
+    } catch { /* 集成状态加载失败不影响其他设置 */ }
+  }, [authHeaders]);
+
+  const generateReportToken = async () => {
+    if (dailyReportStatus?.active && !window.confirm('生成新令牌会立即使旧令牌失效。是否继续？')) return;
+    setDailyReportBusy(true);
+    try {
+      const response = await fetch('/api/integrations/daily-report-token', { method: 'POST', headers: authHeaders() });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '生成令牌失败');
+      setDailyReportToken(result.token);
+      setDailyReportStatus(result.status);
+      MessagePlugin.success('只读令牌已生成，请立即复制保存');
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || '生成令牌失败');
+    } finally {
+      setDailyReportBusy(false);
+    }
+  };
+
+  const revokeReportToken = async () => {
+    if (!window.confirm('撤销后，日报项目将无法读取日程。是否继续？')) return;
+    setDailyReportBusy(true);
+    try {
+      const response = await fetch('/api/integrations/daily-report-token', { method: 'DELETE', headers: authHeaders() });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '撤销令牌失败');
+      setDailyReportToken('');
+      setDailyReportStatus(result.status);
+      MessagePlugin.success('日报令牌已撤销');
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || '撤销令牌失败');
+    } finally {
+      setDailyReportBusy(false);
+    }
+  };
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadReminder();
+      loadDailyReportStatus();
+    }
+  }, [isAuthenticated, loadReminder, loadDailyReportStatus]);
 
   // ---------- 初始化 ----------
   useEffect(() => {
@@ -531,7 +682,7 @@ export function SettingsPage() {
                       size="small"
                       value={envConfig.apiKey}
                       onChange={v => setEnvConfig(prev => ({ ...prev, apiKey: v as string }))}
-                      placeholder="ck_xxxxxxxx.xxxxxxxxx"
+                      placeholder={loginStatus.hasApiKey ? '输入新的 API Key 以覆盖当前配置' : 'ck_xxxxxxxx.xxxxxxxxx'}
                       style={{ fontFamily: 'monospace' }}
                     />
                   </div>
@@ -612,14 +763,10 @@ export function SettingsPage() {
                   setReminderEnabled(newVal);
                   setLoadingReminder(true);
                   try {
-                    await fetch('/api/notification-preferences', {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                      body: JSON.stringify(notificationPayload({ enabled: newVal })),
-                    });
+                    await saveNotificationPreferences(notificationPayload({ enabled: newVal }), authHeaders());
                     MessagePlugin.success(newVal ? '提醒已开启' : '提醒已关闭');
-                  } catch {
-                    MessagePlugin.error('设置失败');
+                  } catch (error: any) {
+                    MessagePlugin.error(error?.message || '设置失败');
                     setReminderEnabled(!newVal);
                   } finally {
                     setLoadingReminder(false);
@@ -653,14 +800,10 @@ export function SettingsPage() {
                   onClick={async () => {
                     setLoadingReminder(true);
                     try {
-                      await fetch('/api/notification-preferences', {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                        body: JSON.stringify(notificationPayload()),
-                      });
+                      await saveNotificationPreferences(notificationPayload(), authHeaders());
                       MessagePlugin.success('提醒时间已更新');
-                    } catch {
-                      MessagePlugin.error('设置失败');
+                    } catch (error: any) {
+                      MessagePlugin.error(error?.message || '设置失败');
                     } finally {
                       setLoadingReminder(false);
                     }
@@ -670,6 +813,44 @@ export function SettingsPage() {
                 </Button>
               </div>
             )}
+
+            <div className="mt-5 pt-4" style={{ borderTop: '1px solid var(--td-component-stroke)' }}>
+              <div className="text-sm font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>常驻城市或区县</div>
+              <div className="text-xs mb-3" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                用于每日邮件天气和未指定地点的天气提问；请单独输入城市或区县名称，只保存名称与坐标，不保存详细住址。
+              </div>
+              {homeLocation && <div className="settings-location-selected">
+                <div>
+                  <strong>{homeLocation.name}</strong>
+                  <span>{[homeLocation.admin1, homeLocation.country].filter(Boolean).join(' · ')}</span>
+                </div>
+                <Button size="small" variant="text" loading={locationSaving} onClick={() => void saveHomeLocation(null)}>清除</Button>
+              </div>}
+              <div className="settings-location-search">
+                <Input
+                  value={locationQuery}
+                  onChange={value => setLocationQuery(value as string)}
+                  name="home-location-search"
+                  type="search"
+                  autocomplete="new-password"
+                  disabled={locationSaving}
+                  placeholder="搜索城市或区县，例如：深圳、南山"
+                />
+                {locationSearching && <span className="settings-location-loading">搜索中…</span>}
+                {locationSaving && <span className="settings-location-loading">保存中…</span>}
+                {locationResults.length > 0 && <div className="settings-location-results">
+                  {locationResults.map(location => <button
+                    type="button"
+                    key={`${location.latitude}:${location.longitude}`}
+                    disabled={locationSaving}
+                    onClick={() => void saveHomeLocation(location)}
+                  >
+                    <strong>{location.name}</strong>
+                    <span>{[location.admin1, location.country].filter(Boolean).join(' · ')}</span>
+                  </button>)}
+                </div>}
+              </div>
+            </div>
 
             <div className="mt-5 pt-4 space-y-3" style={{ borderTop: '1px solid var(--td-component-stroke)' }}>
               <div className="flex items-center gap-5 flex-wrap">
@@ -697,6 +878,17 @@ export function SettingsPage() {
           <h2 className="text-lg font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>数据备份与恢复</h2>
           <p className="text-sm mb-4" style={{ color: 'var(--td-text-color-secondary)' }}>备份包含当前账号的日历、周期事务、完成历史和附件，不包含密码、角色或 API Key。</p>
           <div className="space-y-4 px-4 py-4 rounded-lg" style={{ backgroundColor: 'var(--td-bg-color-container)', border: '1px solid var(--td-component-stroke)' }}>
+            <div>
+              <div className="text-sm font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>可读数据导出</div>
+              <div className="text-xs mb-3" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                JSON 包含日程、周期事务、完成记录、附件元数据和非敏感偏好；CSV 是可直接用 Excel 打开的日程表。附件文件请使用下方加密备份。
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button variant="outline" loading={exportBusy === 'json'} onClick={() => downloadReadableExport('json')}>下载 JSON</Button>
+                <Button variant="outline" loading={exportBusy === 'csv'} onClick={() => downloadReadableExport('csv')}>下载 CSV</Button>
+              </div>
+            </div>
+            <div style={{ height: '1px', backgroundColor: 'var(--td-component-border)' }} />
             <div className="flex items-center gap-3 flex-wrap">
               <Input type="password" value={backupPassword} onChange={value => { setBackupPassword(value as string); setBackupPreview(null); }} placeholder="设置或输入备份密码（至少 8 位）" style={{ width: 300 }} />
               <Button loading={backupBusy} onClick={exportBackup}>导出加密备份</Button>
@@ -712,6 +904,38 @@ export function SettingsPage() {
               <div><strong>内容</strong><span>日程 {backupPreview.counts.schedules} · 周期事务 {backupPreview.counts.reminderTasks} · 完成记录 {backupPreview.counts.completions} · 附件 {backupPreview.counts.attachments}</span></div>
               <div className="flex gap-2 mt-2"><Button variant="outline" loading={backupBusy} onClick={() => restoreBackup('merge')}>合并恢复</Button><Button theme="danger" variant="outline" loading={backupBusy} onClick={() => restoreBackup('replace')}>替换当前数据</Button></div>
             </div>}
+          </div>
+        </div>
+
+        <div style={{ height: '1px', backgroundColor: 'var(--td-component-border)' }} />
+
+        <div>
+          <h2 className="text-lg font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>19:00 日报只读接入</h2>
+          <p className="text-sm mb-4" style={{ color: 'var(--td-text-color-secondary)' }}>
+            专用令牌只能读取当前账号指定日期的日程，不能修改数据，也不会返回附件、密码或 API Key。
+          </p>
+          <div className="space-y-3 px-4 py-4 rounded-lg" style={{ backgroundColor: 'var(--td-bg-color-container)', border: '1px solid var(--td-component-stroke)' }}>
+            <div className="settings-token-status">
+              <strong>{dailyReportStatus?.active ? '已启用' : dailyReportStatus?.exists ? '已撤销' : '尚未生成'}</strong>
+              {dailyReportStatus?.prefix && <span>令牌前缀：{dailyReportStatus.prefix}…</span>}
+              {dailyReportStatus?.lastUsedAt && <span>最近读取：{new Date(dailyReportStatus.lastUsedAt).toLocaleString('zh-CN')}</span>}
+            </div>
+            {dailyReportToken && <div className="settings-token-once">
+              <div><strong>只显示一次</strong><span>离开设置页后无法再次查看明文。</span></div>
+              <code>{dailyReportToken}</code>
+              <Button size="small" onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(dailyReportToken);
+                  MessagePlugin.success('令牌已复制');
+                } catch {
+                  MessagePlugin.error('自动复制失败，请手动选择令牌');
+                }
+              }}>复制令牌</Button>
+            </div>}
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button loading={dailyReportBusy} onClick={generateReportToken}>{dailyReportStatus?.active ? '轮换令牌' : '生成令牌'}</Button>
+              {dailyReportStatus?.active && <Button theme="danger" variant="outline" loading={dailyReportBusy} onClick={revokeReportToken}>撤销令牌</Button>}
+            </div>
           </div>
         </div>
 

@@ -11,6 +11,7 @@ import {
 import {
   RefreshIcon,
   DeleteIcon,
+  DownloadIcon,
 } from 'tdesign-icons-react';
 import { useAuth } from '../hooks/useAuth';
 
@@ -114,12 +115,11 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
     if (!window.confirm(`确定要清空用户 ${user.email} 的所有数据吗？\n包括：日程、待办、AI对话历史、API Key 等。\n该用户的账号和密码将保留。`)) return;
 
     try {
-      console.log('[Admin] Clearing data for user:', user.id);
       const res = await fetch(`/api/admin/users/${user.id}/clear-data`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeadersRef.current() },
+        body: JSON.stringify({ confirmEmail: user.email }),
       });
-      console.log('[Admin] Clear data response:', res.status, await res.clone().text());
       
       if (res.ok) {
         MessagePlugin.success(`已清空 ${user.email} 的数据`);
@@ -138,12 +138,11 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
     if (!window.confirm(`⚠️ 危险操作！\n\n确定要删除用户 ${user.email} 吗？\n\n此操作将：\n- 删除该用户的所有日程和待办\n- 删除 AI 对话历史\n- 删除 API Key\n- 删除用户账号\n\n此操作不可恢复！`)) return;
 
     try {
-      console.log('[Admin] Deleting user:', user.id);
       const res = await fetch(`/api/admin/users/${user.id}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json', ...authHeadersRef.current() },
+        body: JSON.stringify({ confirmEmail: user.email }),
       });
-      console.log('[Admin] Delete response:', res.status, await res.clone().text());
       
       if (res.ok) {
         MessagePlugin.success(`已删除用户 ${user.email}`);
@@ -239,6 +238,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
               { label: '管理员', value: 'admin' },
               { label: '用户', value: 'user' },
             ]}
+            disabled={row.role === 'admin'}
           />
           {/* 启用/禁用 */}
           <Button
@@ -246,6 +246,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             variant="outline"
             onClick={() => handleToggleDisabled(row.id, !row.disabled)}
             loading={loadingAction === row.id}
+            disabled={row.role === 'admin'}
           >
             {row.disabled ? '启用' : '禁用'}
           </Button>
@@ -255,6 +256,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             variant="outline"
             onClick={() => handleClearData(row)}
             loading={loadingAction === row.id}
+            disabled={row.role === 'admin'}
           >
             清空数据
           </Button>
@@ -265,6 +267,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             theme="danger"
             onClick={() => handleDeleteUser(row)}
             loading={loadingAction === row.id}
+            disabled={row.role === 'admin'}
           >
             删除
           </Button>
@@ -323,6 +326,7 @@ function DebugLogsTab() {
   const [category, setCategory] = useState('all');
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [total, setTotal] = useState(0);
+  const [exporting, setExporting] = useState(false);
   const logContainerRef = React.useRef<HTMLDivElement>(null);
   const intervalRef = React.useRef<number | null>(null);
 
@@ -364,6 +368,35 @@ function DebugLogsTab() {
     }
   };
 
+  const handleExportLogs = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const response = await fetch('/api/logs/export?format=txt', { headers: authHeaders() });
+      if (!response.ok) {
+        let message = '导出失败';
+        try { message = (await response.json()).error || message; } catch {}
+        throw new Error(message);
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const disposition = response.headers.get('content-disposition') || '';
+      const filename = disposition.match(/filename="([^"]+)"/)?.[1] || 'schedule-logs.txt';
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      MessagePlugin.success('日志已导出');
+    } catch (error) {
+      MessagePlugin.error(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const getLevelColor = (level: string) => {
     switch (level) {
       case 'error': return '#EF4444';
@@ -398,6 +431,9 @@ function DebugLogsTab() {
         </label>
         <Button size="small" variant="outline" icon={<RefreshIcon />} onClick={fetchLogs}>
           刷新
+        </Button>
+        <Button size="small" variant="outline" icon={<DownloadIcon />} onClick={handleExportLogs} loading={exporting}>
+          一键导出
         </Button>
         <Button size="small" variant="outline" icon={<DeleteIcon />} onClick={handleClearLogs}>
           清空

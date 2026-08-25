@@ -2,23 +2,19 @@ import { useEffect, useMemo, useRef } from 'react';
 import { CalendarDays, CheckCircle2, Circle, Clock3, MapPin } from 'lucide-react';
 import type { Schedule } from '../CalendarView';
 import { addCalendarDays, getCalendarDayMeta, toLocalDateKey } from './calendarMeta';
-
-interface CalendarSource {
-  id: string;
-  name: string;
-  color: string;
-}
+import { getScheduleCategory } from '../../utils/scheduleCategories';
+import { parseScheduleDate } from '../../utils/scheduleConflict';
 
 interface AgendaViewProps {
   schedules: Schedule[];
   selectedDate: Date;
-  calendars: CalendarSource[];
   showLunar: boolean;
   showFestivals: boolean;
   onSelectDate: (date: Date) => void;
   onOpenSchedule: (schedule: Schedule) => void;
   onToggleSchedule: (id: string) => void;
   onOpenContextMenu: (schedule: Schedule, x: number, y: number) => void;
+  conflictingIds?: Set<string>;
 }
 
 function startOfLocalDay(date: Date): Date {
@@ -28,10 +24,7 @@ function startOfLocalDay(date: Date): Date {
 }
 
 function parseLocal(value: string): Date {
-  const [datePart, timePart = '00:00:00'] = value.split('T');
-  const [year, month, day] = datePart.split('-').map(Number);
-  const [hour, minute, second] = timePart.split(':').map(Number);
-  return new Date(year, month - 1, day, hour || 0, minute || 0, second || 0);
+  return parseScheduleDate(value);
 }
 
 function formatTime(schedule: Schedule): string {
@@ -42,22 +35,22 @@ function formatTime(schedule: Schedule): string {
   return `${start} – ${end}`;
 }
 
-function getCalendarColor(schedule: Schedule, calendars: CalendarSource[]): string {
-  return calendars.find(item => item.id === schedule.calendar_id)?.color || '#3b82f6';
-}
-
 export function AgendaView({
   schedules,
   selectedDate,
-  calendars,
   showLunar,
   showFestivals,
   onSelectDate,
   onOpenSchedule,
   onToggleSchedule,
   onOpenContextMenu,
+  conflictingIds,
 }: AgendaViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const selectionFromScrollRef = useRef<string | null>(null);
+  const programmaticScrollRef = useRef(false);
+  const scrollIdleTimerRef = useRef<number | null>(null);
+  const frameRef = useRef<number | null>(null);
   const selectedKey = toLocalDateKey(selectedDate);
   const todayKey = toLocalDateKey(new Date());
 
@@ -97,9 +90,58 @@ export function AgendaView({
   }, [schedules, selectedKey, todayKey, showFestivals]);
 
   useEffect(() => {
+    if (selectionFromScrollRef.current === selectedKey) {
+      selectionFromScrollRef.current = null;
+      return;
+    }
     const element = containerRef.current?.querySelector<HTMLElement>(`[data-agenda-date="${selectedKey}"]`);
-    element?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    if (!element) return;
+    programmaticScrollRef.current = true;
+    element.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }, [selectedKey]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const syncDateFromScroll = () => {
+      if (programmaticScrollRef.current) return;
+      const containerTop = container.getBoundingClientRect().top + 10;
+      const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-agenda-date]'));
+      let active = rows[0];
+      for (const row of rows) {
+        if (row.getBoundingClientRect().top <= containerTop) active = row;
+        else break;
+      }
+      const key = active?.dataset.agendaDate;
+      if (!key || key === selectedKey) return;
+      const group = groups.find(item => item.key === key);
+      if (!group) return;
+      selectionFromScrollRef.current = key;
+      onSelectDate(group.date);
+    };
+    const onScroll = () => {
+      if (scrollIdleTimerRef.current != null) window.clearTimeout(scrollIdleTimerRef.current);
+      scrollIdleTimerRef.current = window.setTimeout(() => {
+        programmaticScrollRef.current = false;
+        if (frameRef.current != null) window.cancelAnimationFrame(frameRef.current);
+        frameRef.current = window.requestAnimationFrame(syncDateFromScroll);
+      }, 120);
+      if (programmaticScrollRef.current) return;
+      if (frameRef.current != null) window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = window.requestAnimationFrame(syncDateFromScroll);
+    };
+    const cancelProgrammaticScroll = () => { programmaticScrollRef.current = false; };
+    container.addEventListener('scroll', onScroll, { passive: true });
+    container.addEventListener('wheel', cancelProgrammaticScroll, { passive: true });
+    container.addEventListener('touchstart', cancelProgrammaticScroll, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', onScroll);
+      container.removeEventListener('wheel', cancelProgrammaticScroll);
+      container.removeEventListener('touchstart', cancelProgrammaticScroll);
+      if (scrollIdleTimerRef.current != null) window.clearTimeout(scrollIdleTimerRef.current);
+      if (frameRef.current != null) window.cancelAnimationFrame(frameRef.current);
+    };
+  }, [groups, selectedKey, onSelectDate]);
 
   return (
     <div ref={containerRef} className="agenda-view" aria-label="日程列表">
@@ -116,7 +158,7 @@ export function AgendaView({
           >
             {monthChanged && <div className="agenda-month-divider">{group.date.getFullYear()}年{group.date.getMonth() + 1}月</div>}
             <button type="button" className="agenda-date-column" onClick={() => onSelectDate(group.date)}>
-              <span className="agenda-date-number">{group.date.getDate()}</span>
+              <span className="agenda-date-number"><b>{group.date.getDate()}</b><small>/{group.date.getMonth() + 1}</small></span>
               <span className="agenda-date-weekday">{group.date.toLocaleDateString('zh-CN', { weekday: 'short' })}</span>
               {showLunar && <span className="agenda-date-lunar">{group.meta.lunarFullLabel}</span>}
               {isToday && <strong>今天</strong>}
@@ -131,7 +173,9 @@ export function AgendaView({
                 </article>
               ))}
               {group.schedules.map(schedule => {
-                const color = getCalendarColor(schedule, calendars);
+                const category = getScheduleCategory(schedule.category);
+                const color = category.color;
+                const isConflicting = conflictingIds?.has(schedule.id) === true;
                 return (
                   <article
                     key={schedule.id}
@@ -157,14 +201,17 @@ export function AgendaView({
                       }
                     }}
                   >
-                    <button
-                      type="button"
-                      className="agenda-complete-button"
-                      onClick={event => { event.stopPropagation(); onToggleSchedule(schedule.id); }}
-                      aria-label={schedule.is_completed ? '标记未完成' : '标记完成'}
-                    >
-                      {schedule.is_completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                    </button>
+                    <span className="schedule-status-slot agenda-status-slot">
+                      <button
+                        type="button"
+                        className="agenda-complete-button"
+                        onClick={event => { event.stopPropagation(); onToggleSchedule(schedule.id); }}
+                        aria-label={schedule.is_completed ? '标记未完成' : '标记完成'}
+                      >
+                        {schedule.is_completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                      </button>
+                      {isConflicting && <span title="时间冲突" aria-label="时间冲突" className="schedule-conflict-dot">!</span>}
+                    </span>
                     <div className="agenda-schedule-time">
                       <Clock3 size={14} />
                       <span>{formatTime(schedule)}</span>
@@ -180,7 +227,7 @@ export function AgendaView({
                     </div>
                     <span className="agenda-calendar-source">
                       <i style={{ backgroundColor: color }} />
-                      {calendars.find(item => item.id === schedule.calendar_id)?.name || '日程'}
+                      {category.name}
                     </span>
                   </article>
                 );

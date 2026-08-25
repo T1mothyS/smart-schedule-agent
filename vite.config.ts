@@ -1,12 +1,15 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
+const devHost = process.env.VITE_DEV_HOST?.trim() || '127.0.0.1';
+const extraAllowedHost = process.env.VITE_ALLOWED_HOST?.trim();
+
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: '0.0.0.0',
+    host: devHost,
     port: 5173,
-    allowedHosts: true,
+    allowedHosts: extraAllowedHost ? ['localhost', '127.0.0.1', extraAllowedHost] : ['localhost', '127.0.0.1'],
     proxy: {
       '/api': {
         target: process.env.API_PROXY_TARGET || 'http://localhost:3000',

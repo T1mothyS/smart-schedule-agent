@@ -1,5 +1,6 @@
 import { query, type ImageMediaType, type UserMessage } from '@tencent-ai/agent-sdk';
 import { v4 as uuidv4 } from 'uuid';
+import { buildCodeBuddyEnv } from './codebuddy-env.js';
 
 export interface AiImportImage {
   name: string;
@@ -7,7 +8,7 @@ export interface AiImportImage {
   base64: string;
 }
 
-export interface AiImportDraft {
+export interface AiImportDraft extends Record<string, unknown> {
   kind: 'schedule' | 'recurring';
   title: string;
   dueDate: string;
@@ -67,7 +68,7 @@ function normaliseDraft(raw: any): AiImportDraft {
       advancePolicy: raw?.recurrence?.advancePolicy === 'completion' ? 'completion' : 'calendar',
     },
     reminderOffsets: Array.isArray(raw?.reminderOffsets)
-      ? [...new Set(raw.reminderOffsets.map(Number).filter((value: number) => Number.isInteger(value) && value >= 0 && value <= 365))]
+      ? [...new Set<number>((raw.reminderOffsets as unknown[]).map(Number).filter(value => Number.isInteger(value) && value >= 0 && value <= 365))]
       : [7, 1],
     actionGuide: String(raw?.actionGuide || '完成事项并登记证明').slice(0, 500),
     notes: String(raw?.notes || '').slice(0, 2000),
@@ -122,6 +123,7 @@ export async function parseAiImport(input: {
   text?: string;
   images?: AiImportImage[];
   apiKey: string;
+  baseUrl?: string | null;
   model: string;
 }): Promise<AiImportDraft> {
   const images = input.images || [];
@@ -137,10 +139,7 @@ export async function parseAiImport(input: {
         cwd: process.cwd(),
         model: input.model,
         maxTurns: 1,
-        env: {
-          CODEBUDDY_API_KEY: input.apiKey,
-          CODEBUDDY_INTERNET_ENVIRONMENT: process.env.CODEBUDDY_INTERNET_ENVIRONMENT || 'internal',
-        },
+        env: buildCodeBuddyEnv({ api_key: input.apiKey, base_url: input.baseUrl }),
       },
     });
     for await (const message of stream) {

@@ -2,6 +2,7 @@ import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import crypto from 'node:crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,8 +17,19 @@ if (!fs.existsSync(dataDir)) {
 // 数据库实例
 let db: SqlJsDatabase;
 
+export function assertNoUnreconciledChatWal(databasePath = dbPath): void {
+  const walPath = databasePath + '-wal';
+  if (fs.existsSync(walPath) && fs.statSync(walPath).size > 0) {
+    throw new Error(
+      `检测到未合并的 SQLite WAL：${walPath}。为避免 sql.js 覆盖其中的数据，服务已停止启动。` +
+      '请先在服务停止状态下运行 scripts/reconcile_chat_wal.py。',
+    );
+  }
+}
+
 // 初始化数据库
 async function initDb(): Promise<void> {
+  assertNoUnreconciledChatWal();
   const SQL = await initSqlJs();
 
   // 尝试加载已有数据库
@@ -28,8 +40,8 @@ async function initDb(): Promise<void> {
     db = new SQL.Database();
   }
 
-  // 启用 WAL 模式
-  db.run('PRAGMA journal_mode = WAL');
+  // sql.js 以内存数据库运行并整体导出文件，不能消费原生 SQLite WAL。
+  db.run('PRAGMA journal_mode = DELETE');
 
   // 初始化表
   db.run(`
@@ -58,17 +70,41 @@ async function initDb(): Promise<void> {
   `);
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS ai_schedule_messages (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+      type TEXT NOT NULL,
+      content TEXT NOT NULL,
+      intent TEXT,
+      schedule_items TEXT,
+      plan TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
       disabled INTEGER NOT NULL DEFAULT 0,
+      auth_version INTEGER NOT NULL DEFAULT 0,
+      preferred_model TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       last_login_at TEXT
     )
   `);
+
+  const userColumns = queryAll<{ name: string }>('PRAGMA table_info(users)');
+  if (!userColumns.some(column => column.name === 'auth_version')) {
+    db.run('ALTER TABLE users ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!userColumns.some(column => column.name === 'preferred_model')) {
+    db.run('ALTER TABLE users ADD COLUMN preferred_model TEXT');
+  }
 
   const sessionColumns = queryAll<{ name: string }>('PRAGMA table_info(sessions)');
   if (!sessionColumns.some(column => column.name === 'user_id')) {
@@ -107,6 +143,12 @@ async function initDb(): Promise<void> {
       quiet_hours_enabled INTEGER NOT NULL DEFAULT 0,
       quiet_start TEXT NOT NULL DEFAULT '22:00',
       quiet_end TEXT NOT NULL DEFAULT '08:00',
+      home_location_name TEXT,
+      home_location_admin1 TEXT,
+      home_location_country TEXT,
+      home_latitude REAL,
+      home_longitude REAL,
+      home_timezone TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -125,6 +167,12 @@ async function initDb(): Promise<void> {
     ['quiet_hours_enabled', "INTEGER NOT NULL DEFAULT 0"],
     ['quiet_start', "TEXT NOT NULL DEFAULT '22:00'"],
     ['quiet_end', "TEXT NOT NULL DEFAULT '08:00'"],
+    ['home_location_name', 'TEXT'],
+    ['home_location_admin1', 'TEXT'],
+    ['home_location_country', 'TEXT'],
+    ['home_latitude', 'REAL'],
+    ['home_longitude', 'REAL'],
+    ['home_timezone', 'TEXT'],
   ];
   for (const [name, definition] of reminderMigrations) {
     if (!reminderColumns.some(column => column.name === name)) db.run(`ALTER TABLE reminders ADD COLUMN ${name} ${definition}`);
@@ -141,10 +189,25 @@ async function initDb(): Promise<void> {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS daily_report_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL UNIQUE,
+      token_hash TEXT NOT NULL UNIQUE,
+      token_prefix TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
   // 创建索引
   db.run('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_ai_schedule_messages_user_created ON ai_schedule_messages(user_id, created_at)');
   db.run('CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email)');
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_report_token_hash ON daily_report_tokens(token_hash)');
 
   // 保存到文件
   saveDb();
@@ -206,12 +269,26 @@ export interface DbMessage {
   tool_calls: string | null;
 }
 
+export interface DbAiScheduleMessage {
+  id: string;
+  user_id: string;
+  role: 'user' | 'assistant';
+  type: string;
+  content: string;
+  intent: string | null;
+  schedule_items: string | null;
+  plan: string | null;
+  created_at: string;
+}
+
 export interface DbUser {
   id: string;
   email: string;
   password_hash: string;
   role: 'admin' | 'user';
   disabled: number;
+  auth_version?: number;
+  preferred_model?: string | null;
   created_at: string;
   updated_at: string;
   last_login_at?: string;
@@ -240,6 +317,12 @@ export interface DbReminder {
   quiet_hours_enabled?: number;
   quiet_start?: string;
   quiet_end?: string;
+  home_location_name?: string | null;
+  home_location_admin1?: string | null;
+  home_location_country?: string | null;
+  home_latitude?: number | null;
+  home_longitude?: number | null;
+  home_timezone?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -251,6 +334,16 @@ export interface DbUserApiKey {
   base_url: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface DbDailyReportToken {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  token_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
 }
 
 // ============= 会话操作 =============
@@ -359,14 +452,99 @@ export function createMessages(messages: DbMessage[], userId: string): void {
   }
 }
 
+// ============= AI 日程助手历史 =============
+
+export function getAiScheduleMessages(userId: string, limit = 20): DbAiScheduleMessage[] {
+  if (limit <= 0) {
+    return queryAll<DbAiScheduleMessage>(
+      'SELECT * FROM ai_schedule_messages WHERE user_id = ? ORDER BY created_at ASC',
+      [userId],
+    );
+  }
+  const safeLimit = Math.min(Math.floor(limit) || 20, 2000);
+  return queryAll<DbAiScheduleMessage>(
+    'SELECT * FROM ai_schedule_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT ?',
+    [userId, safeLimit],
+  ).reverse();
+}
+
+export function createAiScheduleMessage(message: DbAiScheduleMessage): DbAiScheduleMessage {
+  run(
+    `INSERT INTO ai_schedule_messages
+      (id, user_id, role, type, content, intent, schedule_items, plan, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      message.id,
+      message.user_id,
+      message.role,
+      message.type,
+      message.content,
+      message.intent,
+      message.schedule_items,
+      message.plan,
+      message.created_at,
+    ],
+  );
+  return message;
+}
+
+export function updateAiScheduleMessage(
+  id: string,
+  userId: string,
+  updates: Partial<Pick<DbAiScheduleMessage, 'type' | 'content' | 'intent' | 'schedule_items' | 'plan'>>,
+): boolean {
+  const fields: string[] = [];
+  const values: any[] = [];
+  for (const field of ['type', 'content', 'intent', 'schedule_items', 'plan'] as const) {
+    if (updates[field] !== undefined) {
+      fields.push(`${field} = ?`);
+      values.push(updates[field]);
+    }
+  }
+  if (!fields.length) return false;
+  values.push(id, userId);
+  return run(`UPDATE ai_schedule_messages SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, values).changes > 0;
+}
+
+export function deleteAiScheduleMessage(id: string, userId: string): boolean {
+  const existing = queryOne<{ id: string }>(
+    'SELECT id FROM ai_schedule_messages WHERE id = ? AND user_id = ?',
+    [id, userId],
+  );
+  if (!existing) return false;
+  run('DELETE FROM ai_schedule_messages WHERE id = ? AND user_id = ?', [id, userId]);
+  return true;
+}
+
+/**
+ * 清理过期历史时逐条删除，避免一次批量删除阻塞数据库，也便于统计实际清理数量。
+ */
+export function deleteExpiredAiScheduleMessages(beforeIso: string, userId?: string): number {
+  const rows = userId
+    ? queryAll<{ id: string; user_id: string }>(
+        'SELECT id, user_id FROM ai_schedule_messages WHERE user_id = ? AND created_at < ? ORDER BY created_at ASC',
+        [userId, beforeIso],
+      )
+    : queryAll<{ id: string; user_id: string }>(
+        'SELECT id, user_id FROM ai_schedule_messages WHERE created_at < ? ORDER BY created_at ASC',
+        [beforeIso],
+      );
+  let deleted = 0;
+  for (const row of rows) {
+    if (deleteAiScheduleMessage(row.id, row.user_id)) deleted += 1;
+  }
+  return deleted;
+}
+
 export function clearAllData(): void {
   run('DELETE FROM messages');
   run('DELETE FROM sessions');
+  run('DELETE FROM ai_schedule_messages');
 }
 
 // ============= 用户操作 =============
 
-type PublicDbUser = Omit<DbUser, 'password_hash' | 'disabled' | 'last_login_at'> & { disabled: boolean; last_login_at: string | null };
+type PublicDbUser = Omit<DbUser, 'password_hash' | 'disabled' | 'last_login_at' | 'auth_version' | 'preferred_model'> & { disabled: boolean; last_login_at: string | null };
 
 export function getAllUsers(): PublicDbUser[] {
   const users = queryAll<any>('SELECT id, email, role, disabled, created_at, updated_at, last_login_at FROM users ORDER BY created_at DESC');
@@ -418,31 +596,42 @@ export function getUserByEmail(email: string): DbUser | undefined {
 }
 
 export function getUserById(id: string): Omit<DbUser, 'password_hash'> | undefined {
-  return queryOne<Omit<DbUser, 'password_hash'>>('SELECT id, email, role, disabled, created_at, updated_at FROM users WHERE id = ?', [id]);
+  return queryOne<Omit<DbUser, 'password_hash'>>(
+    'SELECT id, email, role, disabled, auth_version, preferred_model, created_at, updated_at, last_login_at FROM users WHERE id = ?',
+    [id],
+  );
 }
 
 export function createUser(user: DbUser): Omit<DbUser, 'password_hash'> {
   run(
-    'INSERT INTO users (id, email, password_hash, role, disabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [user.id, user.email, user.password_hash, user.role, user.disabled, user.created_at, user.updated_at]
+    'INSERT INTO users (id, email, password_hash, role, disabled, auth_version, preferred_model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [user.id, user.email, user.password_hash, user.role, user.disabled, user.auth_version ?? 0, user.preferred_model ?? null, user.created_at, user.updated_at]
   );
   return {
     id: user.id,
     email: user.email,
     role: user.role,
-    disabled: user.disabled,
+      disabled: user.disabled,
+      auth_version: user.auth_version ?? 0,
+      preferred_model: user.preferred_model ?? null,
     created_at: user.created_at,
     updated_at: user.updated_at
   };
 }
 
 export function updateUserRole(id: string, role: 'admin' | 'user'): boolean {
-  const result = run('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', [role, new Date().toISOString(), id]);
+  const result = run(
+    'UPDATE users SET role = ?, auth_version = auth_version + 1, updated_at = ? WHERE id = ?',
+    [role, new Date().toISOString(), id],
+  );
   return result.changes > 0;
 }
 
 export function updateUserDisabled(id: string, disabled: number): boolean {
-  const result = run('UPDATE users SET disabled = ?, updated_at = ? WHERE id = ?', [disabled, new Date().toISOString(), id]);
+  const result = run(
+    'UPDATE users SET disabled = ?, auth_version = auth_version + 1, updated_at = ? WHERE id = ?',
+    [disabled, new Date().toISOString(), id],
+  );
   return result.changes > 0;
 }
 
@@ -451,20 +640,53 @@ export function updateUserLastLogin(id: string): boolean {
   return result.changes > 0;
 }
 
+export function getUserPreferredModel(userId: string, fallback: string): string {
+  const row = queryOne<{ preferred_model: string | null }>('SELECT preferred_model FROM users WHERE id = ?', [userId]);
+  return row?.preferred_model?.trim() || fallback;
+}
+
+export function updateUserPreferredModel(userId: string, model: string): boolean {
+  const result = run(
+    'UPDATE users SET preferred_model = ?, updated_at = ? WHERE id = ?',
+    [model, new Date().toISOString(), userId],
+  );
+  return result.changes > 0;
+}
+
 export function createEmailCode(code: DbEmailCode): void {
   run('DELETE FROM email_codes WHERE email = ? AND purpose = ?', [code.email, code.purpose]);
   run(
     'INSERT INTO email_codes (id, email, code, purpose, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [code.id, code.email, code.code, code.purpose, code.expires_at, code.created_at]
+    [code.id, code.email, emailCodeDigest(code.email, code.purpose, code.code), code.purpose, code.expires_at, code.created_at]
   );
 }
 
 export function verifyEmailCode(email: string, code: string, purpose: string): DbEmailCode | undefined {
   const now = new Date().toISOString();
-  return queryOne<DbEmailCode>(
-    'SELECT * FROM email_codes WHERE email = ? AND code = ? AND purpose = ? AND expires_at > ?',
-    [email, code, purpose, now]
+  const record = queryOne<DbEmailCode>(
+    'SELECT * FROM email_codes WHERE email = ? AND purpose = ? AND expires_at > ? ORDER BY created_at DESC LIMIT 1',
+    [email, purpose, now],
   );
+  if (!record) return undefined;
+  const expected = emailCodeDigest(email, purpose, code);
+  const stored = String(record.code || '');
+  const matches = stored.startsWith('hmac-sha256:')
+    ? safeTextEqual(stored, expected)
+    : safeTextEqual(stored, code); // 兼容迁移前尚未过期的验证码。
+  return matches ? record : undefined;
+}
+
+function emailCodeDigest(email: string, purpose: string, code: string): string {
+  const pepper = process.env.EMAIL_CODE_PEPPER || process.env.JWT_SECRET || 'dev-only-email-code-pepper';
+  return 'hmac-sha256:' + crypto.createHmac('sha256', pepper)
+    .update(`${email.toLowerCase()}\n${purpose}\n${code}`, 'utf8')
+    .digest('hex');
+}
+
+function safeTextEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left, 'utf8');
+  const rightBuffer = Buffer.from(right, 'utf8');
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 export function deleteEmailCode(email: string, purpose: string): void {
@@ -478,28 +700,48 @@ export function getReminder(userId: string): DbReminder | undefined {
 export function upsertReminder(reminder: DbReminder): DbReminder {
   const existing = getReminder(reminder.user_id);
   const reminderEmail = reminder.reminder_email ?? existing?.reminder_email ?? null;
+  const homeLocationName = reminder.home_location_name === undefined ? existing?.home_location_name ?? null : reminder.home_location_name;
+  const homeLocationAdmin1 = reminder.home_location_admin1 === undefined ? existing?.home_location_admin1 ?? null : reminder.home_location_admin1;
+  const homeLocationCountry = reminder.home_location_country === undefined ? existing?.home_location_country ?? null : reminder.home_location_country;
+  const homeLatitude = reminder.home_latitude === undefined ? existing?.home_latitude ?? null : reminder.home_latitude;
+  const homeLongitude = reminder.home_longitude === undefined ? existing?.home_longitude ?? null : reminder.home_longitude;
+  const homeTimezone = reminder.home_timezone === undefined ? existing?.home_timezone ?? null : reminder.home_timezone;
   if (existing) {
     run(
       `UPDATE reminders SET enabled = ?, hour = ?, minute = ?, reminder_email = ?, email_enabled = ?,
-       in_app_enabled = ?, browser_enabled = ?, timezone = ?, quiet_hours_enabled = ?, quiet_start = ?, quiet_end = ?, updated_at = ? WHERE user_id = ?`,
+       in_app_enabled = ?, browser_enabled = ?, timezone = ?, quiet_hours_enabled = ?, quiet_start = ?, quiet_end = ?,
+       home_location_name = ?, home_location_admin1 = ?, home_location_country = ?, home_latitude = ?, home_longitude = ?, home_timezone = ?,
+       updated_at = ? WHERE user_id = ?`,
       [reminder.enabled, reminder.hour, reminder.minute, reminderEmail, reminder.email_enabled ?? existing.email_enabled ?? 1,
         reminder.in_app_enabled ?? existing.in_app_enabled ?? 1, reminder.browser_enabled ?? existing.browser_enabled ?? 1,
         reminder.timezone || existing.timezone || 'Asia/Shanghai', reminder.quiet_hours_enabled ?? existing.quiet_hours_enabled ?? 0,
         reminder.quiet_start || existing.quiet_start || '22:00', reminder.quiet_end || existing.quiet_end || '08:00',
+        homeLocationName, homeLocationAdmin1, homeLocationCountry, homeLatitude, homeLongitude, homeTimezone,
         reminder.updated_at, reminder.user_id]
     );
   } else {
     run(
       `INSERT INTO reminders (id, user_id, enabled, hour, minute, reminder_email, email_enabled, in_app_enabled,
-       browser_enabled, timezone, quiet_hours_enabled, quiet_start, quiet_end, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       browser_enabled, timezone, quiet_hours_enabled, quiet_start, quiet_end, home_location_name, home_location_admin1,
+       home_location_country, home_latitude, home_longitude, home_timezone, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [reminder.id, reminder.user_id, reminder.enabled, reminder.hour, reminder.minute, reminderEmail,
         reminder.email_enabled ?? 1, reminder.in_app_enabled ?? 1, reminder.browser_enabled ?? 1,
         reminder.timezone || 'Asia/Shanghai', reminder.quiet_hours_enabled ?? 0, reminder.quiet_start || '22:00',
-        reminder.quiet_end || '08:00', reminder.created_at, reminder.updated_at]
+        reminder.quiet_end || '08:00', homeLocationName, homeLocationAdmin1, homeLocationCountry, homeLatitude,
+        homeLongitude, homeTimezone, reminder.created_at, reminder.updated_at]
     );
   }
-  return { ...reminder, reminder_email: reminderEmail };
+  return {
+    ...reminder,
+    reminder_email: reminderEmail,
+    home_location_name: homeLocationName,
+    home_location_admin1: homeLocationAdmin1,
+    home_location_country: homeLocationCountry,
+    home_latitude: homeLatitude,
+    home_longitude: homeLongitude,
+    home_timezone: homeTimezone,
+  };
 }
 
 export function exportUserAccountData(userId: string): { user: Omit<DbUser, 'password_hash'> | null; reminder: DbReminder | null } {
@@ -557,10 +799,47 @@ export function deleteUserApiKey(userId: string): boolean {
   return result.changes > 0;
 }
 
+export function getDailyReportToken(userId: string): DbDailyReportToken | undefined {
+  return queryOne<DbDailyReportToken>('SELECT * FROM daily_report_tokens WHERE user_id = ?', [userId]);
+}
+
+export function replaceDailyReportToken(token: DbDailyReportToken): DbDailyReportToken {
+  run('DELETE FROM daily_report_tokens WHERE user_id = ?', [token.user_id]);
+  run(
+    `INSERT INTO daily_report_tokens
+     (id, user_id, token_hash, token_prefix, created_at, last_used_at, revoked_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [token.id, token.user_id, token.token_hash, token.token_prefix, token.created_at, token.last_used_at, token.revoked_at],
+  );
+  return token;
+}
+
+export function revokeDailyReportToken(userId: string, revokedAt = new Date().toISOString()): boolean {
+  return run(
+    'UPDATE daily_report_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL',
+    [revokedAt, userId],
+  ).changes > 0;
+}
+
+export function findActiveDailyReportTokenByHash(tokenHash: string): DbDailyReportToken | undefined {
+  return queryOne<DbDailyReportToken>(
+    `SELECT t.* FROM daily_report_tokens t
+     JOIN users u ON u.id = t.user_id
+     WHERE t.token_hash = ? AND t.revoked_at IS NULL AND u.disabled = 0`,
+    [tokenHash],
+  );
+}
+
+export function markDailyReportTokenUsed(id: string, usedAt = new Date().toISOString()): void {
+  run('UPDATE daily_report_tokens SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL', [usedAt, id]);
+}
+
 export function deleteUser(userId: string): boolean {
   try {
+    run('DELETE FROM daily_report_tokens WHERE user_id = ?', [userId]);
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
+    run('DELETE FROM ai_schedule_messages WHERE user_id = ?', [userId]);
     const sessions = queryAll<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', [userId]);
     for (const session of sessions) {
       run('DELETE FROM messages WHERE session_id = ?', [session.id]);
@@ -578,6 +857,7 @@ export function clearUserData(userId: string): { schedules: number; sessions: nu
   try {
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
+    run('DELETE FROM ai_schedule_messages WHERE user_id = ?', [userId]);
     const sessions = queryAll<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', [userId]);
     for (const session of sessions) run('DELETE FROM messages WHERE session_id = ?', [session.id]);
     run('DELETE FROM sessions WHERE user_id = ?', [userId]);

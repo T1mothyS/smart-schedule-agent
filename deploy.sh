@@ -5,8 +5,8 @@ set -e
 
 echo "=== 智能日程表部署脚本 ==="
 
-# 1. 安装 Node.js 20
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+# 1. 安装 Node.js 22
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
 # 2. 安装 PM2（进程管理器）

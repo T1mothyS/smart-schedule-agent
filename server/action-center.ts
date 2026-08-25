@@ -21,6 +21,8 @@ export interface ActionItem {
   completionId: string | null;
   proof: {
     note: string | null;
+    amountCents: number | null;
+    currency: string;
     billDate: string | null;
     attachments: Array<{ id: string; originalName: string; mimeType: string; sizeBytes: number }>;
   } | null;
@@ -30,6 +32,7 @@ export interface ActionCenterResult {
   next: ActionItem | null;
   unscheduled: ActionItem[];
   today: ActionItem[];
+  tomorrow: ActionItem[];
   upcoming: ActionItem[];
   overdue: ActionItem[];
   completedToday: ActionItem[];
@@ -52,6 +55,12 @@ function dateInTimezone(value: string, timezone: string): string {
   }).formatToParts(date);
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(item => item.type === type)?.value || '';
   return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+function scheduleDateInTimezone(value: string, timezone: string): string {
+  // 日程表单保存的是不带时区的本地日历时间，不能让 Node 服务器时区再次把它跨日转换。
+  // AI 或导入数据若带 Z/偏移量，则按用户时区换算真实日期。
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? dateInTimezone(value, timezone) : dateOnly(value);
 }
 
 function endOfWindow(today: string, days: number): string {
@@ -93,6 +102,8 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
 
   const proofFor = (completion?: activityStore.CompletionRecord | null): ActionItem['proof'] => completion ? {
     note: completion.note,
+    amountCents: completion.amountCents,
+    currency: completion.currency,
     billDate: completion.billDate,
     attachments: activityStore.listAttachments(userId, completion.id).map(file => ({
       id: file.id,
@@ -107,15 +118,17 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
   for (const schedule of scheduleStore.getAllSchedules(userId)) {
     // 周期事务会生成日历全天待办；行动中心仍使用周期事务本体，避免重复两条。
     if (schedule.id.startsWith('reminder-cycle:')) continue;
-    const dueDate = dateOnly(schedule.start_time);
-    const completion = latestCompletion.get(`schedule:${schedule.id}:`);
-    const completed = schedule.is_completed || !!completion;
+    const dueDate = scheduleDateInTimezone(schedule.start_time, timezone);
+    // 日历项的当前完成状态以 schedule.is_completed 为准。
+    // 旧版本可能留下未同步的 completion 记录；不能让这类脏记录把未完成日程从逾期栏吞掉。
+    const completion = schedule.is_completed ? latestCompletion.get(`schedule:${schedule.id}:`) : null;
+    const completed = schedule.is_completed;
     const isUnscheduled = schedule.is_unscheduled === true;
     let status: ActionItemStatus | null = null;
     if (completed && dateInTimezone(completion?.completedAt || schedule.updated_at, timezone) === today) status = 'completed';
     else if (completed) continue;
     else if (isUnscheduled) status = 'today';
-    else if (schedule.type === 'todo' && dueDate < today) status = 'overdue';
+    else if (dueDate < today) status = 'overdue';
     else if (dueDate === today) status = 'today';
     else if (dueDate > today && dueDate <= windowEnd) status = 'upcoming';
     if (!status) continue;
@@ -207,6 +220,8 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
   });
   const todayItems = sortItems(items.filter(item => item.status === 'today'));
   const unscheduled = sortItems(unscheduledItems);
+  const tomorrowDate = endOfWindow(today, 1);
+  const tomorrow = sortItems(items.filter(item => item.status === 'upcoming' && scheduleDateInTimezone(item.dueAt, timezone) === tomorrowDate));
   const upcoming = sortItems(items.filter(item => item.status === 'upcoming'));
   const overdue = sortItems(items.filter(item => item.status === 'overdue'));
   const completedToday = items.filter(item => item.status === 'completed').sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''));
@@ -214,6 +229,7 @@ export function getActionCenter(userId: string, upcomingDays = 7, now = new Date
     next: chooseNext([...todayItems, ...upcoming, ...overdue], now),
     unscheduled,
     today: todayItems,
+    tomorrow,
     upcoming,
     overdue,
     completedToday,

@@ -42,6 +42,96 @@ interface SystemBackupPayload {
   files: Array<{ relativePath: string; base64: string }>;
 }
 
+function remapForeignUserPayload(source: UserBackupPayload): UserBackupPayload {
+  const payload = structuredClone(source);
+  const activity = payload.activity as Record<string, any[]>;
+  const createIdMap = (values: unknown[]): Map<string, string> => new Map(
+    values
+      .map(value => String(value || ''))
+      .filter(Boolean)
+      .map(value => [value, crypto.randomUUID()]),
+  );
+  const taskIds = createIdMap((payload.reminder.tasks || []).map(task => task.id));
+  const cycleIds = createIdMap((payload.reminder.cycles || []).map(cycle => cycle.id));
+  const calendarIds = createIdMap((payload.schedule.calendars || []).map(calendar => calendar.id));
+  const categoryIds = createIdMap((payload.schedule.categories || []).map(category => category.id));
+  const completionIds = createIdMap((activity.completions || []).map(row => row.id));
+  const importIds = createIdMap((activity.aiImports || []).map(row => row.id));
+
+  const scheduleIds = new Map<string, string>();
+  for (const schedule of payload.schedule.schedules || []) {
+    const oldId = String(schedule.id || '');
+    if (!oldId) continue;
+    const linkedCycle = oldId.startsWith('reminder-cycle:') ? oldId.slice('reminder-cycle:'.length) : '';
+    scheduleIds.set(oldId, linkedCycle && cycleIds.has(linkedCycle)
+      ? `reminder-cycle:${cycleIds.get(linkedCycle)}`
+      : crypto.randomUUID());
+  }
+
+  payload.schedule.calendars = (payload.schedule.calendars || []).map(calendar => ({
+    ...calendar,
+    id: calendarIds.get(String(calendar.id)) || crypto.randomUUID(),
+  }));
+  payload.schedule.categories = (payload.schedule.categories || []).map(category => ({
+    ...category,
+    id: categoryIds.get(String(category.id)) || crypto.randomUUID(),
+  }));
+  payload.schedule.schedules = (payload.schedule.schedules || []).map(schedule => ({
+    ...schedule,
+    id: scheduleIds.get(String(schedule.id)) || crypto.randomUUID(),
+    calendar_id: calendarIds.get(String(schedule.calendar_id)) || String(schedule.calendar_id || ''),
+  }));
+  payload.reminder.tasks = (payload.reminder.tasks || []).map(task => ({
+    ...task,
+    id: taskIds.get(String(task.id)) || crypto.randomUUID(),
+  }));
+  payload.reminder.cycles = (payload.reminder.cycles || []).map(cycle => ({
+    ...cycle,
+    id: cycleIds.get(String(cycle.id)) || crypto.randomUUID(),
+    taskId: taskIds.get(String(cycle.taskId)) || crypto.randomUUID(),
+  }));
+
+  activity.completions = (activity.completions || []).map(row => ({
+    ...row,
+    id: completionIds.get(String(row.id)) || crypto.randomUUID(),
+    source_id: row.source_type === 'schedule'
+      ? scheduleIds.get(String(row.source_id)) || String(row.source_id || '')
+      : row.source_type === 'reminder'
+        ? taskIds.get(String(row.source_id)) || String(row.source_id || '')
+        : row.source_id,
+    instance_id: row.instance_id ? cycleIds.get(String(row.instance_id)) || row.instance_id : null,
+  }));
+  activity.notifications = (activity.notifications || []).map(row => ({
+    ...row,
+    id: crypto.randomUUID(),
+    source_id: row.source_type === 'schedule'
+      ? scheduleIds.get(String(row.source_id)) || String(row.source_id || '')
+      : row.source_type === 'reminder'
+        ? taskIds.get(String(row.source_id)) || String(row.source_id || '')
+        : row.source_id,
+    instance_id: row.instance_id ? cycleIds.get(String(row.instance_id)) || row.instance_id : null,
+    dedupe_key: `${String(row.dedupe_key || 'restored')}:restore:${crypto.randomUUID()}`,
+  }));
+  activity.aiImports = (activity.aiImports || []).map(row => ({
+    ...row,
+    id: importIds.get(String(row.id)) || crypto.randomUUID(),
+  }));
+  activity.attachments = [];
+  activity.emailImportSettings = (activity.emailImportSettings || []).map(row => ({
+    ...row,
+    import_token: crypto.randomBytes(16).toString('hex'),
+  }));
+  payload.files = payload.files.map(file => ({
+    ...file,
+    completionId: file.completionId ? completionIds.get(String(file.completionId)) || null : null,
+    importId: file.importId ? importIds.get(String(file.importId)) || null : null,
+  }));
+  if (payload.account.reminder && typeof payload.account.reminder === 'object') {
+    (payload.account.reminder as Record<string, unknown>).id = crypto.randomUUID();
+  }
+  return payload;
+}
+
 function deriveKey(password: string, salt: Buffer): Buffer {
   if (password.length < 8) throw new Error('备份密码至少需要 8 个字符');
   return crypto.scryptSync(password, salt, 32, { N: 16_384, r: 8, p: 1 });
@@ -123,14 +213,20 @@ export function inspectUserBackup(buffer: Buffer, password: string): Record<stri
 }
 
 export function restoreUserBackup(userId: string, buffer: Buffer, password: string, mode: 'merge' | 'replace'): Record<string, unknown> {
-  const payload = decryptBackup<UserBackupPayload>(buffer, password);
-  validateUserPayload(payload);
+  const decrypted = decryptBackup<UserBackupPayload>(buffer, password);
+  validateUserPayload(decrypted);
+  const targetAccount = db.exportUserAccountData(userId).user;
+  if (!targetAccount) throw new Error('目标账号不存在');
+  const isForeignAccount = String(decrypted.account.email || '').toLowerCase() !== targetAccount.email.toLowerCase();
+  const payload = isForeignAccount ? remapForeignUserPayload(decrypted) : decrypted;
   const safetyCopy = createUserBackup(userId, password);
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
   fs.writeFileSync(path.join(BACKUP_DIR, 'pre-user-restore-' + userId + '-' + Date.now() + '.aicalendar-backup'), safetyCopy);
+  const oldAttachments = mode === 'replace' ? activityStore.listAttachments(userId) : [];
   const schedule = scheduleStore.restoreUserScheduleData(userId, payload.schedule, mode);
   const reminder = reminderStore.restoreUserReminderData(userId, payload.reminder, mode);
   const activity = activityStore.restoreUserActivity(userId, payload.activity, mode);
+  if (mode === 'replace') attachmentService.deleteUserAttachmentFiles(oldAttachments);
   const preference = payload.account.reminder as any;
   if (preference) {
     const current = db.getReminder(userId);
@@ -160,7 +256,7 @@ export function restoreUserBackup(userId: string, buffer: Buffer, password: stri
       // 单个损坏附件不会使结构化数据恢复失败，结果中会体现数量差异。
     }
   }
-  return { schedule, reminder, activity, attachments, mode };
+  return { schedule, reminder, activity, attachments, mode, idsRemapped: isForeignAccount };
 }
 
 function collectFiles(root: string): Array<{ relativePath: string; base64: string }> {
@@ -204,7 +300,7 @@ export function createSystemSnapshot(uploadToOss = true): { filename: string; pa
   for (const name of local.slice(7)) {
     const marker = path.join(BACKUP_DIR, name + '.oss-uploaded');
     // OSS 不可用时保留尚未离机的快照，避免本地轮换造成唯一副本丢失。
-    if (!uploadToOss || !hasOssConfig() || fs.existsSync(marker)) {
+    if (!hasOssConfig() || fs.existsSync(marker)) {
       fs.unlinkSync(path.join(BACKUP_DIR, name));
       if (fs.existsSync(marker)) fs.unlinkSync(marker);
     }
@@ -285,20 +381,125 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
   const password = process.env.BACKUP_ENCRYPTION_KEY || '';
   const payload = decryptBackup<SystemBackupPayload>(buffer, password);
   if (payload.format !== 'aicalendar-system' || payload.version !== FORMAT_VERSION) throw new Error('系统备份版本不正确');
-  createSystemSnapshot(false);
-  for (const [name, base64] of Object.entries(payload.databases)) {
-    if (!['chat.db', 'schedule.db', 'reminder.db', 'activity.db'].includes(name)) continue;
-    const target = path.join(DATA_DIR, name);
-    const temp = target + '.restore';
-    fs.writeFileSync(temp, Buffer.from(base64, 'base64'));
-    fs.renameSync(temp, target);
+  const databaseNames = ['chat.db', 'schedule.db', 'reminder.db', 'activity.db'] as const;
+  const transactionId = crypto.randomUUID();
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  const databaseFiles = databaseNames.map(name => {
+    const base64 = payload.databases?.[name];
+    if (typeof base64 !== 'string') throw new Error(`系统备份缺少 ${name}`);
+    const restored = Buffer.from(base64, 'base64');
+    if (restored.length < 100 || restored.subarray(0, 16).toString('binary') !== 'SQLite format 3\u0000') {
+      throw new Error(`系统备份中的 ${name} 不是有效的 SQLite 数据库`);
+    }
+    return {
+      name,
+      restored,
+      target: path.join(DATA_DIR, name),
+      temp: path.join(DATA_DIR, `.${name}.restore-${transactionId}`),
+      previous: path.join(DATA_DIR, `.${name}.pre-restore-${transactionId}`),
+      backedUp: false,
+      activated: false,
+    };
+  });
+
+  const attachmentRoot = path.resolve(attachmentService.attachmentsRoot());
+  const resolvedDataDir = path.resolve(DATA_DIR);
+  if (!attachmentRoot.startsWith(resolvedDataDir + path.sep)) throw new Error('附件目录不在数据目录内，拒绝恢复');
+  const attachmentTemp = path.join(resolvedDataDir, `.attachments.restore-${transactionId}`);
+  const attachmentPrevious = path.join(resolvedDataDir, `.attachments.pre-restore-${transactionId}`);
+  let attachmentBackedUp = false;
+  let attachmentActivated = false;
+  let committed = false;
+
+  try {
+    for (const file of databaseFiles) fs.writeFileSync(file.temp, file.restored, { flag: 'wx' });
+    fs.mkdirSync(attachmentTemp, { recursive: false });
+    if (!Array.isArray(payload.files)) throw new Error('系统备份附件清单不正确');
+    const attachmentPaths = new Set<string>();
+    for (const file of payload.files) {
+      if (!file || typeof file.relativePath !== 'string' || typeof file.base64 !== 'string') {
+        throw new Error('系统备份附件记录不正确');
+      }
+      const target = path.resolve(attachmentTemp, file.relativePath);
+      if (!target.startsWith(path.resolve(attachmentTemp) + path.sep) || attachmentPaths.has(target)) {
+        throw new Error('系统备份包含不安全或重复的附件路径');
+      }
+      attachmentPaths.add(target);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, Buffer.from(file.base64, 'base64'), { flag: 'wx' });
+    }
+
+    // 所有输入完整暂存后，先生成当前状态的恢复点，再开始跨库切换。
+    createSystemSnapshot(false);
+    for (const file of databaseFiles) {
+      if (fs.existsSync(file.target)) {
+        fs.renameSync(file.target, file.previous);
+        file.backedUp = true;
+      }
+    }
+    if (fs.existsSync(attachmentRoot)) {
+      fs.renameSync(attachmentRoot, attachmentPrevious);
+      attachmentBackedUp = true;
+    }
+    for (const file of databaseFiles) {
+      fs.renameSync(file.temp, file.target);
+      file.activated = true;
+    }
+    fs.renameSync(attachmentTemp, attachmentRoot);
+    attachmentActivated = true;
+    committed = true;
+  } catch (error) {
+    if (!committed) {
+      const rollbackErrors: string[] = [];
+      const attemptRollback = (label: string, action: () => void) => {
+        try { action(); }
+        catch (rollbackError) {
+          rollbackErrors.push(`${label}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
+        }
+      };
+      if (attachmentActivated && fs.existsSync(attachmentRoot)) {
+        attemptRollback('删除新附件目录', () => fs.rmSync(attachmentRoot, { recursive: true, force: true }));
+      }
+      if (attachmentBackedUp && fs.existsSync(attachmentPrevious)) {
+        attemptRollback('恢复旧附件目录', () => fs.renameSync(attachmentPrevious, attachmentRoot));
+      }
+      for (const file of [...databaseFiles].reverse()) {
+        if (file.activated && fs.existsSync(file.target)) {
+          attemptRollback(`删除新数据库 ${file.name}`, () => fs.unlinkSync(file.target));
+        }
+        if (file.backedUp && fs.existsSync(file.previous)) {
+          attemptRollback(`恢复旧数据库 ${file.name}`, () => fs.renameSync(file.previous, file.target));
+        }
+      }
+      if (rollbackErrors.length) {
+        const original = error instanceof Error ? error.message : String(error);
+        throw new Error(`系统恢复失败：${original}；自动回滚未完全成功：${rollbackErrors.join('；')}`);
+      }
+    }
+    throw error;
+  } finally {
+    for (const file of databaseFiles) {
+      if (fs.existsSync(file.temp)) {
+        try { fs.unlinkSync(file.temp); }
+        catch (error) { console.warn(`[Backup] 无法清理暂存数据库 ${file.name}:`, error); }
+      }
+    }
+    if (fs.existsSync(attachmentTemp)) {
+      try { fs.rmSync(attachmentTemp, { recursive: true, force: true }); }
+      catch (error) { console.warn('[Backup] 无法清理暂存附件目录:', error); }
+    }
   }
-  const attachmentRoot = attachmentService.attachmentsRoot();
-  for (const file of payload.files) {
-    const target = path.resolve(attachmentRoot, file.relativePath);
-    if (!target.startsWith(path.resolve(attachmentRoot) + path.sep)) continue;
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, Buffer.from(file.base64, 'base64'));
+
+  // 切换已经完整提交；旧文件只作为清理对象，清理失败不再反向破坏新的一致状态。
+  for (const file of databaseFiles) {
+    if (fs.existsSync(file.previous)) {
+      try { fs.unlinkSync(file.previous); }
+      catch (error) { console.warn(`[Backup] 无法清理旧数据库 ${file.name}:`, error); }
+    }
+  }
+  if (fs.existsSync(attachmentPrevious)) {
+    try { fs.rmSync(attachmentPrevious, { recursive: true, force: true }); }
+    catch (error) { console.warn('[Backup] 无法清理旧附件目录:', error); }
   }
 }
 

@@ -1,10 +1,9 @@
+import 'dotenv/config';
 import express from "express";
-import { query, unstable_v2_createSession, unstable_v2_authenticate, PermissionResult, CanUseTool } from "@tencent-ai/agent-sdk";
+import { query, unstable_v2_createSession, unstable_v2_authenticate } from "@tencent-ai/agent-sdk";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
 import { fileURLToPath } from "url";
-import { exec } from "child_process";
-import { promisify } from "util";
 import * as dbModule from "./db.js";
 import * as scheduleStore from "./schedule-store.js";
 import { initScheduleDb } from "./schedule-store.js";
@@ -12,7 +11,6 @@ import * as reminderStore from "./reminder-store.js";
 import { initReminderDb } from "./reminder-store.js";
 import * as reminderCalendarSync from "./reminder-calendar-sync.js";
 import { toggleScheduleCompletion } from "./schedule-completion-service.js";
-import dotenv from "dotenv";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import cron from "node-cron";
@@ -26,15 +24,18 @@ import { enqueueUserNotification, processNotificationQueue } from "./notificatio
 import * as backupService from "./backup-service.js";
 import { parseAiImport, type AiImportDraft } from "./ai-import-service.js";
 import { pollEmailImports } from "./email-import-service.js";
-import { buildCodeBuddyEnv } from "./codebuddy-env.js";
+import { buildCodeBuddyEnv, normaliseCodeBuddyBaseUrl } from "./codebuddy-env.js";
 import { createModelService } from "./model-service.js";
+import { parseAiJson } from "./ai-json.js";
+import { extractWeatherLocationQuery, getDailyWeather, isWeatherQuestion, searchLocations, type WeatherLocation } from './weather-service.js';
+import { createReadableUserExport, createSchedulesCsv } from './export-service.js';
+import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
+import { createApiRateLimiter, securityHeaders } from './http-security.js';
+import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
 
 // 数据库实例（等待初始化后赋值）
 let db: typeof dbModule;
 let dbInitialized = false;
-
-// 加载 .env 文件（如果存在）
-dotenv.config();
 
 // 【关键修复】获取本地时区的日期字符串（YYYY-MM-DD）
 function getLocalDateString(date?: Date): string {
@@ -54,6 +55,16 @@ function getLocalISOString(date?: Date): string {
   return localDate.toISOString();
 }
 
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message || error.stack || error.name;
+  if (typeof error === 'string' && error) return error;
+  try {
+    const serialized = JSON.stringify(error);
+    if (serialized && serialized !== '{}') return serialized;
+  } catch {}
+  return String(error || '未知错误');
+}
+
 // 【修复】默认使用国内版 API（codebuddy.cn）
 // 国内用户需要设置 CODEBUDDY_INTERNET_ENVIRONMENT=internal
 if (!process.env.CODEBUDDY_INTERNET_ENVIRONMENT) {
@@ -61,23 +72,6 @@ if (!process.env.CODEBUDDY_INTERNET_ENVIRONMENT) {
   console.log('[Startup] 使用国内版 API (CODEBUDDY_INTERNET_ENVIRONMENT=internal)');
 }
 
-const execAsync = promisify(exec);
-
-// 待处理的权限请求
-interface PendingPermission {
-  resolve: (result: PermissionResult) => void;
-  reject: (error: Error) => void;
-  toolName: string;
-  input: Record<string, unknown>;
-  sessionId: string;
-  userId: string;
-  timestamp: number;
-}
-
-const pendingPermissions = new Map<string, PendingPermission>();
-
-// 权限请求超时时间（5分钟）
-const PERMISSION_TIMEOUT = 5 * 60 * 1000;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -88,7 +82,23 @@ const isProduction = process.env.APP_ENV === 'production' || process.env.NODE_EN
 const staticPath = path.resolve(__dirname, '../dist');
 
 // Middleware
-app.use(express.json({ limit: '35mb' }));
+app.disable('x-powered-by');
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS || 0);
+if (Number.isInteger(trustProxyHops) && trustProxyHops > 0) app.set('trust proxy', trustProxyHops);
+app.use(securityHeaders(isProduction));
+app.use(createApiRateLimiter());
+
+// 只有附件和图片导入允许较大 JSON；其余 API 保持 1MB，避免所有端点都承担 Base64 负载风险。
+const largeJsonParser = express.json({ limit: '75mb' });
+app.use((req, res, next) => {
+  const acceptsLargeJson = req.method === 'POST' && (
+    /^\/api\/completions\/[^/]+\/attachments$/.test(req.path)
+    || req.path === '/api/ai/imports/parse'
+  );
+  if (acceptsLargeJson) return largeJsonParser(req, res, next);
+  next();
+});
+app.use(express.json({ limit: '1mb' }));
 
 // 【新增】数据库初始化检查中间件
 app.use('/api', (req, res, next) => {
@@ -126,6 +136,31 @@ function getAvailableModels(
       env: buildCodeBuddyEnv(credential),
     }),
   });
+}
+
+function resolveCodeBuddyCredential(userId: string): dbModule.DbUserApiKey | undefined {
+  const stored = db.getUserApiKey(userId);
+  const globalBaseUrl = process.env.CODEBUDDY_BASE_URL?.trim() || null;
+  if (stored) return { ...stored, base_url: stored.base_url || globalBaseUrl };
+  const apiKey = process.env.CODEBUDDY_API_KEY?.trim();
+  if (!apiKey) return undefined;
+  return {
+    id: `environment:${userId}`,
+    user_id: userId,
+    api_key: apiKey,
+    base_url: globalBaseUrl,
+    created_at: 'environment',
+    updated_at: 'environment',
+  };
+}
+
+function resolveAiImportCredential(userId: string): { apiKey: string; baseUrl?: string | null; model: string } | null {
+  const credential = resolveCodeBuddyCredential(userId);
+  return credential ? {
+    apiKey: credential.api_key,
+    baseUrl: credential.base_url,
+    model: db.getUserPreferredModel(userId, defaultModel),
+  } : null;
 }
 
 // ==================== 日志系统 ====================
@@ -222,15 +257,29 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// 日程 AI 模型配置（读/写）
-let scheduleModel = defaultModel;
+// 日程 AI 模型配置按账号保存，避免一个用户修改后影响其他用户。
 app.get("/api/schedule-model", authenticate, (req, res) => {
-  res.json({ model: scheduleModel });
+  const userId = ((req as any).user as JwtPayload).userId;
+  res.json({ model: db.getUserPreferredModel(userId, defaultModel) });
 });
 app.post("/api/schedule-model", authenticate, (req, res) => {
-  const { model } = req.body;
-  if (model) { scheduleModel = model; }
-  res.json({ success: true, model: scheduleModel });
+  const userId = ((req as any).user as JwtPayload).userId;
+  const model = String(req.body?.model || '').trim();
+  if (!model || model.length > 100) return res.status(400).json({ error: '模型名称无效' });
+  if (!db.updateUserPreferredModel(userId, model)) return res.status(404).json({ error: '用户不存在' });
+  res.json({ success: true, model });
+});
+
+// 旧聊天接口允许客户端决定工作目录和工具权限，旧 AI 接口会跳过确认直接写入。
+// 保留明确的 410 响应，避免旧客户端静默执行危险行为。
+app.all(['/api/chat', '/api/permission-response'], authenticate, (_req, res) => {
+  res.status(410).json({ error: '旧聊天接口已停用，请使用 /api/ai-chat' });
+});
+app.post('/api/ai-schedule', authenticate, (_req, res) => {
+  res.status(410).json({ error: '旧自动写入接口已停用，请使用 /api/ai-chat 并确认计划' });
+});
+app.all('/api/reminders', authenticate, (_req, res) => {
+  res.status(410).json({ error: '旧提醒设置接口已停用，请使用 /api/notification-preferences' });
 });
 
 // 登录状态响应类型
@@ -253,13 +302,16 @@ app.get("/api/check-login", authenticate, async (req, res) => {
   if (authHeader?.startsWith('Bearer ')) {
     try {
       const payload = jwt.verify(authHeader.slice(7), JWT_SECRET) as JwtPayload;
-      const userKey = db.getUserApiKey(payload.userId);
+      const storedKey = db.getUserApiKey(payload.userId);
+      const userKey = resolveCodeBuddyCredential(payload.userId);
       
       if (userKey?.api_key) {
         response.isLoggedIn = true;
         response.hasApiKey = true;
         // 脱敏显示
-        response.apiKey = userKey.api_key.slice(0, 8) + '****' + userKey.api_key.slice(-4);
+        response.apiKey = storedKey
+          ? storedKey.api_key.slice(0, 8) + '****' + storedKey.api_key.slice(-4)
+          : '服务器默认配置';
       } else {
         response.hasApiKey = false;
         response.error = '未配置 API Key，请在设置页输入您的 CodeBuddy API Key';
@@ -280,8 +332,7 @@ app.get("/api/models", authenticate, async (req, res) => {
   try {
     // authenticate 已完成 JWT 校验，直接读取当前用户的凭据，避免重复解析和生产日志泄露账号信息。
     const currentUser = (req as any).user as JwtPayload;
-    const userCredential: dbModule.DbUserApiKey | undefined =
-      db.getUserApiKey(currentUser.userId) || undefined;
+    const userCredential = resolveCodeBuddyCredential(currentUser.userId);
 
     if (!userCredential) {
       return res.status(401).json({ 
@@ -310,26 +361,68 @@ app.get("/api/models", authenticate, async (req, res) => {
 });
 
 // ============= AI 日程对话历史 =============
+const AI_SCHEDULE_HISTORY_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+function cleanupAiScheduleHistory(userId?: string): number {
+  const cutoff = new Date(Date.now() - AI_SCHEDULE_HISTORY_TTL_MS).toISOString();
+  return db.deleteExpiredAiScheduleMessages(cutoff, userId);
+}
+
+function parseHistoryJson(value: string | null): any {
+  if (!value) return undefined;
+  try { return JSON.parse(value); } catch { return undefined; }
+}
+
+function toAiScheduleHistoryMessage(message: dbModule.DbAiScheduleMessage) {
+  return {
+    id: message.id,
+    role: message.role,
+    type: message.type,
+    text: message.content,
+    intent: message.intent || undefined,
+    scheduleItems: parseHistoryJson(message.schedule_items),
+    plan: parseHistoryJson(message.plan),
+    timestamp: message.created_at,
+  };
+}
+
 app.get("/api/ai-schedule/history", authenticate, (req, res) => {
   try {
     const payload = (req as any).user as JwtPayload;
-    const sessions = db.getAllSessions(payload.userId);
-    // 获取所有消息（取最近的20条）
-    let allMessages: any[] = [];
-    
-    for (const session of sessions) {
-      const msgs = db.getMessagesBySession(session.id, payload.userId);
-      allMessages.push(...msgs);
-    }
-    
-    // 按时间排序，取最近20条
-    allMessages.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-    allMessages = allMessages.slice(0, 20);
-    
-    res.json({ messages: allMessages });
+    cleanupAiScheduleHistory(payload.userId);
+    res.json({ messages: db.getAiScheduleMessages(payload.userId, 0).map(toAiScheduleHistoryMessage) });
   } catch (error: any) {
     console.error("[AI History] Error:", error);
     res.json({ messages: [] });
+  }
+});
+
+app.patch("/api/ai-schedule/history/:id", authenticate, (req, res) => {
+  try {
+    const payload = (req as any).user as JwtPayload;
+    const body = req.body || {};
+    const updates: Partial<Pick<dbModule.DbAiScheduleMessage, 'type' | 'content' | 'intent' | 'schedule_items' | 'plan'>> = {};
+    if (body.type !== undefined) updates.type = String(body.type);
+    if (body.content !== undefined) updates.content = String(body.content);
+    if (body.intent !== undefined) updates.intent = body.intent ? String(body.intent) : null;
+    if (body.scheduleItems !== undefined) updates.schedule_items = body.scheduleItems == null ? null : JSON.stringify(body.scheduleItems);
+    if (body.plan !== undefined) updates.plan = body.plan == null ? null : JSON.stringify(body.plan);
+    if (!db.updateAiScheduleMessage(req.params.id, payload.userId, updates)) {
+      return res.status(404).json({ error: '历史消息不存在' });
+    }
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '更新历史消息失败' });
+  }
+});
+
+app.delete("/api/ai-schedule/history", authenticate, (req, res) => {
+  try {
+    const payload = (req as any).user as JwtPayload;
+    const deleted = db.deleteExpiredAiScheduleMessages(new Date(Date.now() + 1).toISOString(), payload.userId);
+    res.json({ success: true, deleted });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '清空历史失败' });
   }
 });
 
@@ -344,8 +437,7 @@ app.post("/api/verify-api-key", authenticate, async (req, res) => {
     if (authHeader?.startsWith('Bearer ')) {
       try {
         const payload = jwt.verify(authHeader.slice(7), JWT_SECRET) as JwtPayload;
-        const userKey = db.getUserApiKey(payload.userId);
-        userCredential = userKey || undefined;
+        userCredential = resolveCodeBuddyCredential(payload.userId);
       } catch {}
     }
 
@@ -418,13 +510,14 @@ app.post("/api/verify-api-key", authenticate, async (req, res) => {
 // 获取当前用户的 API Key
 app.get("/api/user-api-key", authenticate, (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-store');
     const payload = (req as any).user as JwtPayload;
     const userApiKey = db.getUserApiKey(payload.userId);
     
     if (userApiKey) {
       res.json({
         hasKey: true,
-        apiKey: userApiKey.api_key,
+        maskedApiKey: userApiKey.api_key.slice(0, 8) + '****' + userApiKey.api_key.slice(-4),
         baseUrl: userApiKey.base_url || ''
       });
     } else {
@@ -443,18 +536,22 @@ app.get("/api/user-api-key", authenticate, (req, res) => {
 // 保存/更新用户的 API Key
 app.post("/api/user-api-key", authenticate, (req, res) => {
   try {
+    res.setHeader('Cache-Control', 'no-store');
     const payload = (req as any).user as JwtPayload;
     const { apiKey, baseUrl } = req.body;
     
-    if (!apiKey || !apiKey.trim()) {
+    if (!apiKey || !String(apiKey).trim()) {
       return res.status(400).json({ error: 'API Key 不能为空' });
     }
+    const normalizedApiKey = String(apiKey).trim();
+    if (normalizedApiKey.length > 4_096) return res.status(400).json({ error: 'API Key 过长' });
+    const normalizedBaseUrl = normaliseCodeBuddyBaseUrl(baseUrl);
     
     const userApiKey: dbModule.DbUserApiKey = {
       id: `uak_${Date.now()}`,
       user_id: payload.userId,
-      api_key: apiKey.trim(),
-      base_url: baseUrl?.trim() || undefined,
+      api_key: normalizedApiKey,
+      base_url: normalizedBaseUrl,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
@@ -463,82 +560,12 @@ app.post("/api/user-api-key", authenticate, (req, res) => {
     
     modelService.invalidate(payload.userId);
     
-    addLog('info', 'system', `用户 ${payload.email} 更新了 API Key`);
+    addLog('info', 'system', '用户更新了 API Key', { userId: payload.userId });
     res.json({ success: true, message: 'API Key 保存成功' });
   } catch (error: any) {
     console.error("[UserApiKey] Error:", error);
-    res.status(500).json({ error: '保存 API Key 失败' });
-  }
-});
-
-// ============= 会话 API =============
-
-// 获取所有会话（包含消息数量）
-app.get("/api/sessions", authenticate, (req, res) => {
-  try {
-    const userId = ((req as any).user as JwtPayload).userId;
-    const sessions = db.getAllSessions(userId);
-    const sessionsWithMessages = sessions.map(session => {
-      const messages = db.getMessagesBySession(session.id, userId);
-      return {
-        ...session,
-        messageCount: messages.length
-      };
-    });
-    res.json({ sessions: sessionsWithMessages });
-  } catch (error: any) {
-    console.error("[Sessions] Error:", error);
-    res.status(500).json({ error: error?.message || "获取会话失败" });
-  }
-});
-
-// 获取单个会话及其消息
-app.get("/api/sessions/:sessionId", authenticate, (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const userId = ((req as any).user as JwtPayload).userId;
-    const session = db.getSession(sessionId, userId);
-    
-    if (!session) {
-      return res.status(404).json({ error: "会话不存在" });
-    }
-    
-    const messages = db.getMessagesBySession(sessionId, userId);
-    
-    // 解析 tool_calls JSON
-    const parsedMessages = messages.map(msg => ({
-      ...msg,
-      tool_calls: msg.tool_calls ? JSON.parse(msg.tool_calls) : null
-    }));
-    
-    res.json({ session, messages: parsedMessages });
-  } catch (error: any) {
-    console.error("[Session] Error:", error);
-    res.status(500).json({ error: error?.message || "获取会话失败" });
-  }
-});
-
-// 创建新会话
-app.post("/api/sessions", authenticate, (req, res) => {
-  try {
-    const { model = defaultModel, title = "新对话" } = req.body;
-    const userId = ((req as any).user as JwtPayload).userId;
-    const now = new Date().toISOString();
-    
-    const session = db.createSession({
-      id: uuidv4(),
-      user_id: userId,
-      title,
-      model,
-      sdk_session_id: null,
-      created_at: now,
-      updated_at: now
-    });
-    
-    res.json({ session });
-  } catch (error: any) {
-    console.error("[Create Session] Error:", error);
-    res.status(500).json({ error: error?.message || "创建会话失败" });
+    const message = error?.message || '保存 API Key 失败';
+    res.status(String(message).startsWith('CodeBuddy Base URL') ? 400 : 500).json({ error: message });
   }
 });
 
@@ -562,11 +589,47 @@ const JWT_EXPIRES_IN = '7d';
 const ADMIN_INVITE_CODE = requiredProductionConfig('ADMIN_INVITE_CODE', 'dev-admin-invite');
 const USER_INVITE_CODE = requiredProductionConfig('USER_INVITE_CODE', 'dev-user-invite');
 
+function validateRuntimeConfig(): void {
+  if (isProduction) {
+    if (JWT_SECRET.length < 32) throw new Error('[Config] JWT_SECRET 至少需要 32 个字符');
+    if (ADMIN_INVITE_CODE.length < 12 || USER_INVITE_CODE.length < 12) {
+      throw new Error('[Config] 生产邀请码至少需要 12 个字符');
+    }
+    if (ADMIN_INVITE_CODE === USER_INVITE_CODE) throw new Error('[Config] 管理员邀请码和普通用户邀请码不能相同');
+  }
+  const rawAppUrl = process.env.APP_URL || (isProduction ? '' : `http://localhost:${PORT}/today`);
+  if (!rawAppUrl) throw new Error('[Config] 生产环境缺少必需配置: APP_URL');
+  let parsed: URL;
+  try { parsed = new URL(rawAppUrl); }
+  catch { throw new Error('[Config] APP_URL 必须是完整的 http(s) URL'); }
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new Error('[Config] APP_URL 只允许不含账号密码的 http(s) URL');
+  }
+  if (isProduction && parsed.protocol !== 'https:') throw new Error('[Config] 生产 APP_URL 必须使用 HTTPS');
+  if (parsed.hash) throw new Error('[Config] APP_URL 不能包含 URL fragment');
+  process.env.APP_URL = parsed.toString();
+  if (process.env.BACKGROUND_JOBS_ENABLED === 'true' && !process.env.SMTP_PASS?.trim()) {
+    throw new Error('[Config] 启用后台任务时必须配置 SMTP_PASS');
+  }
+  if (process.env.CODEBUDDY_BASE_URL?.trim()) {
+    process.env.CODEBUDDY_BASE_URL = normaliseCodeBuddyBaseUrl(process.env.CODEBUDDY_BASE_URL) || '';
+  }
+}
+
 // JWT payload 类型
 interface JwtPayload {
   userId: string;
   email: string;
   role: 'admin' | 'user';
+  authVersion: number;
+}
+
+function signUserToken(user: Pick<dbModule.DbUser, 'id' | 'email' | 'role' | 'auth_version'>): string {
+  return jwt.sign(
+    { userId: user.id, email: user.email, role: user.role, authVersion: user.auth_version ?? 0 },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN },
+  );
 }
 
 // 认证中间件
@@ -578,7 +641,19 @@ function authenticate(req: express.Request, res: express.Response, next: express
   const token = authHeader.slice(7);
   try {
     const payload = jwt.verify(token, JWT_SECRET) as JwtPayload;
-    (req as any).user = payload;
+    const current = db.getUserById(payload.userId);
+    if (!current || current.disabled) {
+      return res.status(401).json({ error: '账号不存在或已被禁用，请重新登录' });
+    }
+    if ((payload.authVersion ?? -1) !== (current.auth_version ?? 0)) {
+      return res.status(401).json({ error: '登录状态已失效，请重新登录' });
+    }
+    (req as any).user = {
+      userId: current.id,
+      email: current.email,
+      role: current.role,
+      authVersion: current.auth_version ?? 0,
+    } satisfies JwtPayload;
     next();
   } catch (err) {
     return res.status(401).json({ error: 'Token 无效或已过期，请重新登录' });
@@ -596,10 +671,13 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
 // 发送注册验证码
 app.post("/api/auth/send-register-code", async (req, res) => {
   try {
-    const { email, password, invite_code } = req.body;
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    const invite_code = String(req.body?.invite_code || '');
     if (!email || !password || !invite_code) {
       return res.status(400).json({ error: '请填写邮箱、密码和邀请码' });
     }
+    if (password.length < 8) return res.status(400).json({ error: '密码至少需要 8 位' });
     // 验证邀请码
     let role: 'admin' | 'user' | null = null;
     if (invite_code === ADMIN_INVITE_CODE) role = 'admin';
@@ -637,10 +715,14 @@ app.post("/api/auth/send-register-code", async (req, res) => {
 // 完成注册
 app.post("/api/auth/register", async (req, res) => {
   try {
-    const { email, password, code, invite_code } = req.body;
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
+    const code = String(req.body?.code || '').trim();
+    const invite_code = String(req.body?.invite_code || '');
     if (!email || !password || !code) {
       return res.status(400).json({ error: '请填写完整信息' });
     }
+    if (password.length < 8) return res.status(400).json({ error: '密码至少需要 8 位' });
     // 验证邀请码
     let role: 'admin' | 'user' | null = null;
     if (invite_code === ADMIN_INVITE_CODE) role = 'admin';
@@ -663,6 +745,7 @@ app.post("/api/auth/register", async (req, res) => {
       password_hash,
       role,
       disabled: 0,
+      auth_version: 0,
       created_at: now,
       updated_at: now
     });
@@ -680,7 +763,7 @@ app.post("/api/auth/register", async (req, res) => {
       updated_at: now
     });
     // 生成 JWT
-    const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    const token = signUserToken(user);
     addLog('info', 'auth', `新用户注册: ${email}，权限: ${role}`, { userId, role });
     res.json({ success: true, token, user: { id: user.id, email: user.email, role: user.role } });
   } catch (error: any) {
@@ -693,7 +776,8 @@ app.post("/api/auth/register", async (req, res) => {
 // 登录
 app.post("/api/auth/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const password = String(req.body?.password || '');
     if (!email || !password) {
       return res.status(400).json({ error: '请填写邮箱和密码' });
     }
@@ -708,7 +792,7 @@ app.post("/api/auth/login", async (req, res) => {
     if (!valid) {
       return res.status(401).json({ error: '邮箱或密码错误' });
     }
-    const token = jwt.sign({ userId: user.id, email: user.email, role: user.role }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    const token = signUserToken(user);
     
     // 更新最后登录时间
     db.updateUserLastLogin(user.id);
@@ -733,9 +817,9 @@ app.get("/api/auth/me", authenticate, (req, res) => {
 
 // 获取所有用户列表（管理员）- 支持分页和搜索
 app.get("/api/admin/users", authenticate, requireAdmin, (req, res) => {
-  const page = parseInt(req.query.page as string) || 1;
-  const pageSize = parseInt(req.query.pageSize as string) || 10;
-  const search = (req.query.search as string) || '';
+  const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, parseInt(String(req.query.pageSize || '10'), 10) || 10));
+  const search = String(req.query.search || '').trim().slice(0, 200);
   const result = db.getUsersPaginated(page, pageSize, search);
   res.json(result);
 });
@@ -764,6 +848,11 @@ app.put("/api/admin/users/:id/role", authenticate, requireAdmin, (req, res) => {
 // 禁用/启用用户（管理员）
 app.put("/api/admin/users/:id/disabled", authenticate, requireAdmin, (req, res) => {
   const { disabled } = req.body;
+  const payload = (req as any).user as JwtPayload;
+  const targetUser = db.getUserById(req.params.id);
+  if (!targetUser) return res.status(404).json({ error: '用户不存在' });
+  if (targetUser.id === payload.userId) return res.status(403).json({ error: '无法禁用自己的账号' });
+  if (targetUser.role === 'admin') return res.status(403).json({ error: '无法禁用管理员账号' });
   const success = db.updateUserDisabled(req.params.id, disabled ? 1 : 0);
   if (!success) return res.status(404).json({ error: '用户不存在' });
   addLog('info', 'admin', `${disabled ? '禁用' : '启用'}用户: ${req.params.id}`);
@@ -782,20 +871,34 @@ app.delete("/api/admin/users/:id", authenticate, requireAdmin, (req, res) => {
   
   // 禁止删除管理员
   const targetUser = db.getUserById(targetUserId);
+  if (!targetUser) return res.status(404).json({ error: '用户不存在' });
   if (targetUser?.role === 'admin') {
     return res.status(403).json({ error: '无法删除管理员账号' });
   }
+  if (String(req.body?.confirmEmail || '').trim().toLowerCase() !== targetUser.email.toLowerCase()) {
+    return res.status(400).json({ error: '确认邮箱不匹配，删除操作已取消' });
+  }
+  let preDeleteBackup: ReturnType<typeof backupService.createSystemSnapshot>;
+  try { preDeleteBackup = backupService.createSystemSnapshot(); }
+  catch (error: any) {
+    return res.status(503).json({ error: '删除前全站备份失败，未修改任何用户数据：' + (error?.message || '未知错误') });
+  }
   
-  // 删除用户的日程
-  const deletedSchedules = scheduleStore.deleteSchedulesByUser(targetUserId);
+  const scheduleData = scheduleStore.deleteUserScheduleData(targetUserId);
   const deletedReminderTasks = reminderStore.deleteReminderTasksByUser(targetUserId);
+  const activityData = activityStore.deleteUserActivity(targetUserId);
+  const deletedAttachmentFiles = attachmentService.deleteUserAttachmentFiles(activityData.attachments);
   
   // 删除用户及其关联数据
   const success = db.deleteUser(targetUserId);
   if (!success) return res.status(404).json({ error: '用户不存在' });
   
-  addLog('info', 'admin', `删除用户: ${targetUserId}，删除了 ${deletedSchedules} 条日程和 ${deletedReminderTasks} 条周期提醒`);
-  res.json({ success: true, deletedSchedules, deletedReminderTasks });
+  addLog('info', 'admin', `删除用户及其账号数据: ${targetUserId}`, {
+    ...scheduleData,
+    reminderTasks: deletedReminderTasks,
+    attachmentFiles: deletedAttachmentFiles,
+  });
+  res.json({ success: true, backup: preDeleteBackup.filename, scheduleData, deletedReminderTasks, activityData: { ...activityData, attachments: activityData.attachments.length }, deletedAttachmentFiles });
 });
 
 // 清空用户数据（保留账号）（管理员）
@@ -807,30 +910,32 @@ app.post("/api/admin/users/:id/clear-data", authenticate, requireAdmin, (req, re
   if (targetUserId === payload.userId) {
     return res.status(403).json({ error: '无法清空自己的数据' });
   }
+  const targetUser = db.getUserById(targetUserId);
+  if (!targetUser) return res.status(404).json({ error: '用户不存在' });
+  if (targetUser.role === 'admin') return res.status(403).json({ error: '无法清空管理员账号的数据' });
+  if (String(req.body?.confirmEmail || '').trim().toLowerCase() !== targetUser.email.toLowerCase()) {
+    return res.status(400).json({ error: '确认邮箱不匹配，清空操作已取消' });
+  }
+  let preClearBackup: ReturnType<typeof backupService.createSystemSnapshot>;
+  try { preClearBackup = backupService.createSystemSnapshot(); }
+  catch (error: any) {
+    return res.status(503).json({ error: '清空前全站备份失败，未修改任何用户数据：' + (error?.message || '未知错误') });
+  }
   
-  // 删除用户的日程
-  const deletedSchedules = scheduleStore.deleteSchedulesByUser(targetUserId);
+  const scheduleData = scheduleStore.deleteUserScheduleData(targetUserId);
   const deletedReminderTasks = reminderStore.deleteReminderTasksByUser(targetUserId);
+  const activityData = activityStore.deleteUserActivity(targetUserId);
+  const deletedAttachmentFiles = attachmentService.deleteUserAttachmentFiles(activityData.attachments);
   
   // 清空用户其他数据（API Key、提醒设置等）
   const result = db.clearUserData(targetUserId);
   
-  addLog('info', 'admin', `清空用户数据: ${targetUserId}，删除了 ${deletedSchedules} 条日程和 ${deletedReminderTasks} 条周期提醒`);
-  res.json({ success: true, deletedSchedules, deletedReminderTasks, clearedSessions: result.sessions });
-});
-
-// 获取提醒设置
-app.get("/api/reminders", authenticate, (req, res) => {
-  const payload = (req as any).user as JwtPayload;
-  const reminder = db.getReminder(payload.userId);
-  res.json({
-    reminder: {
-      enabled: !!reminder?.enabled,
-      hour: reminder?.hour ?? 8,
-      minute: reminder?.minute ?? 0,
-      reminderEmail: reminder?.reminder_email || payload.email,
-    },
+  addLog('info', 'admin', `清空用户数据: ${targetUserId}`, {
+    ...scheduleData,
+    reminderTasks: deletedReminderTasks,
+    attachmentFiles: deletedAttachmentFiles,
   });
+  res.json({ success: true, backup: preClearBackup.filename, scheduleData, deletedReminderTasks, clearedSessions: result.sessions, activityData: { ...activityData, attachments: activityData.attachments.length }, deletedAttachmentFiles });
 });
 
 // ============= 今日行动中心 / 完成记录 / 通知中心 =============
@@ -851,7 +956,7 @@ app.post("/api/action-center/send-email", authenticate, async (req, res) => {
     const reminderEmail = db.getReminderEmail(payload.userId) || payload.email;
     if (!reminderEmail) return res.status(400).json({ error: '没有绑定通知邮箱，请先在设置中配置。' });
     await sendDailyReminderEmail(reminderEmail, payload.userId);
-    addLog('info', 'reminder', `用户手动发送今日安排邮件: ${reminderEmail}`, { userId: payload.userId });
+    addLog('info', 'reminder', '用户手动发送今日安排邮件', { userId: payload.userId });
     res.json({ success: true, message: `今天的安排已发送至 ${reminderEmail}` });
   } catch (error: any) {
     addLog('error', 'reminder', '手动发送今日安排邮件失败', { error: error?.message, userId: (req as any).user?.userId });
@@ -868,7 +973,7 @@ app.post("/api/suspended-todos", authenticate, (req, res) => {
     const created = scheduleStore.createSchedule({
       id: uuidv4(),
       user_id: userId,
-      calendar_id: String(req.body?.calendarId || 'personal'),
+      calendar_id: resolveUserCalendarId(userId, req.body?.calendarId),
       type: 'todo',
       title: title.slice(0, 160),
       description: undefined,
@@ -939,6 +1044,16 @@ app.get("/api/notification-preferences", authenticate, (req, res) => {
       quietHoursEnabled: !!preference?.quiet_hours_enabled,
       quietStart: preference?.quiet_start || '22:00',
       quietEnd: preference?.quiet_end || '08:00',
+      homeLocation: preference?.home_location_name && preference.home_latitude != null && preference.home_longitude != null
+        ? {
+            name: preference.home_location_name,
+            admin1: preference.home_location_admin1 || null,
+            country: preference.home_location_country || null,
+            latitude: Number(preference.home_latitude),
+            longitude: Number(preference.home_longitude),
+            timezone: preference.home_timezone || preference.timezone || 'Asia/Shanghai',
+          }
+        : null,
     },
   });
 });
@@ -948,30 +1063,85 @@ app.put("/api/notification-preferences", authenticate, (req, res) => {
     const payload = (req as any).user as JwtPayload;
     const current = db.getReminder(payload.userId);
     const reminderEmail = String(req.body.reminderEmail ?? current?.reminder_email ?? payload.email).trim();
+    const hour = Number(req.body.hour ?? current?.hour ?? 8);
+    const minute = Number(req.body.minute ?? current?.minute ?? 0);
+    const timezone = String(req.body.timezone ?? current?.timezone ?? 'Asia/Shanghai').trim();
+    const quietStart = String(req.body.quietStart ?? current?.quiet_start ?? '22:00');
+    const quietEnd = String(req.body.quietEnd ?? current?.quiet_end ?? '08:00');
     const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reminderEmail)) throw new Error('提醒邮箱格式不正确');
-    if (!timePattern.test(req.body.quietStart || '22:00') || !timePattern.test(req.body.quietEnd || '08:00')) throw new Error('免打扰时间格式不正确');
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23 || !Number.isInteger(minute) || minute < 0 || minute > 59) {
+      throw new Error('每日提醒时间不正确');
+    }
+    if (!timePattern.test(quietStart) || !timePattern.test(quietEnd)) throw new Error('免打扰时间格式不正确');
+    try { new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(); }
+    catch { throw new Error('提醒时区不正确'); }
+    const homeFields: Partial<dbModule.DbReminder> = {};
+    if (Object.prototype.hasOwnProperty.call(req.body, 'homeLocation')) {
+      const location = req.body.homeLocation;
+      if (location == null) {
+        Object.assign(homeFields, {
+          home_location_name: null,
+          home_location_admin1: null,
+          home_location_country: null,
+          home_latitude: null,
+          home_longitude: null,
+          home_timezone: null,
+        });
+      } else {
+        const name = String(location.name || '').trim();
+        const latitude = Number(location.latitude);
+        const longitude = Number(location.longitude);
+        const timezone = String(location.timezone || '').trim();
+        if (!name || name.length > 100) throw new Error('常驻地名称不正确');
+        if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90 || !Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+          throw new Error('常驻地坐标不正确');
+        }
+        try { new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(); }
+        catch { throw new Error('常驻地时区不正确'); }
+        Object.assign(homeFields, {
+          home_location_name: name,
+          home_location_admin1: String(location.admin1 || '').trim().slice(0, 100) || null,
+          home_location_country: String(location.country || '').trim().slice(0, 100) || null,
+          home_latitude: latitude,
+          home_longitude: longitude,
+          home_timezone: timezone,
+        });
+      }
+    }
     const now = new Date().toISOString();
     const saved = db.upsertReminder({
       id: current?.id || uuidv4(),
       user_id: payload.userId,
-      enabled: req.body.enabled ?? !!current?.enabled ? 1 : 0,
-      hour: Number(req.body.hour ?? current?.hour ?? 8),
-      minute: Number(req.body.minute ?? current?.minute ?? 0),
+      enabled: (req.body.enabled ?? !!current?.enabled) ? 1 : 0,
+      hour,
+      minute,
       reminder_email: reminderEmail,
-      email_enabled: req.body.emailEnabled === false ? 0 : 1,
-      in_app_enabled: req.body.inAppEnabled === false ? 0 : 1,
-      browser_enabled: req.body.browserEnabled === false ? 0 : 1,
-      timezone: String(req.body.timezone || current?.timezone || 'Asia/Shanghai'),
-      quiet_hours_enabled: req.body.quietHoursEnabled ? 1 : 0,
-      quiet_start: String(req.body.quietStart || current?.quiet_start || '22:00'),
-      quiet_end: String(req.body.quietEnd || current?.quiet_end || '08:00'),
+      email_enabled: req.body.emailEnabled === undefined ? (current?.email_enabled ?? 1) : (req.body.emailEnabled ? 1 : 0),
+      in_app_enabled: req.body.inAppEnabled === undefined ? (current?.in_app_enabled ?? 1) : (req.body.inAppEnabled ? 1 : 0),
+      browser_enabled: req.body.browserEnabled === undefined ? (current?.browser_enabled ?? 1) : (req.body.browserEnabled ? 1 : 0),
+      timezone,
+      quiet_hours_enabled: req.body.quietHoursEnabled === undefined ? (current?.quiet_hours_enabled ?? 0) : (req.body.quietHoursEnabled ? 1 : 0),
+      quiet_start: quietStart,
+      quiet_end: quietEnd,
+      ...homeFields,
       created_at: current?.created_at || now,
       updated_at: now,
     });
     res.json({ success: true, preference: saved });
   } catch (error: any) {
     res.status(400).json({ error: error?.message || '保存通知设置失败' });
+  }
+});
+
+app.get('/api/weather/locations', authenticate, async (req, res) => {
+  try {
+    const query = String(req.query.q || '').trim();
+    if (query.length < 2) return res.status(400).json({ error: '请至少输入两个字符搜索地点' });
+    const locations = await searchLocations(query);
+    res.json({ locations });
+  } catch (error: any) {
+    res.status(String(error?.message || '').includes('超时') ? 504 : 502).json({ error: error?.message || '地点搜索暂时不可用' });
   }
 });
 
@@ -1031,15 +1201,19 @@ app.post("/api/completions", authenticate, (req, res) => {
     } else {
       return res.status(400).json({ error: '完成记录来源不正确' });
     }
-    const completion = activityStore.createCompletion({
-      userId,
-      sourceType,
-      sourceId,
-      instanceId,
+    const completionInput = {
       completedAt: req.body.completedAt,
       note: req.body.note,
+      amountCents: req.body.amountCents == null ? null : Number(req.body.amountCents),
+      currency: req.body.currency == null ? 'CNY' : String(req.body.currency),
       billDate: req.body.billDate,
-    });
+    };
+    const existingCompletion = activityStore.listCompletions(userId, { sourceType, sourceId })
+      .find(item => item.instanceId === instanceId && !item.reopenedAt);
+    const completion = existingCompletion
+      ? activityStore.updateCompletion(existingCompletion.id, userId, completionInput)
+      : activityStore.createCompletion({ userId, sourceType, sourceId, instanceId, ...completionInput });
+    if (!completion) throw new Error('保存完成记录失败');
     res.json({ completion });
   } catch (error: any) {
     res.status(400).json({ error: error?.message || '登记完成失败' });
@@ -1067,6 +1241,10 @@ app.put("/api/completions/:id", authenticate, (req, res) => {
     const completion = activityStore.updateCompletion(req.params.id, (req as any).user.userId, {
       completedAt: req.body.completedAt ? String(req.body.completedAt) : undefined,
       note: req.body.note === undefined ? undefined : String(req.body.note),
+      amountCents: req.body.amountCents === undefined
+        ? undefined
+        : req.body.amountCents == null ? null : Number(req.body.amountCents),
+      currency: req.body.currency === undefined ? undefined : String(req.body.currency),
       billDate: req.body.billDate === undefined ? undefined : String(req.body.billDate),
     });
     if (!completion) return res.status(404).json({ error: '完成记录不存在' });
@@ -1082,13 +1260,24 @@ app.post("/api/completions/:id/attachments", authenticate, (req, res) => {
     if (!activityStore.getCompletion(req.params.id, userId)) return res.status(404).json({ error: '完成记录不存在' });
     const files = Array.isArray(req.body.files) ? req.body.files : [];
     if (!files.length || files.length > 5) return res.status(400).json({ error: '请选择 1 到 5 个附件' });
-    const attachments = files.map((file: any) => attachmentService.saveBase64Attachment({
-      userId,
-      completionId: req.params.id,
-      originalName: String(file.name || 'attachment'),
-      mimeType: String(file.mimeType || ''),
-      base64: String(file.base64 || ''),
-    }));
+    const attachments: activityStore.AttachmentRecord[] = [];
+    try {
+      for (const file of files) {
+        attachments.push(attachmentService.saveBase64Attachment({
+          userId,
+          completionId: req.params.id,
+          originalName: String(file.name || 'attachment'),
+          mimeType: String(file.mimeType || ''),
+          base64: String(file.base64 || ''),
+        }));
+      }
+    } catch (error) {
+      for (const attachment of attachments) {
+        const removed = activityStore.deleteAttachment(attachment.id, userId);
+        if (removed) attachmentService.deleteAttachmentFileIfUnused(removed);
+      }
+      throw error;
+    }
     res.json({ attachments });
   } catch (error: any) {
     res.status(400).json({ error: error?.message || '上传附件失败' });
@@ -1113,6 +1302,99 @@ app.delete("/api/attachments/:id", authenticate, (req, res) => {
   if (!record) return res.status(404).json({ error: '附件不存在' });
   attachmentService.deleteAttachmentFileIfUnused(record);
   res.json({ success: true });
+});
+
+// ============= 可读数据导出 =============
+
+app.get('/api/exports/user-data.json', authenticate, (req, res) => {
+  try {
+    const exported = createReadableUserExport((req as any).user.userId);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="ai-calendar-data-${getLocalDateString()}.json"`);
+    res.send(JSON.stringify(exported, null, 2));
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '导出 JSON 失败' });
+  }
+});
+
+app.get('/api/exports/schedules.csv', authenticate, (req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="ai-calendar-schedules-${getLocalDateString()}.csv"`);
+    res.send(createSchedulesCsv((req as any).user.userId));
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '导出 CSV 失败' });
+  }
+});
+
+// ============= 每日日报只读集成 =============
+
+app.get('/api/integrations/daily-report-token', authenticate, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ status: getDailyReportTokenStatus((req as any).user.userId) });
+});
+
+app.post('/api/integrations/daily-report-token', authenticate, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const generated = generateDailyReportToken((req as any).user.userId);
+  res.json({
+    token: generated.token,
+    status: generated.status,
+    warning: '令牌明文只显示这一次，请立即保存到日报项目的本地私密配置。',
+  });
+});
+
+app.delete('/api/integrations/daily-report-token', authenticate, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ status: revokeDailyReportToken((req as any).user.userId) });
+});
+
+function isValidDateKey(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function dateKeyInTimezone(value: string, timezone: string, allDay: boolean): string {
+  if (allDay || !/(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return value.slice(0, 10);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const find = (type: string) => parts.find(part => part.type === type)?.value || '';
+  return `${find('year')}-${find('month')}-${find('day')}`;
+}
+
+app.get('/api/integrations/daily-report/agenda', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const authorization = String(req.header('authorization') || '');
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  const authenticated = match ? authenticateDailyReportToken(match[1].trim()) : null;
+  if (!authenticated) return res.status(401).json({ error: '日报令牌无效或已经撤销' });
+  const date = String(req.query.date || '');
+  if (!isValidDateKey(date)) return res.status(400).json({ error: 'date 必须是有效的 YYYY-MM-DD 日期' });
+  const preference = db.getReminder(authenticated.userId);
+  const timezone = preference?.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai';
+  const schedules = scheduleStore.getAllSchedules(authenticated.userId)
+    .filter(item => !item.is_unscheduled && dateKeyInTimezone(item.start_time, timezone, item.all_day) === date)
+    .map(item => ({
+      title: item.title,
+      startTime: item.start_time,
+      endTime: item.end_time || null,
+      allDay: item.all_day,
+      location: item.location || null,
+      notes: item.notes || null,
+      category: item.category,
+      priority: item.priority,
+      completed: item.is_completed,
+    }));
+  res.json({ date, timezone, generatedAt: new Date().toISOString(), schedules });
 });
 
 // ============= 用户备份与管理员灾备 =============
@@ -1187,36 +1469,15 @@ app.post("/api/admin/backups/restore", authenticate, requireAdmin, backupRawBody
   }
 });
 
-// 更新提醒设置
-app.put("/api/reminders", authenticate, (req, res) => {
-  const payload = (req as any).user as JwtPayload;
-  const { enabled, hour, minute } = req.body;
-  const current = db.getReminder(payload.userId);
-  const reminderEmail = String(req.body.reminderEmail ?? current?.reminder_email ?? payload.email).trim();
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-    return res.status(400).json({ error: '时间格式不正确' });
-  }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reminderEmail)) {
-    return res.status(400).json({ error: '提醒邮箱格式不正确' });
-  }
-  const reminder = db.upsertReminder({
-    id: uuidv4(),
-    user_id: payload.userId,
-    enabled: enabled ? 1 : 0,
-    hour: Number(hour),
-    minute: Number(minute),
-    reminder_email: reminderEmail,
-    created_at: current?.created_at || new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  });
-  addLog('info', 'reminder', `提醒设置更新: userId=${payload.userId}, enabled=${enabled}, time=${hour}:${String(minute).padStart(2,'0')}`);
-  res.json({ success: true, reminder: { enabled: !!reminder.enabled, hour: reminder.hour, minute: reminder.minute, reminderEmail } });
-});
-
 // ============= 周期提醒 API =============
 
 function validDateOnly(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function normaliseReminderOffsets(input: unknown, maximum: number, fallback: number[]): number[] {
+  if (!Array.isArray(input)) return fallback;
+  return [...new Set<number>(input.map(Number).filter(value => Number.isInteger(value) && value >= 0 && value <= maximum))];
 }
 
 function normaliseReminderConfig(type: reminderStore.ReminderTaskType, input: any): reminderStore.ReminderConfig {
@@ -1231,9 +1492,9 @@ function normaliseReminderConfig(type: reminderStore.ReminderTaskType, input: an
       statementDay,
       paymentDay,
       paymentMonthOffset,
-      reminderOffsets: Array.isArray(input?.reminderOffsets)
-        ? input.reminderOffsets.map(Number).filter((value: number) => value >= 0 && value <= 60)
-        : [15, 7, 1, 0],
+      reminderOffsets: normaliseReminderOffsets(input?.reminderOffsets, 60, [15, 7, 1, 0]),
+      reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(input?.reminderTime) ? input.reminderTime : '09:00',
+      priority: ['high', 'medium', 'low'].includes(input?.priority) ? input.priority : 'high',
     };
   }
 
@@ -1259,9 +1520,7 @@ function normaliseReminderConfig(type: reminderStore.ReminderTaskType, input: an
     } else {
       rule = { frequency: 'once', anchorDate, advancePolicy: 'calendar' };
     }
-    const reminderOffsets = Array.isArray(input?.reminderOffsets)
-      ? [...new Set(input.reminderOffsets.map(Number).filter((value: number) => Number.isInteger(value) && value >= 0 && value <= 365))]
-      : [7, 1];
+    const reminderOffsets = normaliseReminderOffsets(input?.reminderOffsets, 365, [7, 1]);
     return {
       templateKey,
       rule,
@@ -1283,9 +1542,9 @@ function normaliseReminderConfig(type: reminderStore.ReminderTaskType, input: an
     intervalDays,
     lastOperationDate: input.lastOperationDate,
     actionGuide: String(input?.actionGuide || '完成一次充值、消费、短信、通话或流量操作').trim(),
-    reminderOffsets: Array.isArray(input?.reminderOffsets)
-      ? input.reminderOffsets.map(Number).filter((value: number) => value >= 0 && value <= 180)
-      : [30, 15, 7, 1, 0],
+    reminderOffsets: normaliseReminderOffsets(input?.reminderOffsets, 180, [30, 15, 7, 1, 0]),
+    reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(input?.reminderTime) ? input.reminderTime : '09:00',
+    priority: ['high', 'medium', 'low'].includes(input?.priority) ? input.priority : 'medium',
   };
 }
 
@@ -1331,7 +1590,7 @@ app.post("/api/cycle-reminders", authenticate, (req, res) => {
       config: normaliseReminderConfig(type, req.body.config),
     });
     reminderCalendarSync.syncReminderTaskToCalendar(task);
-    addLog('info', 'reminder', '创建周期提醒任务: ' + task.name, { taskId: task.id, type });
+    addLog('info', 'reminder', '创建周期提醒任务', { taskId: task.id, type });
     res.json({ task });
   } catch (error: any) {
     res.status(400).json({ error: error?.message || '创建周期提醒失败' });
@@ -1385,16 +1644,24 @@ app.post("/api/cycle-reminders/:id/complete", authenticate, (req, res) => {
     reminderCalendarSync.syncReminderTaskToCalendar(task);
     const existingCompletion = activityStore.listCompletions(userId, { sourceType: 'reminder', sourceId: task.id })
       .find(item => item.instanceId === String(req.body.cycleId || '') && !item.reopenedAt);
-    const completion = existingCompletion || activityStore.createCompletion({
-      userId,
-      sourceType: 'reminder',
-      sourceId: task.id,
-      instanceId: String(req.body.cycleId || ''),
+    const completionInput = {
       completedAt: new Date(completedDate + 'T12:00:00+08:00').toISOString(),
-      note: req.body.note,
-      billDate: req.body.billDate,
-    });
-    addLog('info', 'reminder', '标记周期提醒完成: ' + task.name, { taskId: task.id, completedDate });
+      note: req.body.note == null ? null : String(req.body.note),
+      amountCents: req.body.amountCents == null ? null : Number(req.body.amountCents),
+      currency: req.body.currency == null ? 'CNY' : String(req.body.currency),
+      billDate: req.body.billDate == null ? null : String(req.body.billDate),
+    };
+    const completion = existingCompletion
+      ? activityStore.updateCompletion(existingCompletion.id, userId, completionInput)
+      : activityStore.createCompletion({
+          userId,
+          sourceType: 'reminder',
+          sourceId: task.id,
+          instanceId: String(req.body.cycleId || ''),
+          ...completionInput,
+        });
+    if (!completion) throw new Error('保存完成记录失败');
+    addLog('info', 'reminder', '标记周期提醒完成', { taskId: task.id, completedDate });
     res.json({ task, completion });
   } catch (error: any) {
     res.status(400).json({ error: error?.message || '标记完成失败' });
@@ -1424,14 +1691,18 @@ app.post("/api/cycle-reminders/test-email", authenticate, async (req, res) => {
 app.post("/api/ai/imports/parse", authenticate, async (req, res) => {
   try {
     const userId = (req as any).user.userId;
-    const apiKey = db.getUserApiKey(userId)?.api_key || process.env.CODEBUDDY_API_KEY;
-    if (!apiKey) return res.status(400).json({ error: '请先在设置中配置 CodeBuddy API Key' });
+    const credential = resolveAiImportCredential(userId);
+    if (!credential) return res.status(400).json({ error: '请先在设置中配置 CodeBuddy API Key' });
     const images = Array.isArray(req.body.images) ? req.body.images.map((image: any) => ({
       name: String(image.name || 'image'),
       mimeType: String(image.mimeType || ''),
       base64: String(image.base64 || ''),
     })) : [];
-    const draft = await parseAiImport({ text: String(req.body.text || ''), images, apiKey, model: scheduleModel });
+    const draft = await parseAiImport({
+      text: String(req.body.text || ''),
+      images,
+      ...credential,
+    });
     const record = activityStore.createAiImport({
       userId,
       sourceType: images.length ? 'image' : 'text',
@@ -1542,56 +1813,95 @@ app.post("/api/email-import/check", authenticate, async (req, res) => {
   if (!setting.enabled) return res.status(400).json({ error: '请先开启邮箱自动识别' });
 
   const result = await pollEmailImports({
-    model: scheduleModel,
     onlyUserId: userId,
-    resolveApiKey: targetUserId => db.getUserApiKey(targetUserId)?.api_key || process.env.CODEBUDDY_API_KEY || null,
+    resolveCredential: resolveAiImportCredential,
     log: (message, error) => error
-      ? addLog('error', 'ai', message, { error: error instanceof Error ? error.message : String(error) })
+      ? addLog('error', 'ai', message, { error: describeError(error) })
       : addLog('info', 'ai', message),
   });
   const statusCode = result.status === 'error' ? 502 : result.status === 'busy' ? 409 : 200;
   res.status(statusCode).json({ result });
 });
 
-// 更新会话
-app.patch("/api/sessions/:sessionId", authenticate, (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const { title, model } = req.body;
-    const userId = ((req as any).user as JwtPayload).userId;
-    
-    const success = db.updateSession(sessionId, userId, { title, model });
-    
-    if (!success) {
-      return res.status(404).json({ error: "会话不存在" });
-    }
-    
-    res.json({ success: true });
-  } catch (error: any) {
-    console.error("[Update Session] Error:", error);
-    res.status(500).json({ error: error?.message || "更新会话失败" });
-  }
-});
-
-// 删除会话
-app.delete("/api/sessions/:sessionId", authenticate, (req, res) => {
-  try {
-    const { sessionId } = req.params;
-    const userId = ((req as any).user as JwtPayload).userId;
-    const success = db.deleteSession(sessionId, userId);
-    
-    if (!success) {
-      return res.status(404).json({ error: "会话不存在" });
-    }
-    
-    res.json({ success: true });
-  } catch (error: any) {
-    console.error("[Delete Session] Error:", error);
-    res.status(500).json({ error: error?.message || "删除会话失败" });
-  }
-});
-
 // ============= 日程管理 API =============
+
+const SCHEDULE_CATEGORIES = new Set(['travel', 'work', 'social', 'life', 'health', 'other']);
+
+function resolveUserCalendarId(userId: string, requested: unknown): string {
+  const value = String(requested || 'personal').trim();
+  if (!value || value.length > 200) throw new Error('日历编号不正确');
+  const calendars = scheduleStore.getAllCalendars(userId);
+  const calendar = calendars.find(item => item.id === value)
+    || calendars.find(item => item.id.endsWith(':' + value));
+  if (!calendar) throw new Error('目标日历不存在或无权访问');
+  return calendar.id;
+}
+
+function scheduleText(value: unknown, label: string, maxLength: number): string | undefined {
+  if (value == null || value === '') return undefined;
+  const text = String(value);
+  if (text.length > maxLength) throw new Error(`${label}不能超过 ${maxLength} 个字符`);
+  return text;
+}
+
+function normaliseScheduleApiFields(
+  body: Record<string, unknown>,
+  userId: string,
+  existing?: scheduleStore.Schedule,
+): Partial<scheduleStore.Schedule> {
+  const has = (key: string) => Object.prototype.hasOwnProperty.call(body, key);
+  const updates: Partial<scheduleStore.Schedule> = {};
+  if (!existing || has('calendar_id')) updates.calendar_id = resolveUserCalendarId(userId, body.calendar_id);
+  if (!existing || has('title')) {
+    const title = String(body.title || '').trim();
+    if (!title) throw new Error('日程标题不能为空');
+    if (title.length > 200) throw new Error('日程标题不能超过 200 个字符');
+    updates.title = title;
+  }
+  if (!existing || has('type')) {
+    if (body.type !== 'event' && body.type !== 'todo' && body.type != null) throw new Error('日程类型不正确');
+    updates.type = body.type === 'todo' ? 'todo' : 'event';
+  }
+  if (!existing || has('description')) updates.description = scheduleText(body.description, '日程描述', 5_000);
+  if (!existing || has('start_time')) updates.start_time = String(body.start_time || '');
+  if (!existing || has('end_time')) updates.end_time = scheduleText(body.end_time, '结束时间', 64);
+  if (!existing || has('all_day')) updates.all_day = body.all_day === true;
+  if (!existing || has('is_unscheduled')) updates.is_unscheduled = body.is_unscheduled === true;
+  if (!existing || has('location')) updates.location = scheduleText(body.location, '地点', 500);
+  if (!existing || has('notes')) updates.notes = scheduleText(body.notes, '备注', 10_000);
+  if (!existing || has('category')) {
+    const category = String(body.category || 'other');
+    if (!SCHEDULE_CATEGORIES.has(category)) throw new Error('日程分类不正确');
+    updates.category = category;
+  }
+  if (!existing || has('priority')) {
+    const priority = body.priority == null ? 'medium' : String(body.priority);
+    if (!['high', 'medium', 'low'].includes(priority)) throw new Error('优先级不正确');
+    updates.priority = priority as scheduleStore.Schedule['priority'];
+  }
+  if (!existing || has('is_completed')) updates.is_completed = body.is_completed === true;
+  if (!existing || has('is_repeated')) updates.is_repeated = body.is_repeated === true;
+  if (!existing || has('repeat_rule')) updates.repeat_rule = scheduleText(body.repeat_rule, '重复规则', 2_000);
+  if (!existing || has('reminders')) {
+    if (body.reminders != null && !Array.isArray(body.reminders)) throw new Error('提醒设置必须是数组');
+    const reminders = (Array.isArray(body.reminders) ? body.reminders : []).map(value => String(value));
+    if (reminders.length > 20 || reminders.some(value => value.length > 100)) throw new Error('提醒设置过多或内容过长');
+    updates.reminders = reminders;
+  }
+  if (!existing || has('is_high_risk')) updates.is_high_risk = body.is_high_risk === true;
+
+  const merged = { ...(existing || {}), ...updates } as Partial<scheduleStore.Schedule>;
+  if (!merged.is_unscheduled) {
+    if (!merged.start_time || merged.start_time.length > 64 || Number.isNaN(Date.parse(merged.start_time))) {
+      throw new Error('开始时间不正确');
+    }
+    if (merged.end_time && Number.isNaN(Date.parse(merged.end_time))) throw new Error('结束时间不正确');
+    if (merged.end_time && Date.parse(merged.end_time) < Date.parse(merged.start_time)) {
+      throw new Error('结束时间不能早于开始时间');
+    }
+  }
+  return updates;
+}
 
 // 获取所有日程
 app.get("/api/schedules", authenticate, (req, res) => {
@@ -1655,14 +1965,15 @@ app.get("/api/schedules/:id", authenticate, (req, res) => {
 app.post("/api/schedules", authenticate, (req, res) => {
   try {
     const userId = (req as any).user?.userId;
+    const fields = normaliseScheduleApiFields(req.body || {}, userId);
     const schedule = {
       id: uuidv4(),
       user_id: userId,
-      ...req.body
-    };
+      ...fields,
+    } as Omit<scheduleStore.Schedule, 'created_at' | 'updated_at'>;
     
     const created = scheduleStore.createSchedule(schedule);
-    addLog('info', 'schedule', `手动创建日程: ${schedule.title || '无标题'}`, {
+    addLog('info', 'schedule', '手动创建日程', {
       id: created?.id,
       all_day: schedule.all_day,
       start_time: schedule.start_time,
@@ -1672,7 +1983,7 @@ app.post("/api/schedules", authenticate, (req, res) => {
   } catch (error: any) {
     addLog('error', 'schedule', `创建日程失败: ${error.message}`);
     console.error("[Create Schedule] Error:", error);
-    res.status(500).json({ error: error?.message || "创建日程失败" });
+    res.status(400).json({ error: error?.message || "创建日程失败" });
   }
 });
 
@@ -1691,16 +2002,17 @@ app.patch("/api/schedules/:id", authenticate, (req, res) => {
       return res.status(403).json({ error: "无权修改该日程" });
     }
     
-    const updated = scheduleStore.updateSchedule(id, req.body);
-    addLog('info', 'schedule', `更新日程: ${updated?.title}`, {
+    const updates = normaliseScheduleApiFields(req.body || {}, userId, existing);
+    const updated = scheduleStore.updateSchedule(id, updates);
+    addLog('info', 'schedule', '更新日程', {
       id: updated?.id,
-      changes: req.body
+      changedFields: Object.keys(req.body || {}).slice(0, 30),
     });
     res.json({ schedule: updated });
   } catch (error: any) {
     addLog('error', 'schedule', `更新日程失败: ${error.message}`);
     console.error("[Update Schedule] Error:", error);
-    res.status(500).json({ error: error?.message || "更新日程失败" });
+    res.status(400).json({ error: error?.message || "更新日程失败" });
   }
 });
 
@@ -1718,10 +2030,11 @@ app.put("/api/schedules/:id", authenticate, (req, res) => {
       return res.status(403).json({ error: "无权修改该日程" });
     }
     
-    const updated = scheduleStore.updateSchedule(id, req.body);
+    const updates = normaliseScheduleApiFields(req.body || {}, userId, existing);
+    const updated = scheduleStore.updateSchedule(id, updates);
     res.json({ schedule: updated });
   } catch (error: any) {
-    res.status(500).json({ error: error?.message || "更新日程失败" });
+    res.status(400).json({ error: error?.message || "更新日程失败" });
   }
 });
 
@@ -1765,7 +2078,7 @@ app.post("/api/schedules/:id/toggle", authenticate, (req, res) => {
     
     const schedule = toggleScheduleCompletion(id, userId);
     const action = schedule?.is_completed ? '标记完成' : '取消完成';
-    addLog('info', 'schedule', `${action}: ${schedule?.title}`, { id: schedule?.id });
+    addLog('info', 'schedule', action, { id: schedule?.id });
     res.json({ schedule });
   } catch (error: any) {
     addLog('error', 'schedule', `切换状态失败: ${error.message}`);
@@ -1788,14 +2101,19 @@ app.get("/api/categories", authenticate, (req, res) => {
 // 创建分类
 app.post("/api/categories", authenticate, (req, res) => {
   try {
+    const name = String(req.body?.name || '').trim();
+    if (!name) return res.status(400).json({ error: '分类名称不能为空' });
+    if (name.length > 50) return res.status(400).json({ error: '分类名称不能超过 50 个字符' });
     const category = {
       id: uuidv4(),
       user_id: (req as any).user.userId,
-      ...req.body
+      name,
+      color: String(req.body?.color || '#5b8ff9').slice(0, 32),
+      icon: String(req.body?.icon || 'folder').slice(0, 64),
     };
     
     const created = scheduleStore.createCategory(category);
-    addLog('info', 'schedule', `创建分类: ${category.name}`, { id: created?.id });
+    addLog('info', 'schedule', '创建分类', { id: created?.id });
     res.json({ category: created });
   } catch (error: any) {
     addLog('error', 'schedule', `创建分类失败: ${error.message}`);
@@ -1838,17 +2156,23 @@ app.get("/api/calendars", authenticate, (req, res) => {
 // 创建日程表
 app.post("/api/calendars", authenticate, (req, res) => {
   try {
+    const name = String(req.body?.name || '新日程表').trim();
+    const color = String(req.body?.color || '#3B82F6').trim();
+    const icon = String(req.body?.icon || '📅').trim();
+    if (!name || name.length > 50) return res.status(400).json({ error: '日历名称必须为 1 到 50 个字符' });
+    if (!/^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color)) return res.status(400).json({ error: '日历颜色格式不正确' });
+    if (!icon || icon.length > 32) return res.status(400).json({ error: '日历图标格式不正确' });
     const calendar = {
       id: uuidv4(),
       user_id: (req as any).user.userId,
-      name: req.body.name || '新日程表',
-      color: req.body.color || '#3B82F6',
-      icon: req.body.icon || '📅',
+      name,
+      color,
+      icon,
       is_visible: true,
       is_default: false,
     };
     const created = scheduleStore.createCalendar(calendar);
-    addLog('info', 'schedule', `创建日历: ${calendar.name}`, { id: created?.id });
+    addLog('info', 'schedule', '创建日历', { id: created?.id });
     res.json({ calendar: created });
   } catch (error: any) {
     addLog('error', 'schedule', `创建日历失败: ${error.message}`);
@@ -1860,9 +2184,29 @@ app.post("/api/calendars", authenticate, (req, res) => {
 app.put("/api/calendars/:id", authenticate, (req, res) => {
   try {
     const { id } = req.params;
-    const updated = scheduleStore.updateCalendar(id, req.body, (req as any).user.userId);
+    const updates: any = {};
+    if (req.body?.name !== undefined) {
+      const name = String(req.body.name).trim();
+      if (!name || name.length > 50) return res.status(400).json({ error: '日历名称必须为 1 到 50 个字符' });
+      updates.name = name;
+    }
+    if (req.body?.color !== undefined) {
+      const color = String(req.body.color).trim();
+      if (!/^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(color)) return res.status(400).json({ error: '日历颜色格式不正确' });
+      updates.color = color;
+    }
+    if (req.body?.icon !== undefined) {
+      const icon = String(req.body.icon).trim();
+      if (!icon || icon.length > 32) return res.status(400).json({ error: '日历图标格式不正确' });
+      updates.icon = icon;
+    }
+    if (req.body?.is_visible !== undefined) {
+      if (typeof req.body.is_visible !== 'boolean') return res.status(400).json({ error: '日历可见状态格式不正确' });
+      updates.is_visible = req.body.is_visible;
+    }
+    const updated = scheduleStore.updateCalendar(id, updates, (req as any).user.userId);
     if (!updated) return res.status(404).json({ error: "日程表不存在" });
-    addLog('info', 'schedule', `更新日历: ${updated.name}`, { id: updated.id });
+    addLog('info', 'schedule', '更新日历', { id: updated.id });
     res.json({ calendar: updated });
   } catch (error: any) {
     addLog('error', 'schedule', `更新日历失败: ${error.message}`);
@@ -1881,135 +2225,6 @@ app.delete("/api/calendars/:id", authenticate, (req, res) => {
   } catch (error: any) {
     addLog('error', 'schedule', `删除日历失败: ${error.message}`);
     res.status(500).json({ error: error?.message || "删除日程表失败" });
-  }
-});
-
-// ============= AI 日程解析 API =============
-
-// AI 解析自然语言并自动创建日程（核心接口）
-app.post("/api/ai-schedule", authenticate, async (req, res) => {
-  const userId = (req as any).user?.userId;
-  const { text, targetDate, model: reqModel, calendarId } = req.body;
-  
-  if (!text) {
-    return res.status(400).json({ error: "请输入日程描述" });
-  }
-
-  const today = targetDate || new Date().toISOString().split('T')[0];
-  const selectedModel = reqModel || scheduleModel || defaultModel;
-  const targetCalendarId = calendarId || 'personal';
-
-  // 构造解析提示词
-  const parsePrompt = `你是一个日程解析专家。请将以下自然语言描述解析为结构化的日程列表。
-
-当前日期：${today}
-
-用户输入：${text}
-
-请严格按照以下 JSON 格式输出，不要输出任何其他内容：
-{
-  "schedules": [
-    {
-      "type": "event",
-      "title": "任务名称",
-      "start_time": "YYYY-MM-DDTHH:MM:00",
-      "end_time": "YYYY-MM-DDTHH:MM:00",
-      "all_day": false,
-      "location": "地点或null",
-      "notes": "AI建议或注意事项，如无则null",
-      "category": "travel/work/social/life/health/other",
-      "priority": "high/medium/low"
-    }
-  ],
-  "summary": "一句话总结今日安排"
-}
-
-解析规则：
-1. type 字段：有具体时间段的用 "event"，只有一个时间点或全天的用 "todo"
-2. 时间推断：
-   - "上午" → 09:00
-   - "中午" → 12:00  
-   - "下午" → 14:00
-   - "傍晚" → 17:00
-   - "晚上/晚饭" → 18:30
-3. 默认耗时：接人=30min, 会议=90min, 餐饮=90min, 购物=60min, 出行单程=30min
-4. 多地点任务之间自动预留30分钟通勤时间
-5. notes 填写有用的提示，比如"建议提前查看列车到站时间"、"建议预约餐位"等
-6. category 根据任务性质选择：travel(出行/接送), work(工作/会议), social(社交/餐饮), life(生活), health(健康)
-7. 如果用户提到"待办"、"记得"、"提醒"等，type 用 "todo"
-8. priority 优先级识别规则（重要，必须严格执行）：
-   - high（高）：含有"重要"、"紧急"、"关键"、"必须"、"立即"、"尽快"、"今天必须"、"截止"、"ddl"等词
-   - low（低）：含有"随便"、"有空"、"顺便"、"可选"、"不急"、"闲了"等词
-   - medium（中）：其他情况默认使用中优先级
-   - 注意：接送人、开会等日程通常为medium；如会议前有"非常重要"修饰则为high`;
-
-  try {
-    // 使用 SDK query 解析
-    let jsonText = '';
-    
-    const stream = query({
-      prompt: parsePrompt,
-      options: {
-        cwd: process.cwd(),
-        model: selectedModel,
-        maxTurns: 1,
-        systemPrompt: '你是一个 JSON 解析器。只输出合法的 JSON，不要有任何其他文字。',
-        // env 参数已移除 - SDK 会自动从 process.env 读取 CODEBUDDY_API_KEY
-      }
-    });
-
-    for await (const msg of stream) {
-      if (msg.type === 'assistant') {
-        for (const block of msg.message.content) {
-          if (block.type === 'text') {
-            jsonText += block.text;
-          }
-        }
-      }
-    }
-
-    // 提取 JSON
-    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('AI 返回格式错误');
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]);
-    const schedulesToCreate = parsed.schedules || [];
-
-    // 批量创建日程
-    const created = scheduleStore.createSchedulesBatch(
-      schedulesToCreate.map((s: any) => ({
-        id: uuidv4(),
-        user_id: userId,
-        calendar_id: targetCalendarId,
-        type: s.type || 'event',
-        title: s.title,
-        description: null,
-        start_time: s.start_time,
-        end_time: s.end_time || null,
-        all_day: s.all_day || false,
-        location: s.location || null,
-        notes: s.notes || null,
-        category: s.category || 'other',
-        priority: s.priority || 'medium',
-        is_completed: false,
-        is_repeated: false,
-        repeat_rule: null,
-        reminders: []
-      }))
-    );
-
-    res.json({
-      success: true,
-      schedules: created,
-      summary: parsed.summary || `已为您创建 ${created.length} 个日程`,
-      count: created.length
-    });
-
-  } catch (error: any) {
-    console.error('[AI Schedule] Error:', error);
-    res.status(500).json({ error: error?.message || 'AI 解析失败，请重试' });
   }
 });
 
@@ -2218,12 +2433,38 @@ function buildCompactScheduleQueryReply(items: any[], queryDates: string[], toda
   return `${subject}共有 ${items.length} 项安排，以下是详情：\n\n${summary}`;
 }
 
-function isReadOnlyScheduleQuery(text: string) {
-  const normalized = text.replace(/\s+/g, '');
-  if (/(添加|新建|创建|修改|改成|推迟|提前|取消|删除|删掉|标记完成|帮我安排|给我安排|提醒我)/.test(normalized)) {
-    return false;
-  }
-  return /(有什么安排|有哪些安排|什么安排|有什么日程|有哪些日程|查看.*(?:安排|日程)|查询.*(?:安排|日程)|几点有会)/.test(normalized);
+function weatherDateForQuestion(text: string, timezone: string, fallback?: string): string {
+  const today = reminderStore.todayInTimezone(timezone);
+  if (/后天/.test(text)) return reminderStore.addDays(today, 2);
+  if (/明天/.test(text)) return reminderStore.addDays(today, 1);
+  return fallback && /^\d{4}-\d{2}-\d{2}$/.test(fallback) ? fallback : today;
+}
+
+function homeWeatherLocation(preference: dbModule.DbReminder | undefined): WeatherLocation | null {
+  if (!preference?.home_location_name || preference.home_latitude == null || preference.home_longitude == null) return null;
+  return {
+    id: 0,
+    name: preference.home_location_name,
+    admin1: preference.home_location_admin1 || null,
+    admin2: null,
+    country: preference.home_location_country || null,
+    countryCode: null,
+    latitude: Number(preference.home_latitude),
+    longitude: Number(preference.home_longitude),
+    timezone: preference.home_timezone || preference.timezone || 'Asia/Shanghai',
+    displayName: [preference.home_location_name, preference.home_location_admin1, preference.home_location_country].filter(Boolean).join(' · '),
+  };
+}
+
+function formatWeatherReply(location: WeatherLocation, weather: Awaited<ReturnType<typeof getDailyWeather>>): string {
+  const temperatures = weather.temperatureMin == null || weather.temperatureMax == null
+    ? '气温数据暂缺'
+    : `${Math.round(weather.temperatureMin)}～${Math.round(weather.temperatureMax)}℃`;
+  const rain = weather.precipitationProbabilityMax == null
+    ? ''
+    : `，最高降雨概率 ${Math.round(weather.precipitationProbabilityMax)}%`;
+  const wind = weather.windSpeedMax == null ? '' : `，最大风速约 ${Math.round(weather.windSpeedMax)} km/h`;
+  return `${location.displayName} ${weather.date}：${weather.description}，${temperatures}${rain}${wind}。天气数据来自 Open-Meteo，出行前建议再关注临近预报。`;
 }
 
 interface PendingAiSchedulePlan {
@@ -2249,6 +2490,47 @@ interface AiChatRequestRecord {
 const AI_SCHEDULE_PLAN_TTL_MS = 15 * 60 * 1000;
 const aiSchedulePlans = new Map<string, PendingAiSchedulePlan>();
 const aiChatRequestRecords = new Map<string, AiChatRequestRecord>();
+
+function saveAiScheduleHistoryMessage(input: {
+  userId: string;
+  role: 'user' | 'assistant';
+  type: string;
+  content: string;
+  intent?: string | null;
+  scheduleItems?: unknown;
+  plan?: unknown;
+}): dbModule.DbAiScheduleMessage {
+  return db.createAiScheduleMessage({
+    id: uuidv4(),
+    user_id: input.userId,
+    role: input.role,
+    type: input.type,
+    content: input.content,
+    intent: input.intent || null,
+    schedule_items: input.scheduleItems === undefined ? null : JSON.stringify(input.scheduleItems),
+    plan: input.plan === undefined ? null : JSON.stringify(input.plan),
+    created_at: new Date().toISOString(),
+  });
+}
+
+function saveAiScheduleResponseHistory(userId: string, response: any): dbModule.DbAiScheduleMessage {
+  const type = response.requiresConfirmation
+    ? 'plan'
+    : response.intent === 'chat' || response.intent === 'query' || response.intent === 'weather'
+      ? 'text'
+      : response.intent === 'update' || response.intent === 'delete'
+        ? 'update'
+        : 'schedules';
+  return saveAiScheduleHistoryMessage({
+    userId,
+    role: 'assistant',
+    type,
+    content: String(response.reply || ''),
+    intent: response.intent || null,
+    scheduleItems: response.scheduleItems || [],
+    plan: response.plan,
+  });
+}
 
 function cleanupExpiredAiScheduleState(): void {
   const now = Date.now();
@@ -2306,36 +2588,37 @@ function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
   const updatedSchedules: any[] = [];
   const deletedIds: string[] = [];
   const createdReminderTasks: any[] = [];
+  const failures: Array<{ index: number; type: string; message: string }> = [];
 
-  for (const op of plan.operations) {
+  for (const [index, op] of plan.operations.entries()) {
     if (op.type === 'create' && op.data?.title) {
       try {
-        const created = scheduleStore.createSchedule({
-          id: uuidv4(),
-          user_id: plan.userId,
+        const fields = normaliseScheduleApiFields({
+          ...op.data,
           calendar_id: plan.targetCalendarId,
           type: op.data.type === 'todo' ? 'todo' : 'event',
           title: String(op.data.title).slice(0, 160),
-          description: undefined,
           start_time: op.data.start_time || (plan.today + 'T09:00:00'),
           end_time: op.data.end_time || undefined,
-          all_day: op.data.all_day === true,
-          is_unscheduled: op.data.is_unscheduled === true,
-          location: op.data.location || undefined,
-          notes: op.data.notes || undefined,
           category: ['travel', 'work', 'social', 'life', 'health', 'other'].includes(op.data.category) ? op.data.category : 'other',
           priority: ['high', 'medium', 'low'].includes(op.data.priority) ? op.data.priority : 'medium',
           is_completed: false,
           is_repeated: false,
           reminders: [],
           is_high_risk: false,
-        });
+        }, plan.userId);
+        const created = scheduleStore.createSchedule({
+          id: uuidv4(),
+          user_id: plan.userId,
+          ...fields,
+        } as Omit<scheduleStore.Schedule, 'created_at' | 'updated_at'>);
         if (created) {
           createdSchedules.push(created);
-          addLog('info', 'schedule', `AI 计划确认后创建日程: ${created.title}`, { id: created.id, planId: plan.id });
+          addLog('info', 'schedule', 'AI 计划确认后创建日程', { id: created.id, planId: plan.id });
         }
       } catch (error: any) {
-        addLog('error', 'schedule', `AI 计划创建失败: ${op.data.title}`, { error: error?.message, planId: plan.id });
+        failures.push({ index, type: 'create', message: error?.message || '创建日程失败' });
+        addLog('error', 'schedule', 'AI 计划创建失败', { error: error?.message, planId: plan.id });
       }
     } else if (op.type === 'create_recurring' && op.data?.title) {
       try {
@@ -2345,7 +2628,7 @@ function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
           userId: plan.userId,
           type: 'generic',
           name: String(op.data.title).slice(0, 160),
-          timezone: process.env.APP_TIMEZONE || 'Asia/Shanghai',
+          timezone: db.getReminder(plan.userId)?.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai',
           config: normaliseReminderConfig('generic', {
             templateKey: 'custom',
             rule: {
@@ -2363,28 +2646,50 @@ function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
             priority: op.data.priority || 'medium',
           }),
         });
-        reminderCalendarSync.syncReminderTaskToCalendar(task);
         createdReminderTasks.push(task);
-        addLog('info', 'reminder', `AI 计划确认后创建周期事项: ${task.name}`, { taskId: task.id, planId: plan.id });
+        addLog('info', 'reminder', 'AI 计划确认后创建周期事项', { taskId: task.id, planId: plan.id });
+        try {
+          reminderCalendarSync.syncReminderTaskToCalendar(task);
+        } catch (syncError: any) {
+          failures.push({
+            index,
+            type: 'create_recurring_calendar_sync',
+            message: `周期事项已创建，但日历同步失败：${syncError?.message || '未知错误'}`,
+          });
+          addLog('warn', 'reminder', 'AI 周期事项已创建但日历同步失败', {
+            taskId: task.id,
+            planId: plan.id,
+            error: syncError?.message,
+          });
+        }
       } catch (error: any) {
-        addLog('error', 'reminder', `AI 周期事项创建失败: ${op.data.title}`, { error: error?.message, planId: plan.id });
+        failures.push({ index, type: 'create_recurring', message: error?.message || '创建周期事项失败' });
+        addLog('error', 'reminder', 'AI 周期事项创建失败', { error: error?.message, planId: plan.id });
       }
     } else if (op.type === 'update' && op.scheduleId && op.data) {
-      const target = scheduleStore.getSchedule(op.scheduleId);
-      if (!target || target.user_id !== plan.userId) {
-        addLog('warn', 'schedule', 'AI 计划尝试修改无权访问的日程', { userId: plan.userId, scheduleId: op.scheduleId, planId: plan.id });
-        continue;
+      try {
+        const target = scheduleStore.getSchedule(op.scheduleId);
+        if (!target || target.user_id !== plan.userId) throw new Error('目标日程不存在或无权访问');
+        const updates = normaliseScheduleApiFields(op.data, plan.userId, target);
+        const updated = scheduleStore.updateSchedule(op.scheduleId, updates);
+        if (!updated) throw new Error('更新日程失败');
+        updatedSchedules.push(updated);
+      } catch (error: any) {
+        failures.push({ index, type: 'update', message: error?.message || '更新日程失败' });
+        addLog('warn', 'schedule', 'AI 计划更新日程失败', { userId: plan.userId, scheduleId: op.scheduleId, planId: plan.id });
       }
-      const updated = scheduleStore.updateSchedule(op.scheduleId, op.data);
-      if (updated) updatedSchedules.push(updated);
     } else if (op.type === 'delete' && op.scheduleId) {
-      const target = scheduleStore.getSchedule(op.scheduleId);
-      if (!target || target.user_id !== plan.userId) {
-        addLog('warn', 'schedule', 'AI 计划尝试删除无权访问的日程', { userId: plan.userId, scheduleId: op.scheduleId, planId: plan.id });
-        continue;
+      try {
+        const target = scheduleStore.getSchedule(op.scheduleId);
+        if (!target || target.user_id !== plan.userId) throw new Error('目标日程不存在或无权访问');
+        if (!scheduleStore.deleteSchedule(op.scheduleId)) throw new Error('删除日程失败');
+        deletedIds.push(op.scheduleId);
+      } catch (error: any) {
+        failures.push({ index, type: 'delete', message: error?.message || '删除日程失败' });
+        addLog('warn', 'schedule', 'AI 计划删除日程失败', { userId: plan.userId, scheduleId: op.scheduleId, planId: plan.id });
       }
-      scheduleStore.deleteSchedule(op.scheduleId);
-      deletedIds.push(op.scheduleId);
+    } else {
+      failures.push({ index, type: String(op?.type || 'unknown'), message: '计划操作格式不正确' });
     }
   }
 
@@ -2393,31 +2698,45 @@ function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
     updatedSchedules,
     deletedIds,
     createdReminderTasks,
+    failures,
     changed: createdSchedules.length + updatedSchedules.length + deletedIds.length + createdReminderTasks.length > 0,
   };
 }
 
 app.post("/api/ai-chat", authenticate, async (req, res) => {
-  const { text, targetDate, model: reqModel, calendarId, requestId } = req.body;
+  const body = req.body || {};
+  const text = String(body.text || '').trim();
+  const targetDate = body.targetDate == null ? undefined : String(body.targetDate);
+  const reqModel = body.model == null ? undefined : String(body.model).trim();
+  const calendarId = body.calendarId == null ? undefined : String(body.calendarId).trim();
+  const requestId = body.requestId == null ? undefined : String(body.requestId);
   if (!text) return res.status(400).json({ error: "请输入内容" });
+  if (text.length > 20_000) return res.status(400).json({ error: '输入内容不能超过 20000 个字符' });
+  if (targetDate && !isValidDateKey(targetDate)) return res.status(400).json({ error: '目标日期格式不正确' });
+  if (reqModel && reqModel.length > 200) return res.status(400).json({ error: '模型名称过长' });
+  if (calendarId && calendarId.length > 200) return res.status(400).json({ error: '日历编号过长' });
+
+  // 路由已通过 authenticate，后续只使用重新读取过账号状态的身份。
+  const userId = ((req as any).user as JwtPayload).userId;
 
   // 记录 AI 对话请求日志
-  addLog('info', 'ai', `收到对话请求: "${text.slice(0, 60)}${text.length > 60 ? '...' : ''}"`, { targetDate, model: reqModel });
+  addLog('info', 'ai', '收到对话请求', { userId, targetDate, model: reqModel, textLength: text.length });
 
-  // 【修复数据隔离】先提取用户ID和API Key
-  let userId = 'default';
-  let userCredential: dbModule.DbUserApiKey | undefined;
-  let authenticatedUser = false;
-  const authHeader = req.headers.authorization;
-  if (authHeader?.startsWith('Bearer ')) {
+  const userCredential = resolveCodeBuddyCredential(userId);
+  const authenticatedUser = true;
+
+  if (authenticatedUser) {
     try {
-      const payload = jwt.verify(authHeader.slice(7), JWT_SECRET) as JwtPayload;
-      userId = payload.userId;
-      authenticatedUser = true;
-      // 获取该用户的 API Key
-      const userKey = db.getUserApiKey(userId);
-      userCredential = userKey || undefined;
-    } catch {}
+      cleanupAiScheduleHistory(userId);
+      saveAiScheduleHistoryMessage({
+        userId,
+        role: 'user',
+        type: 'text',
+        content: String(text),
+      });
+    } catch (error) {
+      console.error('[AI History] 保存用户消息失败:', error);
+    }
   }
 
   // 只读日程查询直接使用本地数据，不依赖外部 AI 或 API Key。
@@ -2437,19 +2756,75 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
     }
     scheduleItems.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
     addLog('info', 'ai', `本地完成日程查询，共 ${scheduleItems.length} 项`, { userId, queryDates });
-    return res.json({
+    const response = {
       success: true,
       intent: 'query',
       reply: buildCompactScheduleQueryReply(scheduleItems, queryDates, today),
       scheduleItems,
       changed: false,
       changedDetails: { created: [], updated: [], deleted: [] },
-    });
+    };
+    try {
+      const historyMessage = saveAiScheduleResponseHistory(userId, response);
+      return res.json({ ...response, historyMessageId: historyMessage.id });
+    } catch (error) {
+      console.error('[AI History] 保存本地查询结果失败:', error);
+      return res.json(response);
+    }
+  }
+
+  // 天气问题由受控数据源直接回答，不把实时事实交给语言模型猜测。
+  if (isWeatherQuestion(String(text))) {
+    const preference = db.getReminder(userId);
+    const explicitLocation = extractWeatherLocationQuery(String(text));
+    try {
+      const location = explicitLocation
+        ? (await searchLocations(explicitLocation))[0] || null
+        : homeWeatherLocation(preference);
+      if (!location) {
+        const response = {
+          success: true,
+          intent: 'weather',
+          reply: explicitLocation
+            ? `没有找到“${explicitLocation}”对应的城市或区县，请换一个更完整的地点名称。`
+            : '请在设置中选择常驻城市或区县，或者在问题中直接写明地点。',
+          scheduleItems: [],
+          changed: false,
+          weatherUnavailable: true,
+        };
+        const historyMessage = saveAiScheduleResponseHistory(userId, response);
+        return res.json({ ...response, historyMessageId: historyMessage.id });
+      }
+      const date = weatherDateForQuestion(String(text), location.timezone, targetDate);
+      const weather = await getDailyWeather(location, date);
+      const response = {
+        success: true,
+        intent: 'weather',
+        reply: formatWeatherReply(location, weather),
+        weather: { location, forecast: weather },
+        scheduleItems: [],
+        changed: false,
+      };
+      const historyMessage = saveAiScheduleResponseHistory(userId, response);
+      return res.json({ ...response, historyMessageId: historyMessage.id });
+    } catch (error: any) {
+      const response = {
+        success: true,
+        intent: 'weather',
+        reply: `天气服务暂时不可用：${error?.message || '无法取得预报'}。我不会根据模型记忆编造实时天气，请稍后重试。`,
+        scheduleItems: [],
+        changed: false,
+        weatherUnavailable: true,
+      };
+      const historyMessage = saveAiScheduleResponseHistory(userId, response);
+      return res.json({ ...response, historyMessageId: historyMessage.id });
+    }
   }
 
   // 检查用户是否有 API Key
   if (!userCredential) {
     addLog('warn', 'ai', `用户 ${userId} 未配置 API Key`, { userId });
+    try { saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: '请先在设置页输入您的 CodeBuddy API Key' }); } catch {}
     return res.status(401).json({ 
       error: '请先在设置页输入您的 CodeBuddy API Key',
       needLogin: true 
@@ -2469,14 +2844,16 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
       }
     });
     if (needsLogin) {
+      try { saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: loginError || 'API Key 无效，请检查或重新输入' }); } catch {}
       return res.status(401).json({ error: loginError });
     }
   } catch (error: any) {
+    try { saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: error?.message || 'API Key 认证失败' }); } catch {}
     return res.status(401).json({ error: error?.message || 'API Key 认证失败' });
   }
 
   const today = targetDate || getLocalDateString();
-  const selectedModel = reqModel || scheduleModel || defaultModel;
+  const selectedModel = reqModel || db.getUserPreferredModel(userId, defaultModel);
   const targetCalendarId = calendarId || 'personal';
   cleanupExpiredAiScheduleState();
   const requestKey = isAiChatRequestId(requestId) ? `${userId}:${requestId}` : null;
@@ -2492,8 +2869,9 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
     aiChatRequestRecords.set(requestKey, { userId, state: 'processing', expiresAt: Date.now() + AI_SCHEDULE_PLAN_TTL_MS });
   }
 
-  // 【关键修复】先解析用户消息中的日期，获取正确的日程作为AI上下文
-  const queryDates = parseQueryDatesForCards(text, today);
+  // 普通问答不附带用户日程；只有明确的查询或排期请求才加载所需日期的数据。
+  const includeScheduleContext = needsScheduleContext(text);
+  const queryDates = includeScheduleContext ? parseQueryDatesForCards(text, today) : [];
   console.log('[AI Chat] Query dates for AI context:', queryDates);
   
   // 获取用户询问日期的日程（而非仅仅今天的）
@@ -2539,7 +2917,9 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
     const weekday = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.getDay()];
     return `${month}月${day}日(${weekday})`;
   };
-  const scheduleList = sortedSchedules.length > 0
+  const scheduleList = !includeScheduleContext
+    ? '（普通对话未加载用户日程数据）'
+    : sortedSchedules.length > 0
     ? sortedSchedules.map((s: any, idx: number) => {
         const categoryLabel = CATEGORY_LABELS_CN[s.category] || '其他';
         const dateLabel = formatDateForAI(s.start_time.slice(0, 10));
@@ -2553,19 +2933,21 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
       }).join('\n\n')
     : '（该日期暂无日程）';
 
-  const systemPrompt = `你是一个专业的智能日程助手，能够精准理解用户的日程需求，并准确执行增删改查操作。
+  const systemPrompt = `你是一个专业、自然的个人助手。你可以回答常识问题、提供建议、进行闲聊，也能理解日程需求并生成待确认操作。
 
 ${queryDateInfo}当前日期：${today}
 
-【重要】以下是用户日程表数据（这是你回答的基础，必须基于此回复）：
+【用户日程表数据】查询或修改日程时必须以这里的数据为准；普通常识、建议和闲聊不必强行依赖日程：
 ${scheduleList || '（暂无日程）'}
 
 【回复规则 - 非常重要】
-1. 必须基于上面的真实日程数据回复，不得凭空捏造
+1. 涉及日程时必须基于上面的真实日程数据，不得凭空捏造
 2. query 意图不要在 reply 中逐项罗列标题、时间、地点或备注，详情由下方日程卡片展示
 3. query 意图只输出两段：第一段说明共有几项，第二段概括上午、下午、晚上和全天安排
 4. 回复中禁止使用 emoji 或图标字符，保持简洁专业
-5. create、update、delete 意图只简洁说明操作结果
+5. create、update、delete 意图只简洁说明操作计划，所有写入必须等待用户确认
+6. chat 意图可正常回答常识、建议和闲聊；不要把普通回答包装成操作成功
+7. 实时天气已由系统数据源分流；新闻、股价等其他实时信息无法核实时要明确说明能力边界，不能编造
 
 可用日程分类：
 - travel/出行：交通、接送、旅途相关
@@ -2678,8 +3060,8 @@ priority 识别：
 - 对于“周三前”“周内”“周五和下周一”等相对日期，必须以当前日期换算出确切 YYYY-MM-DD；“周三前完成”最晚安排在该周周三，不能向后顺延。
 - 信息有歧义、缺少日期或会影响执行时，不要编造；在顶层 warnings 数组中列出需要用户核对的问题。所有写入都会先展示计划并等待用户确认。`;
 
+  let jsonText = '';
   try {
-    let jsonText = '';
     
     // 【修复数据隔离】使用该用户的 API Key
     const stream = query({
@@ -2701,13 +3083,13 @@ priority 识别：
       }
     }
 
-    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('AI 返回格式错误');
-
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsedResult = parseAiJson(jsonText);
+    const parsed = parsedResult.value;
+    if (parsedResult.repaired) {
+      addLog('warn', 'ai', 'AI 返回 JSON 含未转义双引号，已自动修复');
+    }
     const operations = Array.isArray(parsed.operations) ? parsed.operations : [];
-    console.log('[AI Chat] Intent:', parsed.intent);
-    console.log('[AI Chat] Operations:', JSON.stringify(operations, null, 2));
+    console.log('[AI Chat] Parsed plan:', { intent: parsed.intent, operationCount: operations.length });
     addLog('info', 'ai', `AI解析完成，意图: ${parsed.intent}，操作数: ${operations.length}`, {
       intent: parsed.intent,
       opCount: operations.length,
@@ -2717,7 +3099,7 @@ priority 识别：
     const requiresConfirmation = operations.some((op: any) =>
       ['create', 'create_recurring', 'update', 'delete'].includes(op?.type),
     );
-    const response = requiresConfirmation ? (() => {
+    const response: any = requiresConfirmation ? (() => {
       const plan: PendingAiSchedulePlan = {
         id: uuidv4(),
         userId,
@@ -2755,12 +3137,24 @@ priority 识别：
       changed: false,
       changedDetails: { created: [], updated: [], deleted: [] },
     };
+    try {
+      const historyMessage = saveAiScheduleResponseHistory(userId, response);
+      response.historyMessageId = historyMessage.id;
+    } catch (historyError) {
+      console.error('[AI History] 保存助手消息失败:', historyError);
+    }
     if (requestKey) aiChatRequestRecords.set(requestKey, { userId, state: 'completed', response, expiresAt: Date.now() + AI_SCHEDULE_PLAN_TTL_MS });
     res.json(response);
   } catch (error: any) {
     if (requestKey) aiChatRequestRecords.delete(requestKey);
-    addLog('error', 'ai', `AI Chat 处理失败: ${error?.message || '未知错误'}`, { stack: error?.stack?.slice(0, 200) });
+    addLog('error', 'ai', `AI Chat 处理失败: ${error?.message || '未知错误'}`, {
+      stack: error?.stack?.slice(0, 200),
+      responseLength: jsonText?.length || 0,
+    });
     console.error('[AI Chat] Error:', error);
+    try {
+      saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: error?.message || 'AI 处理失败，请重试' });
+    } catch {}
     res.status(500).json({ error: error?.message || 'AI 处理失败，请重试' });
   }
 });
@@ -2777,10 +3171,16 @@ app.post("/api/ai-chat/confirm", authenticate, (req, res) => {
   if (!plan.confirmedResult) {
     const result = executeAiScheduleOperations(plan);
     const scheduleItems = [...result.createdSchedules, ...result.updatedSchedules];
+    const failureSummary = result.failures.length
+      ? `另有 ${result.failures.length} 项未执行。\n失败原因：\n${result.failures.map(failure => {
+        const title = planOperationPreview(plan.operations[failure.index], failure.index).title;
+        return `- ${title}：${String(failure.message || '执行失败').slice(0, 180)}`;
+      }).join('\n')}`
+      : '';
     plan.confirmedResult = {
       success: true,
       intent: plan.intent,
-      reply: `已确认并执行：创建 ${result.createdSchedules.length} 项日程、${result.createdReminderTasks.length} 项周期事项，更新 ${result.updatedSchedules.length} 项，删除 ${result.deletedIds.length} 项。`,
+      reply: `已确认并执行：创建 ${result.createdSchedules.length} 项日程、${result.createdReminderTasks.length} 项周期事项，更新 ${result.updatedSchedules.length} 项，删除 ${result.deletedIds.length} 项。${failureSummary}`,
       scheduleItems,
       changed: result.changed,
       changedDetails: {
@@ -2788,7 +3188,9 @@ app.post("/api/ai-chat/confirm", authenticate, (req, res) => {
         updated: result.updatedSchedules,
         deleted: result.deletedIds,
         recurring: result.createdReminderTasks,
+        failures: result.failures,
       },
+      partial: result.failures.length > 0,
     };
     addLog('info', 'ai', 'AI 计划已确认执行', {
       planId,
@@ -2797,6 +3199,7 @@ app.post("/api/ai-chat/confirm", authenticate, (req, res) => {
       recurring: result.createdReminderTasks.length,
       updated: result.updatedSchedules.length,
       deleted: result.deletedIds.length,
+      failed: result.failures.length,
     });
   }
   res.json(plan.confirmedResult);
@@ -2814,616 +3217,6 @@ app.get("/api/schedules/by-date/:date", authenticate, (req, res) => {
   }
 });
 
-// ============= 聊天 API =============
-
-// 权限响应 API
-app.post("/api/permission-response", authenticate, (req, res) => {
-  const { requestId, behavior, message } = req.body;
-  
-  console.log(`[Permission] Response received: requestId=${requestId}, behavior=${behavior}`);
-  
-  const pending = pendingPermissions.get(requestId);
-  if (!pending) {
-    console.log(`[Permission] Request not found: ${requestId}`);
-    return res.status(404).json({ error: "权限请求不存在或已超时" });
-  }
-  if (pending.userId !== ((req as any).user as JwtPayload).userId) {
-    return res.status(403).json({ error: "无权处理该权限请求" });
-  }
-  
-  // 清除请求
-  pendingPermissions.delete(requestId);
-  
-  if (behavior === 'allow') {
-    pending.resolve({
-      behavior: 'allow',
-      updatedInput: pending.input
-    });
-  } else {
-    pending.resolve({
-      behavior: 'deny',
-      message: message || '用户拒绝了此操作'
-    });
-  }
-  
-  res.json({ success: true });
-});
-
-// 发送消息并获取流式响应
-app.post("/api/chat", authenticate, async (req, res) => {
-  const { sessionId, message, model, systemPrompt, cwd, permissionMode } = req.body;
-  const userId = ((req as any).user as JwtPayload).userId;
-  const userCredential = db.getUserApiKey(userId);
-  
-  // 请求日志
-  console.log(`\n[Chat] ========== 新请求 ==========`);
-  console.log(`[Chat] SessionId: ${sessionId}`);
-  console.log(`[Chat] Model: ${model}`);
-  console.log(`[Chat] Message: ${message?.slice(0, 100)}${message?.length > 100 ? '...' : ''}`);
-  console.log(`[Chat] CWD: ${cwd || 'default'}`);
-
-  if (!message) {
-    console.log(`[Chat] 错误: 消息为空`);
-    return res.status(400).json({ error: "消息不能为空" });
-  }
-  if (!userCredential) {
-    return res.status(401).json({ error: "请先在设置页输入您的 CodeBuddy API Key" });
-  }
-
-  // 获取或创建会话
-  let session = sessionId ? db.getSession(sessionId, userId) : null;
-  const now = new Date().toISOString();
-  
-  if (!session) {
-    // 创建新会话
-    console.log(`[Chat] 创建新会话`);
-    session = db.createSession({
-      id: sessionId || uuidv4(),
-      user_id: userId,
-      title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
-      model: model || defaultModel,
-      sdk_session_id: null,  // 稍后从 SDK 获取
-      created_at: now,
-      updated_at: now
-    });
-  } else {
-    console.log(`[Chat] 使用现有会话, SDK Session: ${session.sdk_session_id || 'none'}`);
-  }
-
-  const selectedModel = model || session.model;
-  
-  // 获取 SDK session ID（用于恢复对话）
-  const sdkSessionId = session.sdk_session_id;
-
-  // 创建用户消息 ID 和助手消息 ID
-  const userMessageId = uuidv4();
-  const assistantMessageId = uuidv4();
-
-  // 保存用户消息到数据库
-  try {
-    db.createMessage({
-      id: userMessageId,
-      session_id: session.id,
-      role: 'user',
-      content: message,
-      model: null,
-      created_at: now,
-      tool_calls: null
-    }, userId);
-    console.log(`[Chat] 用户消息已保存: ${userMessageId}`);
-  } catch (dbError: any) {
-    console.error(`[Chat] 保存用户消息失败:`, dbError);
-    return res.status(500).json({ error: "保存消息失败", detail: dbError?.message });
-  }
-
-  // 设置 SSE 头
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-
-  // 智能日程管理 Agent 系统提示词
-  const defaultSystemPrompt = `你是"小日程"——一个专业的AI智能日程管理助手。你的核心能力是帮助用户用自然语言快速创建、管理和规划日程。
-
-## 核心原则
-**【最重要】日程 ID 是 UUID 格式（如 "a1b2c3d4-e5f6-7890-abcd-ef1234567890"），不是数字！**
-当用户说"第5个日程"、"编号5"、"第5个"时，你需要根据上下文找到对应日程的 UUID，不能随便猜一个数字！
-
-## 你的核心能力
-
-### 1. 自然语言任务解析
-- 用户输入口语化描述时，自动提取：任务名称、时间、地点、优先级、关联事项
-- 支持单天、多天、单次、重复任务解析
-- 剔除无效信息，梳理清晰的任务清单
-
-### 2. 智能自动排期
-根据以下规则自动分配时间：
-- **时间优先级**：优先遵循用户提及的时间（上午、下午、晚间、具体时间点）
-- **任务耗时默认值**：
-  - 接人/送人：30分钟
-  - 会议/开会：1.5小时
-  - 午餐/晚餐：1.5小时
-  - 购物/办事：1小时
-  - 运动/健身：1小时
-  - 看医生：1-2小时
-  - 约会/社交：2小时
-  - 其他未分类任务：1小时
-- **通勤时间**：跨地点任务自动预留30分钟通勤时间
-- **作息规则**：默认工作时段 09:00-18:00，中午12:00-13:00休息
-
-### 3. 智能追问
-当信息不完整时，主动追问关键要素：
-- 无具体时间 → 询问时间段（上午/下午/晚间/具体几点）
-- 无地点 → 询问地点
-- 任务冲突 → 提供调整建议
-- 时长不明确 → 确认预计时长
-
-### 4. 日程管理
-支持的操作：
-- 创建日程（包含：标题、时间、地点、分类、优先级、提醒设置）
-- 查看日程（按日/周/月视图）
-- 编辑日程
-- 删除日程
-- 标记完成/未完成
-- 设置重复日程（每日/每周/每月）
-
-## 响应格式要求
-
-### 当用户请求创建日程时：
-用友好的方式确认日程详情，格式如下：
-\`\`\`
-日程已创建
-
-【任务名称】
-时间：YYYY年MM月DD日 HH:MM - HH:MM
-地点：[地点]
-分类：[分类]
-优先级：[高/中/低]
-提醒：[提前X分钟]
-
-是否需要调整？
-\`\`\`
-
-### 当需要追问时：
-用口语化、友好的方式提问，不要一次性问太多问题。
-
-### 当用户询问日程时：
-清晰列出日程列表，**必须严格遵守以下格式规则**：
-- 标题行（如"今天共有X项安排..."）后空一行
-- **已完成** 和 **进行中 / 待办** 分类标题前后各空一行
-- 每一条日程条目列举完后也要加一个空行（条目之间用空行分隔）
-- 最后的总结/提醒文字前后各空一行
-- 回复中禁止使用 emoji 或图标字符，保持简洁专业
-- 格式示例：
-  今天共有 N 项安排：\n\n**已完成**\n\n1. 事项A...\n\n2. 事项B...\n\n**进行中 / 待办**\n\n3. 事项C...\n\n总结提醒
-
-### 当用户要修改/调整日程时：
-**【关键】你必须根据对话上下文确定正确的 scheduleId（UUID 格式）！**
-- 如果用户提到日程的标题或内容，用标题匹配对应的 UUID
-- 不要猜测 UUID，只能使用你能从对话中确认的 ID
-- 如果不确定是哪个日程，主动向用户确认
-
-## 注意事项
-- 始终使用中文回复
-- 保持口语化、亲切的交流风格
-- 回答简洁明了，避免冗长
-- 对于模糊指令，先尝试理解意图，再确认或追问
-- **日程 ID 必须是真实的 UUID，不能是数字或序号！**`;
-
-  // 解析消息中的日期引用，获取相关日程
-  function getScheduleContextForMessage(message: string): string {
-    const userId = 'default';
-    const now = new Date();
-    const today = now.toISOString().slice(0, 10);
-    
-    // 计算明天、后天
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowStr = tomorrow.toISOString().slice(0, 10);
-    
-    const dayAfterTomorrow = new Date(now);
-    dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
-    const dayAfterTomorrowStr = dayAfterTomorrow.toISOString().slice(0, 10);
-    
-    // 计算下周（7天后）
-    const nextWeek = new Date(now);
-    nextWeek.setDate(nextWeek.getDate() + 7);
-    const nextWeekStr = nextWeek.toISOString().slice(0, 10);
-    
-    // 计算下周的具体工作日
-    const getNextWeekday = (targetDay: number): string => {
-      const daysUntilTarget = (targetDay - now.getDay() + 7) % 7 || 7;
-      const nextDate = new Date(now);
-      nextDate.setDate(nextDate.getDate() + daysUntilTarget);
-      return nextDate.toISOString().slice(0, 10);
-    };
-    const nextMonday = getNextWeekday(1);
-    const nextTuesday = getNextWeekday(2);
-    const nextWednesday = getNextWeekday(3);
-    const nextThursday = getNextWeekday(4);
-    const nextFriday = getNextWeekday(5);
-    const nextSaturday = getNextWeekday(6);
-    const nextSunday = getNextWeekday(0);
-    
-    // 解析具体日期的正则表达式
-    const msgLower = message.toLowerCase();
-    const msgRaw = message;
-    const contexts: string[] = [];
-    const processedDates = new Set<string>();
-    
-    // 格式化日程为文本
-    const formatSchedules = (schedules: any[]) => {
-      if (schedules.length === 0) return '无日程';
-      return schedules.map((s, idx) => {
-        const time = s.all_day ? '全天' : `${s.start_time.slice(11, 16)}${s.end_time ? ' ~ ' + s.end_time.slice(11, 16) : ''}`;
-        const status = s.is_completed ? '[已完成]' : '';
-        return `${idx + 1}. ${s.title} ${time} ${status} (ID:${s.id})`;
-      }).join('\n');
-    };
-    
-    // 辅助函数：添加日程上下文（避免重复）
-    const addScheduleContext = (dateStr: string, label: string) => {
-      if (processedDates.has(dateStr)) return;
-      processedDates.add(dateStr);
-      const schedules = scheduleStore.getSchedulesByDate(dateStr, userId);
-      contexts.push(`【${label} (${dateStr})】\n${formatSchedules(schedules)}`);
-    };
-    
-    // 1. 检测"明天"
-    if (msgLower.includes('明天') || msgLower.includes('tomorrow')) {
-      addScheduleContext(tomorrowStr, '明天');
-    }
-    
-    // 2. 检测"后天"
-    if (msgLower.includes('后天')) {
-      addScheduleContext(dayAfterTomorrowStr, '后天');
-    }
-    
-    // 3. 检测"下周X"（下周一到周日）
-    if (msgLower.includes('下周一') || msgLower.includes('下星期一')) {
-      addScheduleContext(nextMonday, '下周一');
-    }
-    if (msgLower.includes('下周二') || msgLower.includes('下星期二')) {
-      addScheduleContext(nextTuesday, '下周二');
-    }
-    if (msgLower.includes('下周三') || msgLower.includes('下星期三')) {
-      addScheduleContext(nextWednesday, '下周三');
-    }
-    if (msgLower.includes('下周四') || msgLower.includes('下星期四')) {
-      addScheduleContext(nextThursday, '下周四');
-    }
-    if (msgLower.includes('下周五') || msgLower.includes('下星期五')) {
-      addScheduleContext(nextFriday, '下周五');
-    }
-    if (msgLower.includes('周六') || msgLower.includes('星期六')) {
-      addScheduleContext(nextSaturday, '周六');
-    }
-    if (msgLower.includes('周日') || msgLower.includes('星期天') || msgLower.includes('周日')) {
-      addScheduleContext(nextSunday, '周日');
-    }
-    
-    // 4. 检测"本周X"（本周一到周日）
-    const getThisWeekday = (targetDay: number): string => {
-      const daysUntilTarget = (targetDay - now.getDay() + 7) % 7;
-      const targetDate = new Date(now);
-      targetDate.setDate(targetDate.getDate() + daysUntilTarget);
-      return targetDate.toISOString().slice(0, 10);
-    };
-    if (msgLower.includes('本周一') || msgLower.includes('这周一') || msgLower.includes('星期一')) {
-      addScheduleContext(getThisWeekday(1), '本周一');
-    }
-    if (msgLower.includes('本周二') || msgLower.includes('这周二') || msgLower.includes('星期二')) {
-      addScheduleContext(getThisWeekday(2), '本周二');
-    }
-    if (msgLower.includes('本周三') || msgLower.includes('这周三') || msgLower.includes('星期三')) {
-      addScheduleContext(getThisWeekday(3), '本周三');
-    }
-    if (msgLower.includes('本周四') || msgLower.includes('这周四') || msgLower.includes('星期四')) {
-      addScheduleContext(getThisWeekday(4), '本周四');
-    }
-    if (msgLower.includes('本周五') || msgLower.includes('这周五') || msgLower.includes('星期五')) {
-      addScheduleContext(getThisWeekday(5), '本周五');
-    }
-    
-    // 5. 检测"下周"（整个下周）
-    if (msgLower.includes('下周') || msgLower.includes('next week')) {
-      // 获取从今天到下周的所有日程
-      const upcomingSchedules = scheduleStore.getSchedulesByDateRange(today, nextWeekStr, userId);
-      contexts.push(`【本周及下周日程 (${today} 到 ${nextWeekStr})】\n${formatSchedules(upcomingSchedules)}`);
-    }
-    
-    // 6. 检测"这周"、"本周"
-    if (msgLower.includes('这周') || msgLower.includes('本周') || msgLower.includes('this week')) {
-      const weekEnd = new Date(now);
-      weekEnd.setDate(weekEnd.getDate() + (7 - now.getDay()));
-      const weekEndStr = weekEnd.toISOString().slice(0, 10);
-      const weekSchedules = scheduleStore.getSchedulesByDateRange(today, weekEndStr, userId);
-      contexts.push(`【本周日程 (${today} 到 ${weekEndStr})】\n${formatSchedules(weekSchedules)}`);
-    }
-    
-    // 7. 检测具体日期格式：MM月DD号、MM-DD、YYYY-MM-DD
-    const monthDayPatterns = [
-      /(\d{1,2})月(\d{1,2})[日号]?/g,  // 4月10号、4-10
-      /(\d{1,2})-(\d{1,2})/g,           // 4-10
-      /(\d{4})-(\d{1,2})-(\d{1,2})/g,   // 2026-04-10
-    ];
-    
-    for (const pattern of monthDayPatterns) {
-      let match;
-      while ((match = pattern.exec(msgRaw)) !== null) {
-        let year, month, day;
-        if (match[3]) {
-          // YYYY-MM-DD
-          year = parseInt(match[1]);
-          month = parseInt(match[2]);
-          day = parseInt(match[3]);
-        } else {
-          // MM月DD号 或 MM-DD
-          year = now.getFullYear();
-          month = parseInt(match[1]);
-          day = parseInt(match[2]);
-        }
-        
-        // 验证日期有效性
-        if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-          const targetDate = new Date(year, month - 1, day);
-          const dateStr = targetDate.toISOString().slice(0, 10);
-          
-          // 只处理未来30天内的日期
-          const daysDiff = Math.floor((targetDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-          if (daysDiff >= -7 && daysDiff <= 60) {
-            const dateLabel = `${month}月${day}日`;
-            addScheduleContext(dateStr, dateLabel);
-          }
-        }
-      }
-    }
-    
-    // 8. 如果没有特定日期引用，默认包含今天和明天的日程
-    if (contexts.length === 0) {
-      const todaySchedules = scheduleStore.getSchedulesByDate(today, userId);
-      const tomorrowSchedules = scheduleStore.getSchedulesByDate(tomorrowStr, userId);
-      contexts.push(`【今天的日程 (${today})】\n${formatSchedules(todaySchedules)}`);
-      contexts.push(`【明天的日程 (${tomorrowStr})】\n${formatSchedules(tomorrowSchedules)}`);
-    }
-    
-    return contexts.length > 0 ? '\n\n## 用户相关日程\n' + contexts.join('\n') : '';
-  }
-  
-  // 获取增强的系统提示词（包含日程上下文）
-  function getEnhancedSystemPrompt(basePrompt: string, message: string): string {
-    const scheduleContext = getScheduleContextForMessage(message);
-    return basePrompt + scheduleContext;
-  }
-  
-  // 工作目录：优先使用请求中的 cwd，否则使用当前目录
-  const workingDir = cwd || process.cwd();
-
-  try {
-    console.log(`[Chat] 调用 SDK query...`);
-    console.log(`[Chat] - Model: ${selectedModel}`);
-    console.log(`[Chat] - Resume: ${sdkSessionId || 'none'}`);
-    console.log(`[Chat] - CWD: ${workingDir}`);
-    console.log(`[Chat] - PermissionMode: ${permissionMode || 'default'}`);
-    
-    // 创建 canUseTool 回调
-    const canUseTool: CanUseTool = async (toolName, input, options) => {
-      console.log(`[Permission] Tool request: ${toolName}`);
-      console.log(`[Permission] Input:`, JSON.stringify(input, null, 2));
-      
-      // bypassPermissions 模式直接放行
-      if (permissionMode === 'bypassPermissions') {
-        console.log(`[Permission] Bypassing permissions for ${toolName}`);
-        return { behavior: 'allow', updatedInput: input };
-      }
-      
-      // 创建权限请求
-      const requestId = uuidv4();
-      const permissionRequest = {
-        requestId,
-        toolUseId: options.toolUseID,
-        toolName,
-        input,
-        sessionId: session.id,
-        timestamp: Date.now()
-      };
-      
-      // 发送权限请求到前端
-      res.write(`data: ${JSON.stringify({ 
-        type: "permission_request", 
-        ...permissionRequest
-      })}\n\n`);
-      
-      // 创建 Promise 等待用户响应
-      return new Promise<PermissionResult>((resolve, reject) => {
-        const pending: PendingPermission = {
-          resolve,
-          reject,
-          toolName,
-          input,
-          sessionId: session.id,
-          userId,
-          timestamp: Date.now()
-        };
-        
-        pendingPermissions.set(requestId, pending);
-        
-        // 设置超时
-        setTimeout(() => {
-          if (pendingPermissions.has(requestId)) {
-            pendingPermissions.delete(requestId);
-            console.log(`[Permission] Request timeout: ${requestId}`);
-            resolve({
-              behavior: 'deny',
-              message: '权限请求超时'
-            });
-          }
-        }, PERMISSION_TIMEOUT);
-      });
-    };
-    
-    // 使用 Query API 发送消息
-    // 如果有 sdk_session_id，使用 resume 恢复对话上下文
-    // SDK 会自动从 process.env 读取 CODEBUDDY_API_KEY
-    const stream = query({
-      prompt: message,
-      options: {
-        cwd: workingDir,
-        model: selectedModel,
-        maxTurns: 10,
-        systemPrompt: getEnhancedSystemPrompt(systemPrompt || defaultSystemPrompt, message),
-        permissionMode: permissionMode || 'default',
-        canUseTool,
-        env: buildCodeBuddyEnv(userCredential),
-        ...(sdkSessionId ? { resume: sdkSessionId } : {})  // 使用 resume 恢复对话
-      }
-    });
-
-    let fullResponse = "";
-    let toolCalls: Array<{ 
-      id: string; 
-      name: string; 
-      input?: Record<string, unknown>;
-      status: string; 
-      result?: string;
-      isError?: boolean;
-    }> = [];
-    let newSdkSessionId: string | null = null;  // 用于存储 SDK 返回的 session_id
-
-    // 发送会话ID和消息ID
-    res.write(`data: ${JSON.stringify({ 
-      type: "init", 
-      sessionId: session.id, 
-      userMessageId, 
-      assistantMessageId,
-      model: selectedModel 
-    })}\n\n`);
-
-    // 当前正在执行的工具 ID（用于匹配 tool_result）
-    let currentToolId: string | null = null;
-
-    // 处理流式响应
-    for await (const msg of stream) {
-      console.log("[Stream] Message type:", msg.type, msg);
-      
-      // 处理 system 消息，获取 SDK 的 session_id
-      if (msg.type === "system" && (msg as any).subtype === "init") {
-        newSdkSessionId = (msg as any).session_id;
-        console.log(`[Stream] Got SDK session_id: ${newSdkSessionId}`);
-        
-        // 保存 SDK session_id 到数据库（如果是新的）
-        if (newSdkSessionId && newSdkSessionId !== sdkSessionId) {
-          db.updateSession(session.id, userId, { sdk_session_id: newSdkSessionId });
-          console.log(`[Stream] Saved SDK session_id to database`);
-        }
-      } else if (msg.type === "assistant") {
-        const content = msg.message.content;
-
-        if (typeof content === "string") {
-          fullResponse += content;
-          res.write(`data: ${JSON.stringify({ type: "text", content })}\n\n`);
-        } else if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block.type === "text") {
-              fullResponse += block.text;
-              res.write(`data: ${JSON.stringify({ type: "text", content: block.text })}\n\n`);
-            } else if (block.type === "tool_use") {
-              currentToolId = block.id || uuidv4();
-              const toolInput = (block as any).input || {};
-              console.log(`[Stream] Tool use: id=${currentToolId}, name=${block.name}`);
-              console.log(`[Stream] Tool input:`, JSON.stringify(toolInput, null, 2));
-              
-              const toolCall = { 
-                id: currentToolId, 
-                name: block.name, 
-                input: toolInput,
-                status: "running" 
-              };
-              toolCalls.push(toolCall);
-              res.write(`data: ${JSON.stringify({ 
-                type: "tool", 
-                id: toolCall.id,
-                name: toolCall.name,
-                input: toolCall.input,
-                status: toolCall.status
-              })}\n\n`);
-            }
-          }
-        }
-      } else if ((msg as any).type === "tool_result") {
-        // 处理工具结果（独立的消息类型）
-        const msgAny = msg as any;
-        const toolId = msgAny.tool_use_id || currentToolId;
-        const isError = msgAny.is_error || false;
-        const content = msgAny.content;
-        
-        console.log(`[Stream] Tool result: tool_use_id=${toolId}, is_error=${isError}`);
-        console.log(`[Stream] Tool result content type:`, typeof content);
-        console.log(`[Stream] Tool result content:`, typeof content === 'string' ? content.slice(0, 500) : JSON.stringify(content, null, 2)?.slice(0, 500));
-        
-        const tool = toolCalls.find(t => t.id === toolId) || toolCalls[toolCalls.length - 1];
-        if (tool) {
-          tool.status = isError ? "error" : "completed";
-          tool.isError = isError;
-          tool.result = typeof content === 'string' 
-            ? content 
-            : JSON.stringify(content);
-          res.write(`data: ${JSON.stringify({ 
-            type: "tool_result", 
-            toolId: tool.id, 
-            content: tool.result,
-            isError: isError
-          })}\n\n`);
-        }
-        currentToolId = null;
-      } else if (msg.type === "result") {
-        // 完成时确保所有工具都标记为完成
-        toolCalls.forEach(tool => {
-          if (tool.status === "running") {
-            tool.status = "completed";
-            res.write(`data: ${JSON.stringify({ type: "tool_result", toolId: tool.id, content: tool.result || "已完成" })}\n\n`);
-          }
-        });
-        const resultMessage = msg as any;
-        res.write(`data: ${JSON.stringify({ type: "done", duration: resultMessage.duration, cost: resultMessage.cost })}\n\n`);
-      }
-    }
-
-    // 保存助手消息到数据库
-    db.createMessage({
-      id: assistantMessageId,
-      session_id: session.id,
-      role: 'assistant',
-      content: fullResponse,
-      model: selectedModel,
-      created_at: new Date().toISOString(),
-      tool_calls: toolCalls.length > 0 ? JSON.stringify(toolCalls) : null
-    }, userId);
-
-    // 更新会话标题（如果是第一条消息）
-    const messages = db.getMessagesBySession(session.id, userId);
-    if (messages.length <= 2) {
-      db.updateSession(session.id, userId, {
-        title: message.slice(0, 30) + (message.length > 30 ? '...' : ''),
-        model: selectedModel
-      });
-    }
-
-    console.log(`[Chat] 请求完成 ✓`);
-    res.end();
-  } catch (error: any) {
-    console.error(`\n[Chat] ========== 错误 ==========`);
-    console.error(`[Chat] Error Name:`, error?.name);
-    console.error(`[Chat] Error Message:`, error?.message);
-    console.error(`[Chat] Error Code:`, error?.code);
-    console.error(`[Chat] Error Stack:`, error?.stack);
-    console.error(`[Chat] Full Error:`, JSON.stringify(error, null, 2));
-    
-    const errorMessage = error?.message || "处理请求时发生错误";
-    res.write(`data: ${JSON.stringify({ type: "error", message: errorMessage })}\n\n`);
-    res.end();
-  }
-});
-
 // 【新增】SPA 路由支持 - 所有未匹配的路由返回 index.html
 if (isProduction) {
   app.get('*', (req, res) => {
@@ -3435,6 +3228,7 @@ if (isProduction) {
 // 异步启动服务器（等待数据库初始化）
 async function startServer() {
   try {
+    validateRuntimeConfig();
     // 初始化数据库
     console.log('[Startup] 初始化数据库...');
     await dbModule.initDb();
@@ -3486,27 +3280,44 @@ startServer();
 // ============================================================
 // 每日邮件提醒定时任务（每分钟检查一次）
 // ============================================================
+const backgroundJobsEnabled = process.env.BACKGROUND_JOBS_ENABLED === 'true';
+if (!backgroundJobsEnabled) {
+  console.log('[Jobs] 后台定时任务未启用；如需生产提醒，请显式配置 BACKGROUND_JOBS_ENABLED=true');
+}
+
+if (backgroundJobsEnabled) {
 cron.schedule('* * * * *', () => {
+  if (!dbInitialized) return;
   try {
     const now = new Date();
-    // 北京时区（UTC+8）
-    const beijingHour = parseInt(new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', hour12: false }).format(now));
-    const beijingMinute = parseInt(new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', minute: '2-digit', hour12: false }).format(now));
-    const beijingDate = reminderStore.todayInTimezone('Asia/Shanghai');
-
     const reminders = db.getAllEnabledReminders();
     for (const reminder of reminders) {
-      if (reminder.hour === beijingHour && reminder.minute === beijingMinute) {
-        const schedules = scheduleStore.getSchedulesByDate(beijingDate, reminder.user_id).filter(item => !item.is_completed);
-        enqueueUserNotification({
-          userId: reminder.user_id,
-          sourceType: 'digest',
-          sourceId: beijingDate,
-          kind: 'daily_digest',
-          title: `今日行动提醒 · ${schedules.length} 项待处理`,
-          body: schedules.length ? schedules.map(item => `${item.start_time.slice(11, 16)} ${item.title}`).join('\n') : '今天暂无未完成日程。',
-          dedupePrefix: `daily:${reminder.user_id}:${beijingDate}`,
-        });
+      try {
+        const timezone = reminder.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai';
+        const parts = new Intl.DateTimeFormat('en-GB', {
+          timeZone: timezone,
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23',
+        }).formatToParts(now);
+        const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+        const localHour = Number(values.hour);
+        const localMinute = Number(values.minute);
+        const localDate = reminderStore.todayInTimezone(timezone, now);
+        if (reminder.hour === localHour && reminder.minute === localMinute) {
+          const schedules = scheduleStore.getSchedulesByDate(localDate, reminder.user_id).filter(item => !item.is_completed);
+          enqueueUserNotification({
+            userId: reminder.user_id,
+            sourceType: 'digest',
+            sourceId: localDate,
+            kind: 'daily_digest',
+            title: `今日行动提醒 · ${schedules.length} 项待处理`,
+            body: schedules.length ? schedules.map(item => `${item.start_time.slice(11, 16)} ${item.title}`).join('\n') : '今天暂无未完成日程。',
+            dedupePrefix: `daily:${reminder.user_id}:${localDate}`,
+          });
+        }
+      } catch (error: any) {
+        addLog('warn', 'reminder', '跳过时区配置无效的每日提醒', { userId: reminder.user_id, error: error?.message || String(error) });
       }
     }
   } catch (err) {
@@ -3550,10 +3361,21 @@ cron.schedule('*/30 * * * *', async () => {
 cron.schedule('*/5 * * * *', () => {
   if (!dbInitialized || !process.env.IMAP_PASS) return;
   pollEmailImports({
-    model: scheduleModel,
-    resolveApiKey: userId => db.getUserApiKey(userId)?.api_key || process.env.CODEBUDDY_API_KEY || null,
+    resolveCredential: resolveAiImportCredential,
     log: (message, error) => error
-      ? addLog('error', 'ai', message, { error: error instanceof Error ? error.message : String(error) })
+      ? addLog('error', 'ai', message, { error: describeError(error) })
       : addLog('info', 'ai', message),
   }).catch(error => addLog('error', 'ai', '邮箱导入调度失败: ' + (error?.message || error)));
 });
+
+// 每小时逐条清理超过 3 天的 AI 助手历史，避免只在用户打开页面时才清理。
+cron.schedule('0 * * * *', () => {
+  if (!dbInitialized) return;
+  try {
+    const deleted = cleanupAiScheduleHistory();
+    if (deleted > 0) addLog('info', 'ai', `清理 AI 助手过期历史: ${deleted} 条`);
+  } catch (error: any) {
+    addLog('error', 'ai', '清理 AI 助手过期历史失败', { error: error?.message || String(error) });
+  }
+});
+}

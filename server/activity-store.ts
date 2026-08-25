@@ -21,6 +21,8 @@ export interface CompletionRecord {
   instanceId: string | null;
   completedAt: string;
   note: string | null;
+  amountCents: number | null;
+  currency: string;
   billDate: string | null;
   reopenedAt: string | null;
   createdAt: string;
@@ -82,6 +84,12 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+function isValidDateOnly(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 function persist(): void {
   fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
 }
@@ -115,6 +123,8 @@ function rowToCompletion(row: any): CompletionRecord {
     instanceId: row.instance_id,
     completedAt: row.completed_at,
     note: row.note,
+    amountCents: row.amount_cents == null ? null : Number(row.amount_cents),
+    currency: row.currency || 'CNY',
     billDate: row.bill_date,
     reopenedAt: row.reopened_at,
     createdAt: row.created_at,
@@ -286,28 +296,44 @@ export function createCompletion(input: {
   instanceId?: string | null;
   completedAt?: string;
   note?: string | null;
+  amountCents?: number | null;
+  currency?: string;
   billDate?: string | null;
 }): CompletionRecord {
   const now = nowIso();
+  const completedAt = input.completedAt || now;
+  if (completedAt.length > 64 || Number.isNaN(Date.parse(completedAt))) throw new Error('完成时间格式不正确');
+  const note = input.note?.trim() || null;
+  if (note && note.length > 10_000) throw new Error('完成备注不能超过 10000 个字符');
+  const amountCents = input.amountCents == null ? null : Math.round(input.amountCents);
+  if (amountCents != null && (!Number.isFinite(amountCents) || amountCents < 0)) throw new Error('金额必须是有效的非负数');
+  const currency = String(input.currency || 'CNY').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error('币种代码必须是 3 位字母');
+  const billDate = input.billDate || null;
+  if (billDate && !isValidDateOnly(billDate)) {
+    throw new Error('账单日期格式不正确');
+  }
   const record: CompletionRecord = {
     id: uuidv4(),
     userId: input.userId,
     sourceType: input.sourceType,
     sourceId: input.sourceId,
     instanceId: input.instanceId || null,
-    completedAt: input.completedAt || now,
-    note: input.note?.trim() || null,
-    billDate: input.billDate || null,
+    completedAt,
+    note,
+    amountCents,
+    currency,
+    billDate,
     reopenedAt: null,
     createdAt: now,
     updatedAt: now,
   };
   run(
     `INSERT INTO completion_records
-      (id, user_id, source_type, source_id, instance_id, completed_at, note, bill_date, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, user_id, source_type, source_id, instance_id, completed_at, note, amount_cents, currency, bill_date, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [record.id, record.userId, record.sourceType, record.sourceId, record.instanceId, record.completedAt,
-      record.note, record.billDate, now, now],
+      record.note, record.amountCents, record.currency, record.billDate, now, now],
   );
   addAudit(record.userId, 'completion', record.id, 'completed', record.note || undefined);
   return record;
@@ -321,17 +347,30 @@ export function getCompletion(id: string, userId: string): CompletionRecord | nu
 export function updateCompletion(
   id: string,
   userId: string,
-  changes: Partial<Pick<CompletionRecord, 'completedAt' | 'note' | 'billDate'>>,
+  changes: Partial<Pick<CompletionRecord, 'completedAt' | 'note' | 'amountCents' | 'currency' | 'billDate'>>,
 ): CompletionRecord | null {
   const current = getCompletion(id, userId);
   if (!current) return null;
   const completedAt = changes.completedAt ?? current.completedAt;
+  if (completedAt.length > 64 || Number.isNaN(Date.parse(completedAt))) throw new Error('完成时间格式不正确');
   const note = changes.note === undefined ? current.note : changes.note?.trim() || null;
+  if (note && note.length > 10_000) throw new Error('完成备注不能超过 10000 个字符');
+  const amountCents = changes.amountCents === undefined
+    ? current.amountCents
+    : changes.amountCents == null ? null : Math.round(changes.amountCents);
+  if (amountCents != null && (!Number.isFinite(amountCents) || amountCents < 0)) throw new Error('金额必须是有效的非负数');
+  const currency = changes.currency === undefined
+    ? current.currency
+    : String(changes.currency || 'CNY').toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error('币种代码必须是 3 位字母');
   const billDate = changes.billDate === undefined ? current.billDate : changes.billDate || null;
+  if (billDate && !isValidDateOnly(billDate)) {
+    throw new Error('账单日期格式不正确');
+  }
   const now = nowIso();
   run(
-    'UPDATE completion_records SET completed_at = ?, note = ?, bill_date = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-    [completedAt, note, billDate, now, id, userId],
+    'UPDATE completion_records SET completed_at = ?, note = ?, amount_cents = ?, currency = ?, bill_date = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+    [completedAt, note, amountCents, currency, billDate, now, id, userId],
   );
   addAudit(userId, 'completion', id, 'updated');
   return getCompletion(id, userId);
@@ -582,6 +621,25 @@ export function exportUserActivity(userId: string): Record<string, unknown[]> {
 
 export function exportActivityDb(): Buffer {
   return Buffer.from(db.export());
+}
+
+export function deleteUserActivity(userId: string): {
+  attachments: AttachmentRecord[];
+  completions: number;
+  notifications: number;
+  aiImports: number;
+  processedEmails: number;
+} {
+  const attachments = listAttachments(userId);
+  db.run('DELETE FROM attachments WHERE user_id = ?', [userId]);
+  const completions = run('DELETE FROM completion_records WHERE user_id = ?', [userId]);
+  const notifications = run('DELETE FROM notification_deliveries WHERE user_id = ?', [userId]);
+  const aiImports = run('DELETE FROM ai_imports WHERE user_id = ?', [userId]);
+  run('DELETE FROM email_import_settings WHERE user_id = ?', [userId]);
+  const processedEmails = run('DELETE FROM processed_emails WHERE user_id = ?', [userId]);
+  run('DELETE FROM activity_audit_logs WHERE user_id = ?', [userId]);
+  persist();
+  return { attachments, completions, notifications, aiImports, processedEmails };
 }
 
 export function restoreUserActivity(

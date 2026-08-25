@@ -24,10 +24,10 @@ export async function processCycleReminders(log?: (message: string, error?: unkn
         dedupePrefix: `cycle:${reminder.cycle.id}:${reminder.reminderType}:${reminder.scheduledDate}`,
       });
       markDeliverySent(reminder.id);
-      log?.(`周期提醒已进入通知队列: ${reminder.task.name} / ${reminder.reminderType}`);
+      log?.(`周期提醒已进入通知队列: ${reminder.reminderType}`);
     } catch (error) {
       markDeliveryFailed(reminder.id, error instanceof Error ? error.message : String(error));
-      log?.(`周期提醒发送失败: ${reminder.task.name} / ${reminder.reminderType}`, error);
+      log?.(`周期提醒发送失败: ${reminder.reminderType}`, error);
     }
   }
 }

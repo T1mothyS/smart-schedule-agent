@@ -1,0 +1,27 @@
+appId: com.smartschedule.agent
+productName: 智能日程表
+electronVersion: 43.4.1
+npmRebuild: false
+directories:
+  output: ../release
+files:
+  - "**/*"
+win:
+  icon: schedule.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+mac:
+  icon: schedule.png
+  target:
+    - dmg
+linux:
+  icon: schedule.png
+  target:
+    - AppImage
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

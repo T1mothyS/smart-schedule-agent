@@ -4,12 +4,14 @@
 node_modules/
 dist/
 dist-electron/
+dist-desktop/
 release/
 data/*.db
 data/*.db-*
 data/attachments/
 data/backups/
 data/migration-backups/
+data/pre-fix-backups/
 *.log
 *.zip
 

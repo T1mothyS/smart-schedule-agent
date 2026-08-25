@@ -6,6 +6,8 @@ export interface CreditCardConfig {
   paymentDay: number;
   paymentMonthOffset: 0 | 1;
   reminderOffsets: number[];
+  reminderTime: string;
+  priority: 'high' | 'medium' | 'low';
 }
 
 export interface SimConfig {
@@ -16,6 +18,8 @@ export interface SimConfig {
   lastOperationDate: string;
   actionGuide: string;
   reminderOffsets: number[];
+  reminderTime: string;
+  priority: 'high' | 'medium' | 'low';
 }
 
 export type RecurrenceRule =
@@ -58,6 +62,7 @@ export interface ReminderTask {
   updatedAt: string;
   currentCycle: ReminderCycle | null;
   nextReminderDate: string | null;
+  lastReminderDate: string | null;
   sentReminderTypes: string[];
 }
 

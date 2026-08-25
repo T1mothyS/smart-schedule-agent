@@ -11,6 +11,19 @@ import {
 import { AgendaView } from './calendar/AgendaView';
 import { ScheduleContextMenu } from './calendar/ScheduleContextMenu';
 import { getCalendarDayMeta } from './calendar/calendarMeta';
+import { getScheduleCategory, SCHEDULE_CATEGORIES, SCHEDULE_CATEGORY_COLORS, SCHEDULE_CATEGORY_LABELS } from '../utils/scheduleCategories';
+import {
+  buildConflictKey,
+  CONFLICT_DISMISS_TTL_MS,
+  getConflictExpiryAt,
+  getConflictPairs,
+  getConflictingScheduleIds,
+  groupConflictingSchedulesByTimeSlot,
+  isConflictDismissed,
+  isTimedConflictSchedule,
+  parseScheduleDate,
+  type ConflictDismissal,
+} from '../utils/scheduleConflict';
 
 // ==================== 类型定义 ====================
 
@@ -40,19 +53,8 @@ type ViewMode = 'agenda' | 'day' | 'week' | 'month';
 
 // ==================== 常量 ====================
 
-const CATEGORY_COLORS: Record<string, string> = {
-  travel: '#F59E0B',
-  work: '#3B82F6',
-  social: '#EC4899',
-  life: '#10B981',
-  health: '#EF4444',
-  other: '#6B7280',
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-  travel: '出行', work: '工作', social: '社交',
-  life: '生活', health: '健康', other: '其他',
-};
+const CATEGORY_COLORS = SCHEDULE_CATEGORY_COLORS;
+const CATEGORY_LABELS = SCHEDULE_CATEGORY_LABELS;
 
 // 优先级颜色系统
 const PRIORITY_COLORS: Record<string, { bg: string; border: string; dot: string; label: string }> = {
@@ -71,6 +73,7 @@ const PRIORITY_COLORS_DARK: Record<string, { bg: string; border: string; dot: st
 const WEEK_DAYS = ['一', '二', '三', '四', '五', '六', '日'];
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
 const WEEKDAY_LABELS = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
+const CONFLICT_DISMISS_STORAGE_KEY = 'calendar-conflict-dismissal-v1';
 
 // ==================== 工具函数 ====================
 
@@ -112,13 +115,7 @@ function startOfDay(date: Date): Date {
 
 // 解析日期字符串为本地时区的 Date 对象
 function parseLocalDate(dateStr: string): Date {
-  const [datePart, timePart] = dateStr.split('T');
-  const [year, month, day] = datePart.split('-').map(Number);
-  if (timePart) {
-    const [hour, minute, second] = timePart.split(':').map(Number);
-    return new Date(year, month - 1, day, hour || 0, minute || 0, second || 0);
-  }
-  return new Date(year, month - 1, day);
+  return parseScheduleDate(dateStr);
 }
 
 function getWeekStart(date: Date): Date {
@@ -171,84 +168,6 @@ function getDurationMinutes(s: Schedule): number {
 function getScheduleColor(schedule: Schedule): string {
   const pColors = PRIORITY_COLORS[schedule.priority] || PRIORITY_COLORS.medium;
   return pColors.dot;
-}
-
-// ==================== 冲突检测工具函数 ====================
-
-// 检测日程之间的冲突（两个日程时间重叠）
-function checkScheduleConflict(a: Schedule, b: Schedule): boolean {
-  // 跳过全天事件
-  if (a.all_day || b.all_day) return false;
-  const aStart = parseLocalDate(a.start_time).getTime();
-  const aEnd = a.end_time ? parseLocalDate(a.end_time).getTime() : aStart + 3600000;
-  const bStart = parseLocalDate(b.start_time).getTime();
-  const bEnd = b.end_time ? parseLocalDate(b.end_time).getTime() : bStart + 3600000;
-  // 冲突：a开始 < b结束 且 a结束 > b开始
-  return aStart < bEnd && aEnd > bStart;
-}
-
-// 获取一天的冲突日程组（返回冲突日程ID集合）
-// includeTodos: 是否包括待办任务（用于排版，但不提示冲突）
-function getConflictingScheduleIds(schedules: Schedule[], includeTodos = false): Set<string> {
-  const conflictingIds = new Set<string>();
-  // 所有非全天日程都参与冲突检测（包括已完成）
-  const filter = includeTodos
-    ? (s: Schedule) => !s.all_day
-    : (s: Schedule) => !s.all_day && s.type === 'event';
-  const activeSchedules = schedules.filter(filter);
-  
-  for (let i = 0; i < activeSchedules.length; i++) {
-    for (let j = i + 1; j < activeSchedules.length; j++) {
-      if (checkScheduleConflict(activeSchedules[i], activeSchedules[j])) {
-        conflictingIds.add(activeSchedules[i].id);
-        conflictingIds.add(activeSchedules[j].id);
-      }
-    }
-  }
-  return conflictingIds;
-}
-
-// 按时间段分组冲突日程（用于从左到右排列）
-// includeTodos: 是否包括待办任务（用于排版，但不提示冲突）
-function groupConflictingSchedulesByTimeSlot(schedules: Schedule[], includeTodos = false): Map<string, Schedule[]> {
-  const conflictMap = new Map<string, Schedule[]>();
-  // 所有非全天日程都参与冲突检测（包括已完成）
-  const filter = includeTodos
-    ? (s: Schedule) => !s.all_day
-    : (s: Schedule) => !s.all_day && s.type === 'event';
-  const activeSchedules = schedules.filter(filter);
-  
-  // 检测所有冲突对
-  const conflictPairs: [Schedule, Schedule][] = [];
-  for (let i = 0; i < activeSchedules.length; i++) {
-    for (let j = i + 1; j < activeSchedules.length; j++) {
-      if (checkScheduleConflict(activeSchedules[i], activeSchedules[j])) {
-        conflictPairs.push([activeSchedules[i], activeSchedules[j]]);
-      }
-    }
-  }
-  
-  // 按开始时间排序
-  conflictPairs.sort((a, b) => new Date(a[0].start_time).getTime() - new Date(b[0].start_time).getTime());
-  
-  // 分组（同一时间段的冲突日程放一起）
-  const processedIds = new Set<string>();
-  conflictPairs.forEach(([a, b]) => {
-    const key = `${Math.floor(new Date(a.start_time).getTime() / 60000)}_${Math.floor(new Date(b.start_time).getTime() / 60000)}`;
-    if (!conflictMap.has(key)) {
-      conflictMap.set(key, []);
-    }
-    if (!processedIds.has(a.id)) {
-      conflictMap.get(key)!.push(a);
-      processedIds.add(a.id);
-    }
-    if (!processedIds.has(b.id)) {
-      conflictMap.get(key)!.push(b);
-      processedIds.add(b.id);
-    }
-  });
-  
-  return conflictMap;
 }
 
 // 获取日程在冲突组中的位置索引
@@ -557,20 +476,18 @@ function ReminderPicker({
 
 // ==================== 日程表单（新增 / 编辑通用） ====================
 
-function ScheduleFormModal({
+export function ScheduleFormModal({
   defaultDate,
   editingSchedule,
-  calendarColor,
+  defaultCategory,
   onSave,
   onClose,
-  activeCalendars,
 }: {
   defaultDate: Date;
   editingSchedule?: Schedule | null;
-  calendarColor?: string;
+  defaultCategory?: string;
   onSave: (s: Partial<Schedule>) => void;
   onClose: () => void;
-  activeCalendars?: Array<{ id: string; name: string; color: string; icon: string }>;
 }) {
   const isEditing = !!editingSchedule;
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -589,11 +506,11 @@ function ScheduleFormModal({
       : '10:00',
     all_day: editingSchedule?.all_day || false,
     location: editingSchedule?.location || '',
-    category: editingSchedule?.category || 'other',
+    category: editingSchedule?.category || (SCHEDULE_CATEGORIES.some(category => category.id === defaultCategory) ? defaultCategory! : 'other'),
     priority: (editingSchedule?.priority || 'medium') as 'high' | 'medium' | 'low',
     notes: editingSchedule?.notes || '',
     reminder: (editingSchedule?.reminders?.[0] || '') as string,
-    calendarId: editingSchedule?.calendar_id || (activeCalendars?.[0]?.id || 'personal'),
+    calendarId: editingSchedule?.calendar_id || 'personal',
     // 循环设置
     repeat: (editingSchedule?.is_repeated ? (editingSchedule as any).repeat_rule || 'daily' : '') as '' | 'daily' | 'weekly' | 'monthly',
   });
@@ -638,14 +555,11 @@ function ScheduleFormModal({
   const priorityConfig = PRIORITY_COLORS[form.priority];
 
   // 类别选项
-  const categoryOptions = [
-    { key: 'travel', label: '出行', color: CATEGORY_COLORS.travel },
-    { key: 'work', label: '工作', color: CATEGORY_COLORS.work },
-    { key: 'social', label: '社交', color: CATEGORY_COLORS.social },
-    { key: 'life', label: '生活', color: CATEGORY_COLORS.life },
-    { key: 'health', label: '健康', color: CATEGORY_COLORS.health },
-    { key: 'other', label: '其他', color: CATEGORY_COLORS.other },
-  ];
+  const categoryOptions = SCHEDULE_CATEGORIES.map(category => ({
+    key: category.id,
+    label: category.name,
+    color: category.color,
+  }));
 
   return (
     <div
@@ -847,7 +761,7 @@ function ScheduleFormModal({
           >
             <div>
               <strong>高级选项</strong>
-              <span>地点、分类、优先级、日程表、备注与重复</span>
+              <span>地点、分类、优先级、备注与重复</span>
             </div>
             <ChevronDown size={17} />
           </button>
@@ -916,32 +830,6 @@ function ScheduleFormModal({
               ))}
             </div>
           </div>
-
-          {/* 日程表来源 - 与左侧同步 */}
-          {activeCalendars && activeCalendars.length > 0 && (
-            <div>
-              <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
-                所属日程表
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {activeCalendars.map(cal => (
-                  <button
-                    key={cal.id}
-                    onClick={() => set('calendarId', cal.id)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center gap-1"
-                    style={{
-                      backgroundColor: form.calendarId === cal.id ? cal.color + '20' : 'var(--td-bg-color-component)',
-                      color: form.calendarId === cal.id ? cal.color : 'var(--td-text-color-secondary)',
-                      border: `1.5px solid ${form.calendarId === cal.id ? cal.color : 'transparent'}`,
-                    }}
-                  >
-                    <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />
-                    <span>{cal.name}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
 
           {/* 备注 */}
           <textarea
@@ -1021,7 +909,6 @@ function ScheduleChip({
   onDelete,
   onEdit,
   onClick,
-  calendar,
 }: {
   schedule: Schedule;
   compact?: boolean;
@@ -1029,10 +916,10 @@ function ScheduleChip({
   onDelete?: (id: string) => void;
   onEdit?: (s: Schedule) => void;
   onClick?: (s: Schedule) => void;
-  calendar?: { id: string; name: string; color: string; icon: string };
 }) {
   const pColor = PRIORITY_COLORS[schedule.priority] || PRIORITY_COLORS.medium;
-  const catColor = CATEGORY_COLORS[schedule.category] || '#6B7280';
+  const category = getScheduleCategory(schedule.category);
+  const catColor = category.color;
 
   if (compact) {
     return (
@@ -1057,19 +944,9 @@ function ScheduleChip({
         {schedule.type === 'todo' && <span className="opacity-70">◇</span>}
         {!schedule.all_day && <span className="opacity-70">{formatTime(schedule.start_time)}</span>}
         <span className="schedule-title-primary schedule-title-compact truncate">{schedule.title}</span>
-        {/* 日程来源标签 */}
-        {calendar && (
-          <span
-            className="rounded px-0.5 flex-shrink-0"
-            style={{ 
-              border: `1px solid ${calendar.color}`,
-              fontSize: '8px',
-            }}
-            title={calendar.name}
-          >
-            <span className="calendar-color-dot" style={{ backgroundColor: calendar.color }} />
-          </span>
-        )}
+        <span className="rounded px-0.5 flex-shrink-0" style={{ border: `1px solid ${category.color}`, fontSize: '8px' }} title={category.name}>
+          <span className="calendar-color-dot" style={{ backgroundColor: category.color }} />
+        </span>
       </div>
     );
   }
@@ -1126,19 +1003,6 @@ function ScheduleChip({
             >
               {schedule.type === 'todo' ? '待办' : CATEGORY_LABELS[schedule.category]}
             </span>
-            {/* 日程来源标签 */}
-            {calendar && (
-              <span
-                className="text-xs px-1 py-0.5 rounded flex-shrink-0 font-medium"
-                style={{ 
-                  border: `1px solid ${calendar.color}`,
-                  color: calendar.color,
-                }}
-                title={calendar.name}
-              >
-                <span className="calendar-color-dot" style={{ backgroundColor: calendar.color }} />{calendar.name}
-              </span>
-            )}
           </div>
           <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
@@ -1198,7 +1062,7 @@ function ScheduleChip({
 // ==================== 日视图 ====================
 
 function DayView({
-  date, schedules, onToggle, onDelete, onEdit, onClickSchedule, conflictingIds, conflictMap, activeCalendars,
+  date, schedules, onToggle, onDelete, onEdit, onClickSchedule, conflictingIds, conflictMap,
 }: {
   date: Date;
   schedules: Schedule[];
@@ -1208,7 +1072,6 @@ function DayView({
   onClickSchedule: (s: Schedule) => void;
   conflictingIds?: Set<string>;
   conflictMap?: Map<string, Schedule[]>;
-  activeCalendars?: Array<{ id: string; name: string; color: string; icon: string }>;
 }) {
   const daySchedules = schedules.filter(s => isSameDay(parseLocalDate(s.start_time), date));
   // 分离全天事件和待办任务
@@ -1353,6 +1216,7 @@ function DayView({
                     {hourTodos.map(s => {
                       const pColor = PRIORITY_COLORS[s.priority] || PRIORITY_COLORS.medium;
                       const catColor = CATEGORY_COLORS[s.category] || '#6B7280';
+                      const isConflicting = conflictingIds?.has(s.id) === true;
                       
                       return (
                         <div
@@ -1363,19 +1227,22 @@ function DayView({
                           style={{
                             height: '44px',
                             backgroundColor: s.is_completed ? 'var(--td-bg-color-component)' : `${pColor.dot}15`,
-                            border: s.is_completed ? `1px solid var(--td-component-stroke)` : `1px dashed ${pColor.dot}50`,
-                            borderLeft: s.is_completed ? `3px solid #9CA3AF` : `3px dashed ${pColor.dot}`,
+                            border: isConflicting ? '1px solid #EF4444' : s.is_completed ? `1px solid var(--td-component-stroke)` : `1px dashed ${pColor.dot}50`,
+                            borderLeft: isConflicting ? '3px solid #EF4444' : s.is_completed ? `3px solid #9CA3AF` : `3px dashed ${pColor.dot}`,
                             opacity: s.is_completed ? 0.65 : 1,
                           }}
                           onClick={() => onClickSchedule(s)}
                         >
                           <div className="flex items-center gap-0.5">
-                            <button
-                              onClick={e => { e.stopPropagation(); onToggle(s.id); }}
-                              className="opacity-60 hover:opacity-100 flex-shrink-0"
-                            >
-                              {s.is_completed ? <CheckCircle2 className="w-3 h-3 text-green-500" /> : <Circle className="w-3 h-3" style={{ color: pColor.dot }} />}
-                            </button>
+                            <span className="schedule-status-slot compact">
+                              <button
+                                onClick={e => { e.stopPropagation(); onToggle(s.id); }}
+                                className="opacity-60 hover:opacity-100 flex-shrink-0"
+                              >
+                                {s.is_completed ? <CheckCircle2 className="w-3 h-3 text-green-500" /> : <Circle className="w-3 h-3" style={{ color: pColor.dot }} />}
+                              </button>
+                              {isConflicting && <span title="时间冲突" aria-label="时间冲突" className="schedule-conflict-dot">!</span>}
+                            </span>
                             <span className="schedule-title-primary schedule-title-compact truncate" style={{ color: s.is_completed ? '#9CA3AF' : pColor.dot }}>
                               {s.title}
                             </span>
@@ -1478,27 +1345,6 @@ function DayView({
                                 </span>
                               )}
                               <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
-                              {/* 日程来源标签 - 窄卡片时隐藏 */}
-                              {!isNarrowCard && (
-                                (() => {
-                                  const cal = activeCalendars?.find(c => c.id === s.calendar_id);
-                                  if (!cal) return null;
-                                  return (
-                                    <span
-                                      className="px-1 py-0 rounded flex-shrink-0 font-medium"
-                                      style={{ 
-                                        backgroundColor: 'transparent', 
-                                        color: '#666',
-                                        border: `1px solid ${cal.color}`,
-                                        fontSize: '7px',
-                                      }}
-                                      title={cal.name}
-                                    >
-                                      <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />{cal.name.slice(0, 2)}
-                                    </span>
-                                  );
-                                })()
-                              )}
                             </div>
                             {/* 日视图显示地点 - 窄卡片时隐藏 */}
                             {!isNarrowCard && s.location && (
@@ -1554,7 +1400,7 @@ function DayView({
 // ==================== 周视图 ====================
 
 function WeekView({
-  weekStart, schedules, onToggle, onDelete, onEdit, onClickSchedule, onClickDay, conflictingIds, activeCalendars, showLunar, showFestivals,
+  weekStart, schedules, onToggle, onDelete, onEdit, onClickSchedule, onClickDay, conflictingIds, showLunar, showFestivals,
 }: {
   weekStart: Date;
   schedules: Schedule[];
@@ -1564,7 +1410,6 @@ function WeekView({
   onClickSchedule: (s: Schedule) => void;
   onClickDay: (d: Date) => void;
   conflictingIds?: Set<string>;
-  activeCalendars?: Array<{ id: string; name: string; color: string; icon: string }>;
   showLunar?: boolean;
   showFestivals?: boolean;
 }) {
@@ -1712,12 +1557,15 @@ function WeekView({
                   }}
                   onClick={() => onClickSchedule(s)}
                 >
-                  <button
-                    onClick={e => { e.stopPropagation(); onToggle(s.id); }}
-                    className="flex-shrink-0"
-                  >
-                    {s.is_completed ? <CheckCircle2 className="w-3 h-3" /> : <Circle className="w-3 h-3" />}
-                  </button>
+                  <span className="schedule-status-slot compact">
+                    <button
+                      onClick={e => { e.stopPropagation(); onToggle(s.id); }}
+                      className="flex-shrink-0"
+                    >
+                      {s.is_completed ? <CheckCircle2 className="w-3 h-3" /> : <Circle className="w-3 h-3" />}
+                    </button>
+                    {conflictingIds?.has(s.id) && <span title="时间冲突" aria-label="时间冲突" className="schedule-conflict-dot">!</span>}
+                  </span>
                   <span className="opacity-70">{formatTime(s.start_time)}</span>
                   <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
                 </div>
@@ -1760,7 +1608,7 @@ function WeekView({
                           key={s.id}
                           data-schedule-id={s.id}
                           tabIndex={0}
-                          className="rounded px-1 py-0.5 cursor-pointer text-xs truncate mb-0.5 flex items-center gap-1"
+                          className="relative rounded px-1 py-0.5 cursor-pointer text-xs truncate mb-0.5 flex items-center gap-1"
                           style={{
                             backgroundColor: `${pColor.dot}22`,
                             borderLeft: `2.5px solid ${pColor.dot}`,
@@ -1769,34 +1617,15 @@ function WeekView({
                           }}
                           onClick={() => onClickSchedule(s)}
                         >
-                          {/* 冲突标记 */}
-                          {isConflicting && (
-                            <span 
-                              className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full flex-shrink-0 text-white font-bold text-xs"
-                              style={{ backgroundColor: '#EF4444', fontSize: '9px' }}
-                              title="时间冲突"
-                            >
-                              !
-                            </span>
-                          )}
+                          {isConflicting && <span className="schedule-conflict-overlay" title="时间冲突" aria-label="时间冲突">!</span>}
                           <span className="opacity-70">{formatTime(s.start_time)}</span><span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
-                          {/* 日程来源标签 */}
-                          {(() => {
-                            const cal = activeCalendars?.find(c => c.id === s.calendar_id);
-                            if (!cal) return null;
-                            return (
-                              <span
-                                className="rounded px-0.5 flex-shrink-0"
-                                style={{ 
-                                  border: `1px solid ${cal.color}`,
-                                  fontSize: '7px',
-                                }}
-                                title={cal.name}
-                              >
-                                <span className="calendar-color-dot" style={{ backgroundColor: cal.color }} />
-                              </span>
-                            );
-                          })()}
+                          <span
+                            className="rounded px-0.5 flex-shrink-0"
+                            style={{ border: `1px solid ${getScheduleCategory(s.category).color}`, fontSize: '7px' }}
+                            title={getScheduleCategory(s.category).name}
+                          >
+                            <span className="calendar-color-dot" style={{ backgroundColor: getScheduleCategory(s.category).color }} />
+                          </span>
                         </div>
                       );
                     })}
@@ -1814,7 +1643,7 @@ function WeekView({
 // ==================== 月视图 ====================
 
 function MonthView({
-  year, month, schedules, selectedDate, onSelectDate, onToggle, onClickSchedule, conflictingIds, activeCalendars, showLunar, showFestivals,
+  year, month, schedules, selectedDate, onSelectDate, onToggle, onClickSchedule, conflictingIds, showLunar, showFestivals,
 }: {
   year: number;
   month: number;
@@ -1824,7 +1653,6 @@ function MonthView({
   onToggle?: (id: string) => void;
   onClickSchedule?: (s: Schedule) => void;
   conflictingIds?: Set<string>;
-  activeCalendars?: Array<{ id: string; name: string; color: string; icon: string }>;
   showLunar?: boolean;
   showFestivals?: boolean;
 }) {
@@ -1945,28 +1773,35 @@ function MonthView({
               {/* 有时间待办区域 */}
               {timedTodos.length > 0 && (
                 <div className="mb-1">
-                  {timedTodos.slice(0, 1).map(s => (
-                    <div
-                      key={s.id}
-                      data-schedule-id={s.id}
-                      tabIndex={0}
-                      className="rounded px-1 py-0.5 text-xs truncate cursor-pointer flex items-center gap-0.5"
-                      style={{
-                        backgroundColor: `${PRIORITY_COLORS[s.priority]?.dot || '#F59E0B'}15`,
-                        color: PRIORITY_COLORS[s.priority]?.dot || '#F59E0B',
-                      }}
-                      onClick={event => { event.stopPropagation(); onClickSchedule?.(s); }}
-                    >
-                      <button
-                        onClick={e => { e.stopPropagation(); onToggle?.(s.id); }}
-                        className="flex-shrink-0"
+                  {timedTodos.slice(0, 1).map(s => {
+                    const isConflicting = conflictingIds?.has(s.id) === true;
+                    return (
+                      <div
+                        key={s.id}
+                        data-schedule-id={s.id}
+                        tabIndex={0}
+                        className="rounded px-1 py-0.5 text-xs truncate cursor-pointer flex items-center gap-0.5"
+                        style={{
+                          backgroundColor: `${PRIORITY_COLORS[s.priority]?.dot || '#F59E0B'}15`,
+                          color: PRIORITY_COLORS[s.priority]?.dot || '#F59E0B',
+                          border: isConflicting ? '1px solid #EF4444' : '1px solid transparent',
+                        }}
+                        onClick={event => { event.stopPropagation(); onClickSchedule?.(s); }}
                       >
-                        {s.is_completed ? <CheckCircle2 className="w-2.5 h-2.5" /> : <Circle className="w-2.5 h-2.5" />}
-                      </button>
-                      <span className="opacity-70 text-[10px]">{formatTime(s.start_time)}</span>
-                      <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
-                    </div>
-                  ))}
+                        <span className="schedule-status-slot compact">
+                          <button
+                            onClick={e => { e.stopPropagation(); onToggle?.(s.id); }}
+                            className="flex-shrink-0"
+                          >
+                            {s.is_completed ? <CheckCircle2 className="w-2.5 h-2.5" /> : <Circle className="w-2.5 h-2.5" />}
+                          </button>
+                          {isConflicting && <span title="时间冲突" aria-label="时间冲突" className="schedule-conflict-dot">!</span>}
+                        </span>
+                        <span className="opacity-70 text-[10px]">{formatTime(s.start_time)}</span>
+                        <span className="schedule-title-primary schedule-title-compact truncate">{s.title}</span>
+                      </div>
+                    );
+                  })}
                   {timedTodos.length > 1 && (
                     <div className="text-xs px-1" style={{ color: 'var(--td-text-color-placeholder)' }}>
                       +{timedTodos.length - 1}个待办
@@ -1980,18 +1815,9 @@ function MonthView({
                 {timedEvents.slice(0, maxShow).map(s => {
                   const isConflicting = conflictingIds?.has(s.id);
                   return (
-                    <div key={s.id} className="flex items-center gap-0.5">
-                      {/* 冲突标记 */}
-                      {isConflicting && (
-                        <span 
-                          className="inline-flex items-center justify-center w-3 h-3 rounded-full flex-shrink-0 text-white font-bold text-xs"
-                          style={{ backgroundColor: '#EF4444', fontSize: '8px' }}
-                          title="时间冲突"
-                        >
-                          !
-                        </span>
-                      )}
-                      <ScheduleChip schedule={s} compact onClick={onClickSchedule} calendar={activeCalendars?.find(c => c.id === s.calendar_id)} />
+                    <div key={s.id} className="calendar-chip-conflict-slot flex items-center gap-0.5">
+                      {isConflicting && <span className="schedule-conflict-overlay" title="时间冲突" aria-label="时间冲突">!</span>}
+                      <ScheduleChip schedule={s} compact onClick={onClickSchedule} />
                     </div>
                   );
                 })}
@@ -2011,20 +1837,18 @@ function MonthView({
 
 // ==================== 详情弹窗 ====================
 
-function ScheduleDetailModal({
+export function ScheduleDetailModal({
   schedule,
   onClose,
   onDelete,
   onToggle,
   onEdit,
-  calendar,
 }: {
   schedule: Schedule;
   onClose: () => void;
   onDelete: (id: string) => void;
   onToggle: (id: string) => void;
   onEdit: (s: Schedule) => void;
-  calendar?: { id: string; name: string; color: string; icon: string };
 }) {
   const pColor = PRIORITY_COLORS[schedule.priority] || PRIORITY_COLORS.medium;
   const catColor = CATEGORY_COLORS[schedule.category] || '#6B7280';
@@ -2058,19 +1882,6 @@ function ScheduleDetailModal({
             </div>
             <h3 className="schedule-title-primary text-base font-bold">
               {schedule.title}
-              {/* 日程来源标签 */}
-              {calendar && (
-                <span
-                  className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium"
-                  style={{ 
-                    border: `1px solid ${calendar.color}`,
-                    color: calendar.color,
-                  }}
-                  title={calendar.name}
-                >
-                  <span className="calendar-color-dot" style={{ backgroundColor: calendar.color }} /> {calendar.name}
-                </span>
-              )}
             </h3>
           </div>
           <button onClick={onClose} className="p-1 rounded-lg hover:opacity-60 ml-2">
@@ -2136,7 +1947,7 @@ function ScheduleDetailModal({
 
 export interface CalendarViewProps {
   refreshKey?: number;
-  activeCalendarIds?: string[];
+  activeCategoryIds?: string[];
   openScheduleRequest?: { id: string; nonce: number } | null;
   openScheduleMenuRequest?: { id: string; x: number; y: number; nonce: number } | null;
   selectedDate?: Date;
@@ -2149,7 +1960,7 @@ export interface CalendarViewProps {
 
 export function CalendarView({
   refreshKey = 0,
-  activeCalendarIds,
+  activeCategoryIds,
   openScheduleRequest,
   openScheduleMenuRequest,
   selectedDate,
@@ -2162,7 +1973,6 @@ export function CalendarView({
   const [viewMode, setViewMode] = useState<ViewMode>('agenda');
   const [currentDate, setCurrentDate] = useState<Date>(selectedDate || new Date());
   const [schedules, setSchedules] = useState<Schedule[]>([]);
-  const [calendars, setCalendars] = useState<Array<{ id: string; name: string; color: string; icon: string }>>([]);
   const [loading, setLoading] = useState(false);
   const { authHeaders } = useAuth();
   const [showAddModal, setShowAddModal] = useState(false);
@@ -2170,6 +1980,8 @@ export function CalendarView({
   const [editingSchedule, setEditingSchedule] = useState<Schedule | null>(null);
   const [notifPermission, setNotifPermission] = useState<string>('default');
   const [contextMenu, setContextMenu] = useState<{ schedule: Schedule; x: number; y: number } | null>(null);
+  const [conflictClock, setConflictClock] = useState(() => Date.now());
+  const [dismissedConflict, setDismissedConflict] = useState<ConflictDismissal | null>(null);
 
   const updateCurrentDate = useCallback((date: Date) => {
     const next = new Date(date);
@@ -2181,14 +1993,6 @@ export function CalendarView({
     if (!selectedDate || isSameDay(selectedDate, currentDate)) return;
     setCurrentDate(new Date(selectedDate));
   }, [selectedDate?.getTime()]);
-
-  // 获取日程表列表
-  useEffect(() => {
-    fetch('/api/calendars', { headers: authHeaders() })
-      .then(r => r.json())
-      .then(d => setCalendars(d.calendars || []))
-      .catch(() => {});
-  }, []);
 
   // 请求通知权限
   useEffect(() => {
@@ -2273,14 +2077,76 @@ export function CalendarView({
     return () => { cancelled = true; };
   }, [openScheduleMenuRequest?.nonce]);
 
-  // 根据激活的日程表过滤
-  const visibleSchedules = ((activeCalendarIds && activeCalendarIds.length > 0)
-    ? schedules.filter(s => activeCalendarIds.includes(s.calendar_id))
+  // 根据左侧六类日程分类过滤
+  const visibleSchedules = ((activeCategoryIds && activeCategoryIds.length > 0)
+    ? schedules.filter(s => activeCategoryIds.includes(s.category))
     : schedules).filter(schedule => !schedule.is_unscheduled);
+
+  // 冲突提醒覆盖当前仍有重叠的日程/待办；已经结束的历史冲突由 getConflictPairs 自动排除。
+  // 这样跨午夜仍在持续的日程也能参与“今天”的冲突判断。
+  const bannerConflictSchedules = visibleSchedules.filter(isTimedConflictSchedule);
+  const bannerConflictPairs = getConflictPairs(bannerConflictSchedules, conflictClock);
+  const bannerConflictingIds = new Set<string>();
+  bannerConflictPairs.forEach(({ a, b }) => {
+    bannerConflictingIds.add(a.id);
+    bannerConflictingIds.add(b.id);
+  });
+  const bannerConflictKey = buildConflictKey(bannerConflictSchedules, bannerConflictingIds);
+  const bannerConflictExpiryAt = getConflictExpiryAt(bannerConflictPairs);
+
+  useEffect(() => {
+    if (!bannerConflictExpiryAt) return;
+    const remaining = bannerConflictExpiryAt - Date.now();
+    const delay = Math.min(Math.max(50, remaining + 50), 24 * 60 * 60 * 1000);
+    const timer = window.setTimeout(() => setConflictClock(Date.now()), delay);
+    return () => window.clearTimeout(timer);
+  }, [bannerConflictExpiryAt, bannerConflictKey]);
+
+  useEffect(() => {
+    if (!bannerConflictKey) {
+      setDismissedConflict(null);
+      return;
+    }
+    try {
+      const stored = window.localStorage.getItem(CONFLICT_DISMISS_STORAGE_KEY);
+      const parsed = stored ? JSON.parse(stored) as ConflictDismissal : null;
+      if (parsed && isConflictDismissed(parsed, bannerConflictKey)) {
+        setDismissedConflict(parsed);
+      } else {
+        setDismissedConflict(null);
+        if (parsed) window.localStorage.removeItem(CONFLICT_DISMISS_STORAGE_KEY);
+      }
+    } catch {
+      setDismissedConflict(null);
+    }
+  }, [bannerConflictKey]);
+
+  useEffect(() => {
+    if (!bannerConflictKey || !dismissedConflict || dismissedConflict.key !== bannerConflictKey) return;
+    const remaining = CONFLICT_DISMISS_TTL_MS - (Date.now() - dismissedConflict.dismissedAt);
+    if (remaining <= 0) {
+      setDismissedConflict(null);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setDismissedConflict(null);
+      try { window.localStorage.removeItem(CONFLICT_DISMISS_STORAGE_KEY); } catch {}
+    }, remaining + 50);
+    return () => window.clearTimeout(timer);
+  }, [bannerConflictKey, dismissedConflict]);
+
+  const showConflictBanner = bannerConflictPairs.length > 0 && !isConflictDismissed(dismissedConflict, bannerConflictKey);
+
+  const dismissConflict = () => {
+    if (!bannerConflictKey) return;
+    const dismissal: ConflictDismissal = { key: bannerConflictKey, dismissedAt: Date.now() };
+    setDismissedConflict(dismissal);
+    try { window.localStorage.setItem(CONFLICT_DISMISS_STORAGE_KEY, JSON.stringify(dismissal)); } catch {}
+  };
 
   const navigatePrev = () => {
     const d = new Date(currentDate);
-    if (viewMode === 'day') d.setDate(d.getDate() - 1);
+    if (viewMode === 'agenda' || viewMode === 'day') d.setDate(d.getDate() - 1);
     else if (viewMode === 'week') d.setDate(d.getDate() - 7);
     else { d.setMonth(d.getMonth() - 1); d.setDate(1); }
     updateCurrentDate(d);
@@ -2289,7 +2155,7 @@ export function CalendarView({
 
   const navigateNext = () => {
     const d = new Date(currentDate);
-    if (viewMode === 'day') d.setDate(d.getDate() + 1);
+    if (viewMode === 'agenda' || viewMode === 'day') d.setDate(d.getDate() + 1);
     else if (viewMode === 'week') d.setDate(d.getDate() + 7);
     else { d.setMonth(d.getMonth() + 1); d.setDate(1); }
     updateCurrentDate(d);
@@ -2352,7 +2218,7 @@ export function CalendarView({
         headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
           ...form,
-          calendar_id: (activeCalendarIds && activeCalendarIds.length > 0) ? activeCalendarIds[0] : 'personal',
+          calendar_id: 'personal',
           category: form.category || 'other',
           priority: form.priority || 'medium',
           is_completed: false,
@@ -2549,54 +2415,38 @@ export function CalendarView({
 
       {/* 冲突检测警告 + 通知权限提示 */}
       {(() => {
-        // 检测当前视图日期的冲突（包括已完成日程）
-        const viewDateSchedules = visibleSchedules.filter(
-          s => !s.all_day && s.type === 'event' && isSameDay(new Date(s.start_time), currentDate)
-        );
-        
-        const conflictingIds = getConflictingScheduleIds(viewDateSchedules);
-        const conflictMap = groupConflictingSchedulesByTimeSlot(viewDateSchedules);
-        
-        // 收集冲突详情用于Banner显示
-        const conflictDetails: { a: Schedule; b: Schedule }[] = [];
-        const processed = new Set<string>();
-        viewDateSchedules.forEach(s => {
-          if (conflictingIds.has(s.id)) {
-            viewDateSchedules.forEach(other => {
-              if (other.id !== s.id && !processed.has(other.id) && checkScheduleConflict(s, other)) {
-                conflictDetails.push({ a: s, b: other });
-                processed.add(s.id);
-                processed.add(other.id);
-              }
-            });
-          }
-        });
-
         const showNotifBanner = notifPermission === 'default' && visibleSchedules.some(s => s.reminders?.length > 0);
-        
-        const hasConflicts = conflictingIds.size > 0;
 
         return (
           <>
             {/* 冲突Banner提醒 */}
-            {hasConflicts && (
+            {showConflictBanner && (
               <div
-                className="flex items-center gap-2 px-4 py-2 flex-shrink-0 text-xs"
+                className="calendar-conflict-banner flex items-center gap-2 px-4 py-2 flex-shrink-0 text-xs"
                 style={{ backgroundColor: '#FEF2F2', borderBottom: '1px solid #FECACA', color: '#DC2626' }}
               >
                 <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                 <span className="font-semibold">
-                  {conflictingIds.size} 个日程存在时间冲突
+                  {bannerConflictingIds.size} 个事项存在时间冲突
                 </span>
                 <span style={{ color: '#991B1B' }}>
-                  {conflictDetails.slice(0, 3).map(({ a, b }, i) => (
+                  {bannerConflictPairs.slice(0, 3).map(({ a, b }, i) => (
                     <span key={i}>
                       「{a.title}」与「{b.title}」
-                      {i < Math.min(conflictDetails.length, 3) - 1 && '、'}
+                      {i < Math.min(bannerConflictPairs.length, 3) - 1 && '、'}
                     </span>
                   ))}
-                  {conflictDetails.length > 3 && ` 等${conflictDetails.length}组`}
+                  {bannerConflictPairs.length > 3 && ` 等${bannerConflictPairs.length}组`}
                 </span>
+                <button
+                  type="button"
+                  className="calendar-conflict-dismiss"
+                  onClick={dismissConflict}
+                  aria-label="关闭冲突提醒"
+                  title="关闭提醒，4小时后可再次出现"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
             )}
             {showNotifBanner && (
@@ -2634,48 +2484,47 @@ export function CalendarView({
                 <AgendaView
                   schedules={visibleSchedules}
                   selectedDate={currentDate}
-                  calendars={calendars}
                   showLunar={showLunar}
                   showFestivals={showFestivals}
                   onSelectDate={updateCurrentDate}
                   onOpenSchedule={setSelectedSchedule}
                   onToggleSchedule={handleToggle}
                   onOpenContextMenu={(schedule, x, y) => setContextMenu({ schedule, x, y })}
+                  conflictingIds={bannerConflictingIds}
                 />
               );
             }
 
-            // 计算当前视图日期范围的冲突信息（统一计算，供所有视图使用）
-            // 日视图：包括待办任务用于冲突排版（但不提示冲突）
+            // 计算当前视图日期范围的冲突信息（事件和待办统一处理）
             const getViewDateSchedules = () => {
               if (viewMode === 'day') {
                 return visibleSchedules.filter(
-                  s => !s.all_day && (s.type === 'event' || s.type === 'todo') && isSameDay(new Date(s.start_time), currentDate)
+                  s => isTimedConflictSchedule(s) && isSameDay(parseLocalDate(s.start_time), currentDate)
                 );
               } else if (viewMode === 'week') {
                 const weekStart = getWeekStart(currentDate);
                 const weekEnd = new Date(weekStart);
                 weekEnd.setDate(weekEnd.getDate() + 7);
                 return visibleSchedules.filter(
-                  s => !s.all_day && s.type === 'event' &&
-                    new Date(s.start_time) >= weekStart && new Date(s.start_time) < weekEnd
+                  s => isTimedConflictSchedule(s) &&
+                    parseLocalDate(s.start_time) >= weekStart && parseLocalDate(s.start_time) < weekEnd
                 );
               } else {
                 // 月视图：整月的日程
                 const year = currentDate.getFullYear();
                 const month = currentDate.getMonth();
                 return visibleSchedules.filter(
-                  s => !s.all_day && s.type === 'event' &&
-                    new Date(s.start_time).getFullYear() === year &&
-                    new Date(s.start_time).getMonth() === month
+                  s => isTimedConflictSchedule(s) &&
+                    parseLocalDate(s.start_time).getFullYear() === year &&
+                    parseLocalDate(s.start_time).getMonth() === month
                 );
               }
             };
             
             const viewDateSchedules = getViewDateSchedules();
             // 日视图冲突检测包括待办任务（用于排版）
-            const conflictingIds = getConflictingScheduleIds(viewDateSchedules, viewMode === 'day');
-            const conflictMap = groupConflictingSchedulesByTimeSlot(viewDateSchedules, viewMode === 'day');
+            const conflictingIds = getConflictingScheduleIds(viewDateSchedules, conflictClock);
+            const conflictMap = groupConflictingSchedulesByTimeSlot(viewDateSchedules, conflictClock);
             
             if (viewMode === 'day') {
               return (
@@ -2688,7 +2537,6 @@ export function CalendarView({
                   onClickSchedule={setSelectedSchedule}
                   conflictingIds={conflictingIds}
                   conflictMap={conflictMap}
-                  activeCalendars={calendars}
                 />
               );
             } else if (viewMode === 'week') {
@@ -2702,7 +2550,6 @@ export function CalendarView({
                   onClickSchedule={setSelectedSchedule}
                   onClickDay={handleWeekDayClick}
                   conflictingIds={conflictingIds}
-                  activeCalendars={calendars}
                   showLunar={showLunar}
                   showFestivals={showFestivals}
                 />
@@ -2718,7 +2565,6 @@ export function CalendarView({
                   onToggle={handleToggle}
                   onClickSchedule={setSelectedSchedule}
                   conflictingIds={conflictingIds}
-                  activeCalendars={calendars}
                   showLunar={showLunar}
                   showFestivals={showFestivals}
                 />
@@ -2734,7 +2580,7 @@ export function CalendarView({
           defaultDate={currentDate}
           onSave={handleAddSchedule}
           onClose={() => setShowAddModal(false)}
-          activeCalendars={calendars.filter(c => activeCalendarIds?.includes(c.id))}
+          defaultCategory={activeCategoryIds?.length === 1 ? activeCategoryIds[0] : undefined}
         />
       )}
 
@@ -2745,7 +2591,6 @@ export function CalendarView({
           editingSchedule={editingSchedule}
           onSave={handleEditSchedule}
           onClose={() => setEditingSchedule(null)}
-          activeCalendars={calendars.filter(c => activeCalendarIds?.includes(c.id))}
         />
       )}
 
@@ -2757,7 +2602,6 @@ export function CalendarView({
           onDelete={handleDelete}
           onToggle={handleToggle}
           onEdit={(s) => { setSelectedSchedule(null); setEditingSchedule(s); }}
-          calendar={calendars.find(c => c.id === selectedSchedule.calendar_id)}
         />
       )}
 

@@ -32,8 +32,7 @@ function result(status: EmailImportPollStatus, message: string, values: Partial<
 }
 
 export async function pollEmailImports(options: {
-  model: string;
-  resolveApiKey: (userId: string) => string | null;
+  resolveCredential: (userId: string) => { apiKey: string; baseUrl?: string | null; model: string } | null;
   onlyUserId?: string;
   log?: (message: string, error?: unknown) => void;
 }): Promise<EmailImportPollResult> {
@@ -82,8 +81,8 @@ export async function pollEmailImports(options: {
             }
             continue;
           }
-          const apiKey = options.resolveApiKey(userId);
-          if (!apiKey) throw new Error('当前用户未配置 AI API Key');
+          const credential = options.resolveCredential(userId);
+          if (!credential) throw new Error('当前用户未配置 AI API Key');
 
           const images = (parsed.attachments || [])
             .filter(item => ['image/jpeg', 'image/png', 'image/webp'].includes(item.contentType) && item.content.length <= 8 * 1024 * 1024)
@@ -94,7 +93,7 @@ export async function pollEmailImports(options: {
               base64: item.content.toString('base64'),
             }));
           const text = [parsed.subject, parsed.text].filter(Boolean).join('\n\n').slice(0, 20_000);
-          const draft = await parseAiImport({ text, images, apiKey, model: options.model });
+          const draft = await parseAiImport({ text, images, ...credential });
           const record = activityStore.createAiImport({ userId, sourceType: 'email', inputText: text, draft });
           activityStore.markEmailProcessed(messageId, userId, record.id);
           processed++;
@@ -103,7 +102,7 @@ export async function pollEmailImports(options: {
           } catch {
             options.log?.('草稿已经生成，但暂时无法将原邮件更新为已读状态');
           }
-          options.log?.('邮箱导入草稿已生成: ' + draft.title);
+          options.log?.('邮箱导入草稿已生成');
         } catch (error) {
           failed++;
           lastError = error instanceof Error ? error.message : String(error);

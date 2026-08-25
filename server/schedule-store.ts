@@ -231,11 +231,22 @@ export interface Category {
   name: string;
   color: string;
   icon: string;
+  created_at?: string;
+}
+
+const SCHEDULE_CATEGORY_IDS = new Set(['travel', 'work', 'social', 'life', 'health', 'other']);
+
+function normaliseScheduleCategory(value: unknown): string {
+  const category = String(value || 'other');
+  return SCHEDULE_CATEGORY_IDS.has(category) ? category : 'other';
 }
 
 function rowToSchedule(row: any): Schedule {
+  const hasLegacyUnscheduledPlaceholder = row.is_unscheduled === 1 && row.end_time === row.start_time;
   return {
     ...row,
+    // 旧版表要求 end_time 非空；空字符串和旧版挂起待办占位值都恢复为“未指定结束时间”。
+    end_time: row.end_time && !hasLegacyUnscheduledPlaceholder ? row.end_time : undefined,
     user_id: row.user_id || 'default',
     calendar_id: row.calendar_id || 'personal',
     all_day: row.all_day === 1,
@@ -244,7 +255,8 @@ function rowToSchedule(row: any): Schedule {
     is_repeated: row.is_repeated === 1,
     is_high_risk: row.is_high_risk === 1,
     reminders: row.reminders ? JSON.parse(row.reminders) : [],
-    type: row.type || 'event'
+    type: row.type || 'event',
+    category: normaliseScheduleCategory(row.category),
   };
 }
 
@@ -309,10 +321,8 @@ export function createSchedule(schedule: Omit<Schedule, 'created_at' | 'updated_
     || calendars.find(item => item.is_default)?.id
     || requestedCalendar;
 
-  // 【关键修复】全天日程的 end_time 不能为 null，设置为 start_time（同一天结束）
-  const endTimeValue = isUnscheduled
-    ? null
-    : safeNull(schedule.end_time) || (schedule.all_day ? startTimeValue : null);
+  // 兼容旧数据库：end_time 仍可能是 NOT NULL；缺少结束时间时用空字符串作内部占位。
+  const endTimeValue = safeNull(schedule.end_time) || '';
 
   run(
     `INSERT INTO schedules (id, user_id, calendar_id, type, title, description, start_time, end_time, all_day, is_unscheduled, location, notes, category, priority, is_completed, is_repeated, repeat_rule, reminders, is_high_risk, created_at, updated_at)
@@ -330,7 +340,7 @@ export function createSchedule(schedule: Omit<Schedule, 'created_at' | 'updated_
       isUnscheduled ? 1 : 0,
       safeNull(schedule.location),
       safeNull(schedule.notes),
-      schedule.category,
+      normaliseScheduleCategory(schedule.category),
       schedule.priority,
       schedule.is_completed ? 1 : 0,
       schedule.is_repeated ? 1 : 0,
@@ -363,14 +373,22 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
   const merged = { ...existing, ...updates, updated_at: now };
   const isUnscheduled = merged.is_unscheduled === true;
   const startTimeValue = merged.start_time || now;
+  let calendarId = existing.calendar_id;
+  if (updates.calendar_id !== undefined) {
+    const requested = String(updates.calendar_id || '');
+    const calendars = getAllCalendars(existing.user_id);
+    const calendar = calendars.find(item => item.id === requested)
+      || calendars.find(item => item.id.endsWith(':' + requested));
+    if (!calendar) throw new Error('目标日历不存在或无权访问');
+    calendarId = calendar.id;
+  }
 
-  // 【关键修复】全天日程的 end_time 不能为 null
-  const endTimeValue = isUnscheduled
-    ? null
-    : safeNull(merged.end_time) || (merged.all_day ? startTimeValue : null);
+  // 兼容旧数据库：缺少结束时间时继续保存内部占位值。
+  const endTimeValue = safeNull(merged.end_time) || '';
 
   run(
     `UPDATE schedules SET
+      calendar_id = ?,
       type = ?,
       title = ?,
       description = ?,
@@ -386,9 +404,11 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
       is_repeated = ?,
       repeat_rule = ?,
       reminders = ?,
+      is_high_risk = ?,
       updated_at = ?
     WHERE id = ?`,
     [
+      calendarId,
       merged.type || 'event',
       merged.title,
       safeNull(merged.description),
@@ -398,12 +418,13 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
       isUnscheduled ? 1 : 0,
       safeNull(merged.location),
       safeNull(merged.notes),
-      merged.category,
+      normaliseScheduleCategory(merged.category),
       merged.priority,
       merged.is_completed ? 1 : 0,
       merged.is_repeated ? 1 : 0,
       safeNull(merged.repeat_rule),
       JSON.stringify(merged.reminders || []),
+      merged.is_high_risk ? 1 : 0,
       now,
       id
     ]
@@ -536,6 +557,13 @@ export function deleteSchedulesByUser(userId: string): number {
   return result.changes;
 }
 
+export function deleteUserScheduleData(userId: string): { schedules: number; calendars: number; categories: number } {
+  const schedules = run('DELETE FROM schedules WHERE user_id = ?', [userId]).changes;
+  const calendars = run('DELETE FROM calendars WHERE user_id = ?', [userId]).changes;
+  const categories = run('DELETE FROM categories WHERE user_id = ?', [userId]).changes;
+  return { schedules, calendars, categories };
+}
+
 export function exportUserScheduleData(userId: string): { schedules: Schedule[]; calendars: Calendar[]; categories: Category[] } {
   return { schedules: getAllSchedules(userId), calendars: getAllCalendars(userId), categories: getAllCategories(userId) };
 }
@@ -580,12 +608,13 @@ export function restoreUserScheduleData(
   for (const schedule of data.schedules || []) {
     const id = String(schedule.id);
     if (!id || queryOne('SELECT id FROM schedules WHERE id = ?', [id])) continue;
+    const startTime = schedule.start_time || new Date().toISOString();
     db.run(
       `INSERT INTO schedules (id, user_id, calendar_id, type, title, description, start_time, end_time, all_day, is_unscheduled, location, notes, category,
        priority, is_completed, is_repeated, repeat_rule, reminders, is_high_risk, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-       [id, userId, schedule.calendar_id, schedule.type, schedule.title, schedule.description || null, schedule.start_time || new Date().toISOString(),
-         schedule.is_unscheduled ? null : (schedule.end_time || null), schedule.all_day ? 1 : 0, schedule.is_unscheduled ? 1 : 0, schedule.location || null, schedule.notes || null,
+       [id, userId, schedule.calendar_id, schedule.type, schedule.title, schedule.description || null, startTime,
+         safeNull(schedule.end_time) || '', schedule.all_day ? 1 : 0, schedule.is_unscheduled ? 1 : 0, schedule.location || null, schedule.notes || null,
         schedule.category || 'other', schedule.priority || 'medium', schedule.is_completed ? 1 : 0, schedule.is_repeated ? 1 : 0,
         schedule.repeat_rule || null, JSON.stringify(schedule.reminders || []), schedule.is_high_risk ? 1 : 0,
         schedule.created_at || new Date().toISOString(), schedule.updated_at || new Date().toISOString()],

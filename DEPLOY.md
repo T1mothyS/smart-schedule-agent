@@ -16,17 +16,17 @@ tar -czf /root/ai-calendar-data-before-upgrade-$(date +%F-%H%M).tar.gz data .env
 
 ## 2. 运行环境
 
-阿里云旧 Node.js 14 镜像不满足要求，请升级到 Node.js 20：
+阿里云旧 Node.js 版本不满足当前工具链要求，请升级到 Node.js 22：
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs nginx
 sudo npm install -g pm2
 node --version
 npm --version
 ```
 
-期望 Node.js 显示 `v20.x`。
+期望 Node.js 至少显示 `v22.12.0`。
 
 ## 3. 安装、配置与构建
 
@@ -46,7 +46,9 @@ mkdir -p data
 - `ADMIN_INVITE_CODE`、`USER_INVITE_CODE`；
 - 官方 163 邮箱的 `SMTP_PASS` 授权码；
 - `CODEBUDDY_API_KEY`；
-- 正式域名对应的 `APP_URL`。
+- 正式域名对应的 `APP_URL`；
+- `APP_ENV=production`、`TRUST_PROXY_HOPS=1`；
+- 唯一一个 PM2 worker 设置 `BACKGROUND_JOBS_ENABLED=true`。本地或额外实例必须保持 `false`，否则会重复发送提醒和日报。
 
 邮箱自动识别是可选能力。启用时再填写 `IMAP_PASS`，并在 163 邮箱后台开启 IMAP/SMTP；SMTP 和 IMAP 可以使用同一官方邮箱，但授权码应按邮箱后台实际配置为准。
 

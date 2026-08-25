@@ -17,6 +17,8 @@ export interface CreditCardConfig {
   paymentDay: number;
   paymentMonthOffset: 0 | 1;
   reminderOffsets: number[];
+  reminderTime: string;
+  priority: 'high' | 'medium' | 'low';
 }
 
 export interface SimConfig {
@@ -27,6 +29,8 @@ export interface SimConfig {
   lastOperationDate: string;
   actionGuide: string;
   reminderOffsets: number[];
+  reminderTime: string;
+  priority: 'high' | 'medium' | 'low';
 }
 
 export type RecurrenceRule =
@@ -87,6 +91,7 @@ export interface ReminderDelivery {
 export interface ReminderTaskSummary extends ReminderTask {
   currentCycle: ReminderCycle | null;
   nextReminderDate: string | null;
+  lastReminderDate: string | null;
   sentReminderTypes: string[];
 }
 
@@ -144,17 +149,24 @@ function monthDate(year: number, monthIndex: number, day: number): string {
   return dateFromParts(year, monthIndex + 1, Math.min(Math.max(day, 1), lastDay));
 }
 
+function creditCardCycleDates(year: number, monthIndex: number, config: CreditCardConfig): { periodStart: string; dueDate: string } {
+  const periodStart = monthDate(year, monthIndex, config.statementDay);
+  const dueMonth = monthIndex + config.paymentMonthOffset;
+  const dueDate = monthDate(year + Math.floor(dueMonth / 12), dueMonth % 12, config.paymentDay);
+  return { periodStart, dueDate };
+}
+
 export function clampDateForMonth(year: number, month: number, day: number): string {
   return monthDate(year, month - 1, day);
 }
 
-export function todayInTimezone(timezone = process.env.APP_TIMEZONE || 'Asia/Shanghai'): string {
+export function todayInTimezone(timezone = process.env.APP_TIMEZONE || 'Asia/Shanghai', date = new Date()): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).formatToParts(new Date());
+  }).formatToParts(date);
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return dateFromParts(Number(values.year), Number(values.month), Number(values.day));
 }
@@ -233,7 +245,9 @@ export async function initReminderDb(): Promise<void> {
   db = fs.existsSync(DB_PATH) ? new SQL.Database(fs.readFileSync(DB_PATH)) : new SQL.Database();
 
   const taskSql = queryOne<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reminder_tasks'");
-  if (taskSql?.sql && !taskSql.sql.includes("'generic'")) {
+  // 只有旧表仍带不包含 generic 的 CHECK 约束时才迁移。新版表不再依赖
+  // sqlite_master 字符串作为版本哨兵，避免每次启动重复备份和重建。
+  if (taskSql?.sql && /\bCHECK\b/i.test(taskSql.sql) && !taskSql.sql.includes("'generic'")) {
     const backupDir = path.join(DATA_DIR, 'migration-backups');
     fs.mkdirSync(backupDir, { recursive: true });
     fs.copyFileSync(DB_PATH, path.join(backupDir, 'reminder-generic-' + new Date().toISOString().replace(/[:.]/g, '-') + '.db'));
@@ -241,7 +255,7 @@ export async function initReminderDb(): Promise<void> {
       CREATE TABLE reminder_tasks_v2 (
         id TEXT PRIMARY KEY,
         user_id TEXT NOT NULL,
-        type TEXT NOT NULL,
+        type TEXT NOT NULL CHECK (type IN ('credit_card', 'sim', 'generic')),
         name TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
         timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
@@ -259,7 +273,7 @@ export async function initReminderDb(): Promise<void> {
     CREATE TABLE IF NOT EXISTS reminder_tasks (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
-      type TEXT NOT NULL,
+      type TEXT NOT NULL CHECK (type IN ('credit_card', 'sim', 'generic')),
       name TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
@@ -414,6 +428,31 @@ function resetOpenGenericCycle(task: ReminderTask, cycle: ReminderCycle, dueDate
   return updated;
 }
 
+function refreshOpenCycleDeliveries(task: ReminderTask, cycle: ReminderCycle): void {
+  if (cycle.status === 'completed' || cycle.status === 'cancelled') return;
+  run(
+    `DELETE FROM reminder_deliveries
+     WHERE cycle_id = ? AND status IN ('pending', 'failed')`,
+    [cycle.id],
+  );
+  for (const item of cycleReminderDates(task, cycle)) createDelivery(task, cycle, item.type, item.date);
+}
+
+function resetOpenCreditCardCycle(task: ReminderTask, cycle: ReminderCycle, config: CreditCardConfig): ReminderCycle {
+  const [year, month] = cycle.periodStart.split('-').map(Number);
+  const dates = creditCardCycleDates(year, month - 1, config);
+  const status: ReminderCycleStatus = dates.dueDate < todayInTimezone(task.timezone) ? 'expired' : 'pending';
+  const updatedAt = nowIso();
+  run('DELETE FROM reminder_deliveries WHERE cycle_id = ?', [cycle.id]);
+  run(
+    'UPDATE reminder_cycles SET period_start = ?, due_date = ?, status = ?, updated_at = ? WHERE id = ?',
+    [dates.periodStart, dates.dueDate, status, updatedAt, cycle.id],
+  );
+  const updated = { ...cycle, periodStart: dates.periodStart, dueDate: dates.dueDate, status, updatedAt };
+  for (const item of cycleReminderDates(task, updated)) createDelivery(task, updated, item.type, item.date);
+  return updated;
+}
+
 function ensureCurrentCycle(task: ReminderTask, today = todayInTimezone(task.timezone)): ReminderCycle {
   const latest = queryOne<any>(
     `SELECT * FROM reminder_cycles WHERE task_id = ? ORDER BY created_at DESC LIMIT 1`,
@@ -453,10 +492,8 @@ function ensureCurrentCycle(task: ReminderTask, today = todayInTimezone(task.tim
 
   const card = task.config as CreditCardConfig;
   const [year, month] = today.split('-').map(Number);
-  const periodStart = monthDate(year, month - 1, card.statementDay);
-  const dueMonth = month - 1 + card.paymentMonthOffset;
-  const dueDate = monthDate(year + Math.floor(dueMonth / 12), dueMonth % 12, card.paymentDay);
-  return createCycle(task, `${year}-${String(month).padStart(2, '0')}`, periodStart, dueDate);
+  const dates = creditCardCycleDates(year, month - 1, card);
+  return createCycle(task, `${year}-${String(month).padStart(2, '0')}`, dates.periodStart, dates.dueDate);
 }
 
 export function listReminderTasks(userId: string): ReminderTaskSummary[] {
@@ -474,10 +511,17 @@ export function listReminderTasks(userId: string): ReminderTaskSummary[] {
        ORDER BY scheduled_date ASC LIMIT 1`,
       [cycle.id, todayInTimezone(task.timezone)],
     );
+    const last = queryOne<{ scheduled_date: string; sent_at: string | null }>(
+      `SELECT scheduled_date, sent_at FROM reminder_deliveries
+       WHERE task_id = ? AND status = 'sent'
+       ORDER BY COALESCE(sent_at, scheduled_date) DESC LIMIT 1`,
+      [task.id],
+    );
     return {
       ...task,
       currentCycle: cycle,
       nextReminderDate: next?.scheduled_date || null,
+      lastReminderDate: last?.sent_at?.slice(0, 10) || last?.scheduled_date || null,
       sentReminderTypes: deliveries.map(item => item.reminderType),
     };
   });
@@ -534,16 +578,24 @@ export function updateReminderTask(
     `UPDATE reminder_tasks SET name = ?, enabled = ?, timezone = ?, config = ?, updated_at = ? WHERE id = ?`,
     [next.name, next.enabled ? 1 : 0, next.timezone, JSON.stringify(next.config), next.updatedAt, id],
   );
-  if (updates.config && next.type === 'generic') {
+  if (updates.config) {
     const latest = queryOne<any>(
       `SELECT * FROM reminder_cycles WHERE task_id = ? ORDER BY created_at DESC LIMIT 1`,
       [id],
     );
     if (latest) {
       const cycle = rowToCycle(latest);
-      if (cycle.status === 'pending' || cycle.status === 'expired') {
+      if (next.type === 'generic' && (cycle.status === 'pending' || cycle.status === 'expired')) {
         const anchorDate = (next.config as GenericReminderConfig).rule.anchorDate;
-        if (cycle.dueDate !== anchorDate) resetOpenGenericCycle(next, cycle, anchorDate);
+        if (cycle.dueDate !== anchorDate) {
+          resetOpenGenericCycle(next, cycle, anchorDate);
+        } else {
+          refreshOpenCycleDeliveries(next, cycle);
+        }
+      } else if (next.type === 'credit_card' && (cycle.status === 'pending' || cycle.status === 'expired')) {
+        resetOpenCreditCardCycle(next, cycle, next.config as CreditCardConfig);
+      } else if (cycle.status === 'pending' || cycle.status === 'expired') {
+        refreshOpenCycleDeliveries(next, cycle);
       }
     }
   }

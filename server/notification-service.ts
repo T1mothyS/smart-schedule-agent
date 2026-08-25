@@ -1,13 +1,13 @@
 import * as activityStore from './activity-store.js';
 import * as db from './db.js';
-import { sendQueuedNotificationEmail } from './email-service.js';
+import { sendDailyReminderEmail, sendQueuedNotificationEmail } from './email-service.js';
 
 function timeInTimezone(date: Date, timezone: string): string {
   const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: timezone,
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    hourCycle: 'h23',
   }).formatToParts(date);
   const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
   return `${values.hour}:${values.minute}`;
@@ -72,13 +72,14 @@ export async function processNotificationQueue(log?: (message: string, error?: u
       if (item.channel === 'email') {
         const email = db.getReminderEmail(item.userId);
         if (!email) throw new Error('用户没有可用的提醒邮箱');
-        await sendQueuedNotificationEmail(email, item.title, item.body);
+        if (item.kind === 'daily_digest') await sendDailyReminderEmail(email, item.userId, item.sourceId);
+        else await sendQueuedNotificationEmail(email, item.title, item.body);
       }
       activityStore.markNotificationSent(item.id);
-      log?.(`通知发送成功: ${item.channel} / ${item.title}`);
+      log?.(`通知发送成功: ${item.channel}`);
     } catch (error) {
       activityStore.markNotificationFailed(item.id, error instanceof Error ? error.message : String(error));
-      log?.(`通知发送失败: ${item.channel} / ${item.title}`, error);
+      log?.(`通知发送失败: ${item.channel}`, error);
     }
   }
 }

@@ -1,7 +1,15 @@
 import { ReactNode } from 'react';
-import { BellRing, Bot, CalendarDays, LayoutDashboard, Moon, Settings, Shield, Sparkles, Sun } from 'lucide-react';
+import { BellRing, Moon, Settings, Shield, Sun } from 'lucide-react';
 
 type Section = 'today' | 'schedule' | 'assistant' | 'reminders' | 'import';
+
+const productNavItems: Array<{ section: Section; label: string; icon: string }> = [
+  { section: 'today', label: '今日', icon: '/navigation-icons/today.png' },
+  { section: 'schedule', label: '日程', icon: '/navigation-icons/schedule.png' },
+  { section: 'reminders', label: '周期提醒', icon: '/navigation-icons/reminders.png' },
+  { section: 'import', label: '智能导入', icon: '/navigation-icons/import.png' },
+  { section: 'assistant', label: 'AI 助手', icon: '/navigation-icons/assistant.png' },
+];
 
 interface AppShellProps {
   activeSection: Section;
@@ -38,36 +46,17 @@ export function AppShell({
         </div>
 
         <nav className="product-nav" aria-label="产品导航">
-          <button
-            className={activeSection === 'today' ? 'product-nav-item active' : 'product-nav-item'}
-            onClick={() => onSectionChange('today')}
-          >
-            <LayoutDashboard size={14} /> 今日
-          </button>
-          <button
-            className={activeSection === 'schedule' ? 'product-nav-item active' : 'product-nav-item'}
-            onClick={() => onSectionChange('schedule')}
-          >
-            <CalendarDays size={14} /> 日程
-          </button>
-          <button
-            className={activeSection === 'reminders' ? 'product-nav-item active' : 'product-nav-item'}
-            onClick={() => onSectionChange('reminders')}
-          >
-            <BellRing size={14} /> 周期提醒
-          </button>
-          <button
-            className={activeSection === 'import' ? 'product-nav-item active' : 'product-nav-item'}
-            onClick={() => onSectionChange('import')}
-          >
-            <Sparkles size={14} /> 智能导入
-          </button>
-          <button
-            className={activeSection === 'assistant' ? 'product-nav-item ai-assistant-nav active' : 'product-nav-item ai-assistant-nav'}
-            onClick={() => onSectionChange('assistant')}
-          >
-            <Bot size={14} /> AI 助手
-          </button>
+          {productNavItems.map(item => (
+            <button
+              key={item.section}
+              className={`product-nav-item icon-only${item.section === 'assistant' ? ' ai-assistant-nav' : ''}${activeSection === item.section ? ' active' : ''}`}
+              onClick={() => onSectionChange(item.section)}
+              title={item.label}
+              aria-label={item.label}
+            >
+              <img className="product-nav-image" src={item.icon} alt="" aria-hidden="true" />
+            </button>
+          ))}
         </nav>
 
         <div className="topbar-actions">

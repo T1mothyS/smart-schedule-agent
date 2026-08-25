@@ -1,9 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Routes, Route, useNavigate, useParams, useLocation, Navigate } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { useTheme } from './hooks/useTheme';
-import { useSessions } from './hooks/useSessions';
-import { useModels } from './hooks/useModels';
-import { useChat } from './hooks/useChat';
 import { useAuth } from './hooks/useAuth';
 import { CalendarDays, Check, MoonStar, PartyPopper, X } from 'lucide-react';
 
@@ -18,6 +15,7 @@ import { AppShell } from './components/AppShell';
 import { ActionCenterPage } from './components/ActionCenterPage';
 import { AiImportPage } from './components/AiImportPage';
 import { MiniMonthCalendar } from './components/calendar/MiniMonthCalendar';
+import { SCHEDULE_CATEGORIES } from './utils/scheduleCategories';
 
 // ==================== 日程主页（三栏布局） ====================
 
@@ -27,8 +25,6 @@ interface SchedulePageProps {
   onOpenSettings?: () => void;
   onOpenAdmin?: () => void;
   onOpenReminders?: () => void;
-  models?: any[];
-  onRefreshModels?: () => void;
   user?: { id: string; email: string; role: 'admin' | 'user' } | null;
   onLogout?: () => void;
 }
@@ -44,7 +40,7 @@ function AiAssistantPage() {
 }
 
 function SchedulePage({ user }: SchedulePageProps) {
-  const [activeCalendarIds, setActiveCalendarIds] = useState<string[]>([]);
+  const [activeCategoryIds, setActiveCategoryIds] = useState<string[]>(() => SCHEDULE_CATEGORIES.map(category => category.id));
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [isRailOpen, setIsRailOpen] = useState(false);
   const railCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -65,7 +61,7 @@ function SchedulePage({ user }: SchedulePageProps) {
   }, [isRailOpen]);
 
   const handleActiveChange = useCallback((ids: string[]) => {
-    setActiveCalendarIds(ids);
+    setActiveCategoryIds(ids);
   }, []);
 
   const updateSystemCalendar = (type: 'lunar' | 'festival') => {
@@ -115,10 +111,10 @@ function SchedulePage({ user }: SchedulePageProps) {
               />
             </div>
             <div
-              className="schedule-rail-module schedule-rail-calendars"
+              className="schedule-rail-module schedule-rail-categories"
             >
               <ScheduleSidebar
-                activeCalendarIds={activeCalendarIds}
+                activeCategoryIds={activeCategoryIds}
                 onActiveChange={handleActiveChange}
               />
             </div>
@@ -156,7 +152,7 @@ function SchedulePage({ user }: SchedulePageProps) {
         <section className="schedule-calendar-shell">
           <main className="schedule-calendar-main">
             <CalendarView
-              activeCalendarIds={activeCalendarIds}
+              activeCategoryIds={activeCategoryIds}
               openScheduleRequest={openScheduleRequest}
               openScheduleMenuRequest={openScheduleMenuRequest}
               selectedDate={selectedDate}
@@ -233,7 +229,6 @@ function App() {
 
 function AppContent() {
   const { theme, toggleTheme } = useTheme();
-  const { models, fetchModels } = useModels();
   const { user, logout } = useAuth();
   const [showSettings, setShowSettings] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
@@ -264,11 +259,7 @@ function AppContent() {
         onLogout={logout}
       >
         {activeSection === 'today' ? <ActionCenterPage /> : activeSection === 'schedule' ? (
-          <SchedulePage
-            models={models}
-            onRefreshModels={fetchModels}
-            user={user}
-          />
+          <SchedulePage user={user} />
         ) : activeSection === 'assistant' ? <AiAssistantPage /> : activeSection === 'reminders' ? (
           <ReminderPage />
         ) : <AiImportPage />}
