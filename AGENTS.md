@@ -631,6 +631,15 @@ Git 历史显示项目已经经历了基础架构、日历工作区、AI 客户�
 - 未自动处理：当前账号此前失败的两项日程没有自动补录，避免重复或误写；旧对话历史仍保留当时“1 项成功、2 项失败”的事实记录。未验证生产服务器、真实 SMTP/IMAP、生产部署和多设备同步。
 - Git/部署状态：本轮修改准备在 `feature/calendar-improvements-audit-fixes` 建立本地 checkpoint；不 push、不部署，不修改生产服务器。
 
+### 2026-08-25：最新版本 GitHub 发布与生产预部署回滚
+
+- 用户意图：将当前 `feature/calendar-improvements-audit-fixes` 的最新版本发布到 GitHub，并按低内存服务器流程部署上线。
+- 本地验证：`npm run typecheck`、`npm test`（58 项）、使用临时 `ELECTRON_APP_URL=https://gotimothy.online/today` 的 `npm run build` 和官方 registry 的 `npm audit --audit-level=high`（0 vulnerabilities）均通过；生产构建产物已生成并校验。
+- GitHub：提交 `126c3892224218d38b8474a3200a17f5f780227e` 已推送到 `origin/feature/calendar-improvements-audit-fixes`；发布包 120 个条目，排除项为 0，SHA256 为 `0f2e8192557009dd0bc38dc00f427700eb4090f1d0aa2584618231926a9589fa`。
+- 生产准备：预检发现服务器仍为 Node `20.20.2` 且依赖清单与当前版本不同；已保留旧 apt Node 20，另安装并校验官方 Node `22.23.2`，在独立暂存目录用 `registry.npmmirror.com` 完成 `npm ci`、服务器侧类型检查和 58 项测试。官方 npm registry 在该服务器多次出现 tarball `ETIMEDOUT/ECONNRESET`，未据此修改锁文件。
+- 部署结果：新目录原子切换后，应用因生产 `.env` 中历史邀请码长度不足 12 个字符而触发既有安全闸门，未监听 3000；没有修改或输出任何密钥。已自动回滚到提交 `0547280fc0b7fd63e41880cb4d49aa701852a100`，PM2 为 `online`，本机与公网根路径 `/api/health` 均返回 200，旧版本数据、`.env`、回滚目录和升级前备份均保留；失败新版本保存在 `/root/smart-schedule-agent.failed-workspace-20260825-201304-startup`。
+- 待办与边界：需要在明确提供或授权生成两个互不相同且至少 12 字符的生产邀请码后，才能不绕过安全校验重新启动 `126c389`；在此之前不得把生产 `.env` 改为 development、关闭校验或猜测新凭据。GitHub 已更新，生产最新版本尚未上线。
+
 ## 13. 参考文件
 
 - README.md：当前能力、配置、目录、常见问题和资源边界；
