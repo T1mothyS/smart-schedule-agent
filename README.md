@@ -522,6 +522,10 @@ data/*.db + data/attachments
 pm2 restart smart-schedule --update-env
 ```
 
+### 启动时报“生产邀请码至少需要 12 个字符”
+
+这表示当前进程被识别为生产环境。运行本地开发服务时，应在 `.env` 中使用 `APP_ENV=development` 和 `APP_URL=http://localhost:5173/today`，修改后重启后端。生产服务器必须继续使用 `APP_ENV=production`，并为管理员和普通用户分别配置不同且至少 12 个字符的邀请码；不要通过关闭生产校验来绕过报错。
+
 ### 为什么没有收到提醒邮件
 
 依次检查：

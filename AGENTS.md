@@ -612,6 +612,15 @@ Git 历史显示项目已经经历了基础架构、日历工作区、AI 客户�
 - 未验证内容：当前应用内浏览器运行环境没有可用浏览器实例，因此最终 UI 没有完成真实截图、窄屏、hover/selected/loading/empty/error 状态复核；生产服务器、真实 SMTP/IMAP、真实用户数据恢复和部署均未执行。Vite 仍提示主 JavaScript chunk 超过 500 kB，属于性能风险而非本轮功能错误。
 - Git/部署状态：在 `feature/calendar-improvements-audit-fixes` 分支建立本地 checkpoint，未 push、未部署；本地运行数据备份和日报项目 checkpoint 均不进入 Git。本轮不发送真实邮件，不修改生产服务器。
 
+### 2026-08-25：本地开发启动与登录验收修复
+
+- 用户意图：修复 2026-08-24 大改后 `npm run dev` 的后端启动失败和登录代理拒绝，并尽快启动本地验收，核对启动耗时与登录主链路。
+- 已确认根因：本机 `.env` 仍为 `APP_ENV=production`，管理员和普通用户邀请码均为历史 7 字符值；新增生产安全闸门因此在监听端口前拒绝启动，Vite 随后的 `/api/auth/login` 才出现 `ECONNREFUSED`。`.env.example` 同时默认使用生产模式，与 README 要求的本地开发配置不一致。首次看到的约 7 秒等待主要来自 Vite 依赖重新优化，后端本身没有数据库初始化卡顿。
+- 实际修改：只把本机忽略的 `.env` 切换为 `APP_ENV=development`；将 `.env.example` 改为本地安全默认值（本地 URL、development、无反向代理、后台任务关闭），README 增加对应故障排查说明，并新增测试防止模板再次默认成生产模式。生产邀请码长度、差异性、HTTPS 和其他安全校验保持不变。
+- 验证结果：干净执行 `npm run dev` 时 Vite 在 `628ms` 就绪，后端约 `1.90s` 完成监听；后端直连和 Vite 代理的 `/api/health` 均返回 `200`。真实浏览器登录页正常渲染、控制台无错误，错误凭据显示预期提示；隔离数据目录的正向登录返回 `200` 并签发令牌，`/api/auth/me` 返回 `200`，错误密码返回 `401`，临时数据已清理。恢复服务后，现有本地账号也记录到一次成功登录。生产模式短邀请码仍按预期拒绝启动。
+- 回归检查：`npm run typecheck`、`npm test`（55 项）和完整构建通过；完整构建使用一次性安全 HTTPS 验收地址生成 Electron staging，本机未配置真实 `ELECTRON_APP_URL`，因此没有验证安装包实际连接生产域名。Vite 主 JavaScript chunk 约 `1.15MB` 的既有性能提醒仍在。
+- Git/部署状态：修改准备在 `feature/calendar-improvements-audit-fixes` 建立本地 checkpoint；不 push、不部署，不修改生产服务器或生产 `.env`，后台任务和真实 SMTP/IMAP 均未启用。
+
 ## 13. 参考文件
 
 - README.md：当前能力、配置、目录、常见问题和资源边界；
