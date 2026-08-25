@@ -8,6 +8,7 @@ import {
 } from 'tdesign-react';
 import { CheckCircleFilledIcon } from 'tdesign-icons-react';
 import { useAuth } from '../hooks/useAuth';
+import { saveNotificationPreferences } from '../services/notification-preferences';
 
 interface HomeLocation {
   name: string;
@@ -267,6 +268,7 @@ export function SettingsPage() {
   const [locationQuery, setLocationQuery] = useState('');
   const [locationResults, setLocationResults] = useState<HomeLocation[]>([]);
   const [locationSearching, setLocationSearching] = useState(false);
+  const [locationSaving, setLocationSaving] = useState(false);
   const [loadingReminder, setLoadingReminder] = useState(false);
   const [backupPassword, setBackupPassword] = useState('');
   const [backupFile, setBackupFile] = useState<File | null>(null);
@@ -316,19 +318,28 @@ export function SettingsPage() {
   const saveReminderEmail = async () => {
     setLoadingReminder(true);
     try {
-      const response = await fetch('/api/notification-preferences', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(notificationPayload()),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || '保存失败');
+      await saveNotificationPreferences(notificationPayload(), authHeaders());
       setReminderEmail(reminderEmail.trim());
       MessagePlugin.success('通知设置已保存');
     } catch (error: any) {
       MessagePlugin.error(error?.message || '保存失败');
     } finally {
       setLoadingReminder(false);
+    }
+  };
+
+  const saveHomeLocation = async (location: HomeLocation | null) => {
+    setLocationSaving(true);
+    try {
+      await saveNotificationPreferences(notificationPayload({ homeLocation: location }), authHeaders());
+      setHomeLocation(location);
+      setLocationQuery('');
+      setLocationResults([]);
+      MessagePlugin.success(location ? `常驻地点已保存：${location.name}` : '常驻地点已清除');
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || '常驻地点保存失败');
+    } finally {
+      setLocationSaving(false);
     }
   };
 
@@ -398,6 +409,13 @@ export function SettingsPage() {
 
   useEffect(() => {
     const query = locationQuery.trim();
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(query)) {
+      // Chrome 可能忽略 autocomplete 并把登录邮箱误填到后面的文本框；地点搜索不接受邮箱。
+      setLocationQuery('');
+      setLocationResults([]);
+      setLocationSearching(false);
+      return;
+    }
     if (query.length < 2) {
       setLocationResults([]);
       setLocationSearching(false);
@@ -745,14 +763,10 @@ export function SettingsPage() {
                   setReminderEnabled(newVal);
                   setLoadingReminder(true);
                   try {
-                    await fetch('/api/notification-preferences', {
-                      method: 'PUT',
-                      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                      body: JSON.stringify(notificationPayload({ enabled: newVal })),
-                    });
+                    await saveNotificationPreferences(notificationPayload({ enabled: newVal }), authHeaders());
                     MessagePlugin.success(newVal ? '提醒已开启' : '提醒已关闭');
-                  } catch {
-                    MessagePlugin.error('设置失败');
+                  } catch (error: any) {
+                    MessagePlugin.error(error?.message || '设置失败');
                     setReminderEnabled(!newVal);
                   } finally {
                     setLoadingReminder(false);
@@ -786,14 +800,10 @@ export function SettingsPage() {
                   onClick={async () => {
                     setLoadingReminder(true);
                     try {
-                      await fetch('/api/notification-preferences', {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-                        body: JSON.stringify(notificationPayload()),
-                      });
+                      await saveNotificationPreferences(notificationPayload(), authHeaders());
                       MessagePlugin.success('提醒时间已更新');
-                    } catch {
-                      MessagePlugin.error('设置失败');
+                    } catch (error: any) {
+                      MessagePlugin.error(error?.message || '设置失败');
                     } finally {
                       setLoadingReminder(false);
                     }
@@ -807,31 +817,33 @@ export function SettingsPage() {
             <div className="mt-5 pt-4" style={{ borderTop: '1px solid var(--td-component-stroke)' }}>
               <div className="text-sm font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>常驻城市或区县</div>
               <div className="text-xs mb-3" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                用于每日邮件天气和未指定地点的天气提问；只保存城市/区县与坐标，不保存详细住址。
+                用于每日邮件天气和未指定地点的天气提问；请单独输入城市或区县名称，只保存名称与坐标，不保存详细住址。
               </div>
               {homeLocation && <div className="settings-location-selected">
                 <div>
                   <strong>{homeLocation.name}</strong>
                   <span>{[homeLocation.admin1, homeLocation.country].filter(Boolean).join(' · ')}</span>
                 </div>
-                <Button size="small" variant="text" onClick={() => setHomeLocation(null)}>清除</Button>
+                <Button size="small" variant="text" loading={locationSaving} onClick={() => void saveHomeLocation(null)}>清除</Button>
               </div>}
               <div className="settings-location-search">
                 <Input
                   value={locationQuery}
                   onChange={value => setLocationQuery(value as string)}
-                  placeholder="搜索城市或区县，例如：深圳南山"
+                  name="home-location-search"
+                  type="search"
+                  autocomplete="new-password"
+                  disabled={locationSaving}
+                  placeholder="搜索城市或区县，例如：深圳、南山"
                 />
                 {locationSearching && <span className="settings-location-loading">搜索中…</span>}
+                {locationSaving && <span className="settings-location-loading">保存中…</span>}
                 {locationResults.length > 0 && <div className="settings-location-results">
                   {locationResults.map(location => <button
                     type="button"
                     key={`${location.latitude}:${location.longitude}`}
-                    onClick={() => {
-                      setHomeLocation(location);
-                      setLocationQuery('');
-                      setLocationResults([]);
-                    }}
+                    disabled={locationSaving}
+                    onClick={() => void saveHomeLocation(location)}
                   >
                     <strong>{location.name}</strong>
                     <span>{[location.admin1, location.country].filter(Boolean).join(' · ')}</span>

@@ -3171,10 +3171,16 @@ app.post("/api/ai-chat/confirm", authenticate, (req, res) => {
   if (!plan.confirmedResult) {
     const result = executeAiScheduleOperations(plan);
     const scheduleItems = [...result.createdSchedules, ...result.updatedSchedules];
+    const failureSummary = result.failures.length
+      ? `另有 ${result.failures.length} 项未执行。\n失败原因：\n${result.failures.map(failure => {
+        const title = planOperationPreview(plan.operations[failure.index], failure.index).title;
+        return `- ${title}：${String(failure.message || '执行失败').slice(0, 180)}`;
+      }).join('\n')}`
+      : '';
     plan.confirmedResult = {
       success: true,
       intent: plan.intent,
-      reply: `已确认并执行：创建 ${result.createdSchedules.length} 项日程、${result.createdReminderTasks.length} 项周期事项，更新 ${result.updatedSchedules.length} 项，删除 ${result.deletedIds.length} 项。${result.failures.length ? `另有 ${result.failures.length} 项未执行，请根据失败原因修改后重新生成计划。` : ''}`,
+      reply: `已确认并执行：创建 ${result.createdSchedules.length} 项日程、${result.createdReminderTasks.length} 项周期事项，更新 ${result.updatedSchedules.length} 项，删除 ${result.deletedIds.length} 项。${failureSummary}`,
       scheduleItems,
       changed: result.changed,
       changedDetails: {
