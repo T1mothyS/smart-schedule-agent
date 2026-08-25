@@ -501,7 +501,7 @@ export function ScheduleFormModal({
     startTime: editingSchedule && !editingSchedule.all_day
       ? formatTime(editingSchedule.start_time)
       : '09:00',
-    endTime: editingSchedule?.end_time && !editingSchedule.all_day
+    endTime: editingSchedule?.type === 'event' && editingSchedule.end_time && !editingSchedule.all_day
       ? formatTime(editingSchedule.end_time)
       : '10:00',
     all_day: editingSchedule?.all_day || false,
@@ -529,8 +529,8 @@ export function ScheduleFormModal({
       : form.all_day
       ? `${form.date}T00:00:00`
       : `${form.date}T${form.startTime}:00`;
-    // 待办任务也需要 end_time（用于冲突检测和排版），时长固定1小时
-    const endTime = isUnscheduled || form.all_day
+    // 待办是时间点；结束时间只属于有持续时长的事件。
+    const endTime = form.type === 'todo' || isUnscheduled || form.all_day
       ? undefined
       : `${form.date}T${form.endTime}:00`;
 
@@ -719,25 +719,19 @@ export function ScheduleFormModal({
             </div>
           )}
 
-          {/* 待办时间选择器（只需设置开始时间，占用1小时） */}
+          {/* 待办时间点选择器，不设置持续时长 */}
           {form.type === 'todo' && !isUnscheduled && (
             <div>
               <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
-                待办时间
+                待办时间点
               </div>
               <div className="flex gap-3 items-center">
                 <SmartTimePicker
                   value={form.startTime}
-                  onChange={v => {
-                    set('startTime', v);
-                    // 待办自动设置1小时时长
-                    const [h, m] = v.split(':').map(Number);
-                    const endH = (h + 1) % 24;
-                    set('endTime', `${String(endH).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
-                  }}
-                  label="开始"
+                  onChange={v => set('startTime', v)}
+                  label="时间点"
                 />
-                <span style={{ color: 'var(--td-text-color-secondary)', fontSize: '12px' }}>时长1小时</span>
+                <span style={{ color: 'var(--td-text-color-secondary)', fontSize: '12px' }}>不设置持续时长</span>
               </div>
             </div>
           )}
@@ -1192,7 +1186,7 @@ function DayView({
         <div className="relative">
           {HOURS.map(hour => {
             const hourSchedules = timedSchedules.filter(s => getScheduleHour(s) === hour);
-            // 待办任务显示在对应小时（固定1小时高度）
+            // 待办任务显示在对应小时（固定视觉高度，与持续时长无关）
             const hourTodos = timedTodos.filter(s => getScheduleHour(s) === hour);
             // 待办和事件分开显示，不合并
             
