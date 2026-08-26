@@ -1,4 +1,5 @@
-import { KeyboardEvent, useCallback, useEffect, useRef, useState } from 'react';
+import { KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CalendarClock, CheckCircle2, ChevronDown, Edit3, Mail, MoreHorizontal, Paperclip, RefreshCw, Trash2, X } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Schedule, ScheduleDetailModal, ScheduleFormModal } from './CalendarView';
@@ -79,7 +80,10 @@ function ActionItemMenu({ item, open, onToggle, onAction }: {
   onAction: (action: ActionMenuAction) => void;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
+  const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
+  const [menuReady, setMenuReady] = useState(false);
   const entries: Array<{ action: ActionMenuAction; label: string; icon?: typeof Edit3; danger?: boolean }> = [
     { action: 'edit', label: '编辑', icon: Edit3 },
     ...(item.sourceType === 'schedule' && !item.isUnscheduled && item.status !== 'completed'
@@ -91,12 +95,38 @@ function ActionItemMenu({ item, open, onToggle, onAction }: {
     { action: 'delete', label: '删除', icon: Trash2, danger: true },
   ];
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuReady(false);
+      return;
+    }
+    const trigger = triggerRef.current;
+    const menu = menuRef.current;
+    if (!trigger || !menu) return;
+
+    const triggerRect = trigger.getBoundingClientRect();
+    const menuRect = menu.getBoundingClientRect();
+    const gap = 6;
+    const left = Math.max(8, Math.min(
+      triggerRect.right - menuRect.width,
+      window.innerWidth - menuRect.width - 8,
+    ));
+    const belowTop = triggerRect.bottom + gap;
+    const top = belowTop + menuRect.height <= window.innerHeight - 8
+      ? belowTop
+      : Math.max(8, triggerRect.top - menuRect.height - gap);
+
+    setMenuPosition({ left, top });
+    setMenuReady(true);
+  }, [entries.length, open]);
+
   useEffect(() => {
     if (!open) return;
     firstItemRef.current?.focus({ preventScroll: true });
     const scrollGuardUntil = Date.now() + 250;
     const closeOnOutside = (event: PointerEvent) => {
-      if (!menuRef.current?.contains(event.target as Node)) onToggle();
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) onToggle();
     };
     const closeOnUserScroll = () => {
       if (Date.now() >= scrollGuardUntil) onToggle();
@@ -136,42 +166,56 @@ function ActionItemMenu({ item, open, onToggle, onAction }: {
     items[nextIndex]?.focus({ preventScroll: true });
   };
 
-  return <div
-    className="action-row-menu"
-    ref={menuRef}
-    onClick={event => event.stopPropagation()}
-    onKeyDown={handleMenuKeyDown}
-  >
-    <button
-      type="button"
-      className="icon-button action-menu-trigger"
-      aria-label={`打开 ${item.title} 的更多操作`}
-      aria-haspopup="menu"
-      aria-expanded={open}
-      onClick={event => { event.stopPropagation(); onToggle(); }}
-    ><MoreHorizontal size={17} /></button>
-    {open && <div className="action-menu-popover" role="menu">
-      {entries.map((entry, index) => {
-        const Icon = entry.icon;
-        return <button
-          key={entry.action}
-          ref={index === 0 ? firstItemRef : undefined}
-          type="button"
-          role="menuitem"
-          className={entry.danger ? 'danger' : ''}
-          onClick={event => { event.stopPropagation(); onAction(entry.action); }}
-        >{Icon && <Icon size={14} />}<span>{entry.label}</span></button>;
-      })}
-    </div>}
-  </div>;
+  return <>
+    <div
+      className="action-row-menu"
+      onClick={event => event.stopPropagation()}
+      onKeyDown={handleMenuKeyDown}
+    >
+      <button
+        ref={triggerRef}
+        type="button"
+        className="icon-button action-menu-trigger"
+        aria-label={`打开 ${item.title} 的更多操作`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={event => { event.stopPropagation(); onToggle(); }}
+      ><MoreHorizontal size={17} /></button>
+    </div>
+    {open && typeof document !== 'undefined' && createPortal(
+      <div
+        ref={menuRef}
+        className="action-menu-popover"
+        role="menu"
+        style={{ left: menuPosition.left, top: menuPosition.top, visibility: menuReady ? 'visible' : 'hidden' }}
+        onPointerDown={event => event.stopPropagation()}
+        onClick={event => event.stopPropagation()}
+        onKeyDown={handleMenuKeyDown}
+      >
+        {entries.map((entry, index) => {
+          const Icon = entry.icon;
+          return <button
+            key={entry.action}
+            ref={index === 0 ? firstItemRef : undefined}
+            type="button"
+            role="menuitem"
+            className={entry.danger ? 'danger' : ''}
+            onClick={event => { event.stopPropagation(); onAction(entry.action); }}
+          >{Icon && <Icon size={14} />}<span>{entry.label}</span></button>;
+        })}
+      </div>,
+      document.body,
+    )}
+  </>;
 }
 
-function ActionList({ title, hint, items, tone, menuScope, onComplete, onEdit, onMenuAction, openMenuId, setOpenMenuId, completingId }: {
+function ActionList({ title, hint, items, tone, menuScope, headerControl, onComplete, onEdit, onMenuAction, openMenuId, setOpenMenuId, completingId }: {
   title: string;
   hint: string;
   items: ActionItem[];
   tone: 'normal' | 'warning' | 'danger';
   menuScope: string;
+  headerControl?: ReactNode;
   onComplete: (item: ActionItem) => void;
   onEdit: (item: ActionItem) => void;
   onMenuAction: (item: ActionItem, action: ActionMenuAction) => void;
@@ -180,7 +224,7 @@ function ActionList({ title, hint, items, tone, menuScope, onComplete, onEdit, o
   completingId: string | null;
 }) {
   return <section className={'action-section ' + tone}>
-    <div className="action-section-head"><div><h2>{title}</h2>{hint && <span>{hint}</span>}</div><strong>{items.length}</strong></div>
+    <div className="action-section-head"><div><h2>{title}</h2>{hint && <span>{hint}</span>}</div><div className="action-section-head-tools">{headerControl}<strong>{items.length}</strong></div></div>
     {items.length === 0 ? <div className="action-empty">这里暂时没有事项</div> : <div className="action-list">
       {items.map(item => {
         const menuId = menuScope + ':' + item.id;
@@ -590,8 +634,7 @@ export function ActionCenterPage() {
       <SuspendedTodoSection items={data.unscheduled} onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />
       <ActionList title="今天" hint="" items={data.today} tone="normal" menuScope="today" onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />
       <ActionList title="明天" hint="" items={data.tomorrow} tone="normal" menuScope="tomorrow" onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />
-      <div className="action-section-head standalone"><div><h2>即将到期</h2></div><select value={days} onChange={event => setDays(Number(event.target.value))}><option value={3}>未来 3 天</option><option value={7}>未来 7 天</option><option value={14}>未来 14 天</option></select></div>
-      <ActionList title="" hint="" items={data.upcoming} tone="warning" menuScope="upcoming" onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />
+      <ActionList title="即将到期" hint="" items={data.upcoming} tone="warning" menuScope="upcoming" headerControl={<select aria-label="即将到期筛选范围" value={days} onChange={event => setDays(Number(event.target.value))}><option value={3}>未来 3 天</option><option value={7}>未来 7 天</option><option value={14}>未来 14 天</option></select>} onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />
       <ActionList title="已经逾期" hint="逾期周期仍可手动完成，不会消失" items={data.overdue} tone="danger" menuScope="overdue" onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />
       <section className="completed-section">
         <button type="button" onClick={() => setShowCompleted(value => !value)}>

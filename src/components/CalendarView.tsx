@@ -571,6 +571,7 @@ export function ScheduleFormModal({
         style={{ backgroundColor: 'var(--td-bg-color-container)' }}
         onMouseDown={e => e.stopPropagation()}
       >
+        <div className="schedule-form-scroll">
         {/* 标题 */}
         <div className="flex items-center justify-between mb-5">
           <h3 className="schedule-form-heading" style={{ color: 'var(--td-text-color-primary)' }}>
@@ -874,6 +875,7 @@ export function ScheduleFormModal({
           >
             {isEditing ? '保存修改' : '添加日程'}
           </button>
+        </div>
         </div>
       </div>
     </div>

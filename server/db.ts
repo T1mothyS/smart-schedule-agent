@@ -92,6 +92,7 @@ async function initDb(): Promise<void> {
       disabled INTEGER NOT NULL DEFAULT 0,
       auth_version INTEGER NOT NULL DEFAULT 0,
       preferred_model TEXT,
+      admin_shared_api_enabled INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       last_login_at TEXT
@@ -104,6 +105,9 @@ async function initDb(): Promise<void> {
   }
   if (!userColumns.some(column => column.name === 'preferred_model')) {
     db.run('ALTER TABLE users ADD COLUMN preferred_model TEXT');
+  }
+  if (!userColumns.some(column => column.name === 'admin_shared_api_enabled')) {
+    db.run('ALTER TABLE users ADD COLUMN admin_shared_api_enabled INTEGER NOT NULL DEFAULT 0');
   }
 
   const sessionColumns = queryAll<{ name: string }>('PRAGMA table_info(sessions)');
@@ -289,6 +293,7 @@ export interface DbUser {
   disabled: number;
   auth_version?: number;
   preferred_model?: string | null;
+  admin_shared_api_enabled?: number;
   created_at: string;
   updated_at: string;
   last_login_at?: string;
@@ -544,13 +549,18 @@ export function clearAllData(): void {
 
 // ============= 用户操作 =============
 
-type PublicDbUser = Omit<DbUser, 'password_hash' | 'disabled' | 'last_login_at' | 'auth_version' | 'preferred_model'> & { disabled: boolean; last_login_at: string | null };
+type PublicDbUser = Omit<DbUser, 'password_hash' | 'disabled' | 'last_login_at' | 'auth_version' | 'preferred_model' | 'admin_shared_api_enabled'> & {
+  disabled: boolean;
+  admin_shared_api_enabled: boolean;
+  last_login_at: string | null;
+};
 
 export function getAllUsers(): PublicDbUser[] {
-  const users = queryAll<any>('SELECT id, email, role, disabled, created_at, updated_at, last_login_at FROM users ORDER BY created_at DESC');
+  const users = queryAll<any>('SELECT id, email, role, disabled, admin_shared_api_enabled, created_at, updated_at, last_login_at FROM users ORDER BY created_at DESC');
   return users.map(u => ({
     ...u,
     disabled: Boolean(u.disabled),
+    admin_shared_api_enabled: Boolean(u.admin_shared_api_enabled),
     last_login_at: u.last_login_at || null
   }));
 }
@@ -575,7 +585,7 @@ export function getUsersPaginated(page: number, pageSize: number, search: string
   const total = countResult?.count || 0;
 
   const users = queryAll<any>(
-    `SELECT id, email, role, disabled, created_at, updated_at, last_login_at FROM users ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    `SELECT id, email, role, disabled, admin_shared_api_enabled, created_at, updated_at, last_login_at FROM users ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     [...params, pageSize, offset]
   );
 
@@ -583,6 +593,7 @@ export function getUsersPaginated(page: number, pageSize: number, search: string
     users: users.map(u => ({
       ...u,
       disabled: Boolean(u.disabled),
+      admin_shared_api_enabled: Boolean(u.admin_shared_api_enabled),
       last_login_at: u.last_login_at || null
     })),
     total,
@@ -597,15 +608,15 @@ export function getUserByEmail(email: string): DbUser | undefined {
 
 export function getUserById(id: string): Omit<DbUser, 'password_hash'> | undefined {
   return queryOne<Omit<DbUser, 'password_hash'>>(
-    'SELECT id, email, role, disabled, auth_version, preferred_model, created_at, updated_at, last_login_at FROM users WHERE id = ?',
+    'SELECT id, email, role, disabled, auth_version, preferred_model, admin_shared_api_enabled, created_at, updated_at, last_login_at FROM users WHERE id = ?',
     [id],
   );
 }
 
 export function createUser(user: DbUser): Omit<DbUser, 'password_hash'> {
   run(
-    'INSERT INTO users (id, email, password_hash, role, disabled, auth_version, preferred_model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [user.id, user.email, user.password_hash, user.role, user.disabled, user.auth_version ?? 0, user.preferred_model ?? null, user.created_at, user.updated_at]
+    'INSERT INTO users (id, email, password_hash, role, disabled, auth_version, preferred_model, admin_shared_api_enabled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [user.id, user.email, user.password_hash, user.role, user.disabled, user.auth_version ?? 0, user.preferred_model ?? null, user.admin_shared_api_enabled ?? 0, user.created_at, user.updated_at]
   );
   return {
     id: user.id,
@@ -614,6 +625,7 @@ export function createUser(user: DbUser): Omit<DbUser, 'password_hash'> {
       disabled: user.disabled,
       auth_version: user.auth_version ?? 0,
       preferred_model: user.preferred_model ?? null,
+      admin_shared_api_enabled: user.admin_shared_api_enabled ?? 0,
     created_at: user.created_at,
     updated_at: user.updated_at
   };
@@ -631,6 +643,14 @@ export function updateUserDisabled(id: string, disabled: number): boolean {
   const result = run(
     'UPDATE users SET disabled = ?, auth_version = auth_version + 1, updated_at = ? WHERE id = ?',
     [disabled, new Date().toISOString(), id],
+  );
+  return result.changes > 0;
+}
+
+export function updateUserAdminApiSharing(id: string, enabled: number): boolean {
+  const result = run(
+    'UPDATE users SET admin_shared_api_enabled = ?, updated_at = ? WHERE id = ? AND role = \'user\'',
+    [enabled ? 1 : 0, new Date().toISOString(), id],
   );
   return result.changes > 0;
 }
@@ -770,6 +790,16 @@ export function getReminderEmail(userId: string): string | null {
 
 export function getUserApiKey(userId: string): DbUserApiKey | undefined {
   return queryOne<DbUserApiKey>('SELECT * FROM user_api_keys WHERE user_id = ?', [userId]);
+}
+
+export function getAdminSharedApiKey(): DbUserApiKey | undefined {
+  return queryOne<DbUserApiKey>(
+    `SELECT k.* FROM user_api_keys k
+     JOIN users u ON u.id = k.user_id
+     WHERE u.role = 'admin' AND u.disabled = 0
+     ORDER BY u.created_at ASC
+     LIMIT 1`,
+  );
 }
 
 export function upsertUserApiKey(apiKey: DbUserApiKey): DbUserApiKey {

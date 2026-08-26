@@ -124,6 +124,7 @@ interface LoginStatus {
   isLoggedIn: boolean;
   checking: boolean;
   hasApiKey?: boolean;
+  usingSharedApi?: boolean;
   apiKey?: string;
   error?: string;
 }
@@ -175,6 +176,7 @@ export function SettingsPage() {
           isLoggedIn: data.isLoggedIn ?? false,
           checking: false,
           hasApiKey: data.hasApiKey,
+          usingSharedApi: data.usingSharedApi,
           apiKey: data.apiKey,
           error: data.error,
         });
@@ -603,12 +605,17 @@ export function SettingsPage() {
                 </div>
                   <span className="text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>
                   当前账号凭据：
-                  {loginStatus.hasApiKey ? (
+                  {loginStatus.usingSharedApi ? (
+                    <span className="ml-1 px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: '#D1FAE5', color: '#047857' }}>管理员共享 API</span>
+                  ) : loginStatus.hasApiKey ? (
                     <span className="ml-1 px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}>API Key</span>
                   ) : (
                     <span className="ml-1 px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: '#E5E7EB', color: '#6B7280' }}>未配置</span>
                   )}
                 </span>
+                {loginStatus.usingSharedApi && (
+                  <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>密钥仅在服务器端使用</span>
+                )}
                 {loginStatus.apiKey && (
                   <span className="text-xs ml-2" style={{ color: 'var(--td-text-color-placeholder)' }}>
                     ({loginStatus.apiKey})

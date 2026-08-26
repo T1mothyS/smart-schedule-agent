@@ -148,8 +148,30 @@ function getAvailableModels(
   });
 }
 
+interface ResolvedCodeBuddyCredential {
+  credential: dbModule.DbUserApiKey;
+  source: 'personal' | 'admin-shared';
+}
+
+function resolveCodeBuddyCredentialInfo(userId: string): ResolvedCodeBuddyCredential | undefined {
+  const personal = db.getUserApiKey(userId);
+  if (personal) return { credential: personal, source: 'personal' };
+
+  const user = db.getUserById(userId);
+  if (!user?.admin_shared_api_enabled) return undefined;
+  const shared = db.getAdminSharedApiKey();
+  return shared ? { credential: shared, source: 'admin-shared' } : undefined;
+}
+
 function resolveCodeBuddyCredential(userId: string): dbModule.DbUserApiKey | undefined {
-  return db.getUserApiKey(userId) || undefined;
+  return resolveCodeBuddyCredentialInfo(userId)?.credential;
+}
+
+function getMissingCodeBuddyCredentialMessage(userId: string): string {
+  const user = db.getUserById(userId);
+  return user?.admin_shared_api_enabled
+    ? '管理员共享 API 暂不可用，请联系管理员配置管理员 API Key'
+    : '未配置个人 API Key，请在设置中保存当前账号的凭据';
 }
 
 function resolveAiImportCredential(userId: string): { apiKey: string; baseUrl?: string | null; model: string } | null {
@@ -286,6 +308,7 @@ interface LoginStatusResponse {
   hasApiKey?: boolean;
   error?: string;
   apiKey?: string; // 脱敏后的 API Key
+  usingSharedApi?: boolean;
 }
 
 // 【修复】检查 API Key 状态
@@ -300,16 +323,22 @@ app.get("/api/check-login", authenticate, async (req, res) => {
   if (authHeader?.startsWith('Bearer ')) {
     try {
       const payload = jwt.verify(authHeader.slice(7), JWT_SECRET) as JwtPayload;
-      const userKey = resolveCodeBuddyCredential(payload.userId);
+      const resolvedCredential = resolveCodeBuddyCredentialInfo(payload.userId);
+      const userKey = resolvedCredential?.credential;
       
       if (userKey?.api_key) {
         response.isLoggedIn = true;
         response.hasApiKey = true;
-        // 脱敏显示
-        response.apiKey = userKey.api_key.slice(0, 8) + '****' + userKey.api_key.slice(-4);
+        if (resolvedCredential?.source === 'admin-shared') {
+          // 共享凭据只在服务端使用，普通用户前端不能看到任何 Key 片段。
+          response.usingSharedApi = true;
+        } else {
+          // 个人 Key 仍按原有方式脱敏显示。
+          response.apiKey = userKey.api_key.slice(0, 8) + '****' + userKey.api_key.slice(-4);
+        }
       } else {
         response.hasApiKey = false;
-        response.error = '未配置个人 API Key，请在设置中保存当前账号的凭据';
+        response.error = getMissingCodeBuddyCredentialMessage(payload.userId);
       }
     } catch {
       response.error = '登录状态验证失败';
@@ -331,7 +360,7 @@ app.get("/api/models", authenticate, async (req, res) => {
 
     if (!userCredential) {
       return res.status(401).json({ 
-        error: '请先在设置中保存个人 API Key',
+        error: getMissingCodeBuddyCredentialMessage(currentUser.userId),
       });
     }
 
@@ -462,9 +491,10 @@ app.post("/api/verify-api-key", authenticate, async (req, res) => {
     }
 
     if (!userCredential) {
+      const currentUser = (req as any).user as JwtPayload;
       return res.status(401).json({ 
         valid: false, 
-        error: 'API Key 未配置，请在设置中保存个人凭据',
+        error: getMissingCodeBuddyCredentialMessage(currentUser.userId),
         code: 'NO_KEY'
       });
     }
@@ -875,6 +905,28 @@ app.put("/api/admin/users/:id/disabled", authenticate, requireAdmin, (req, res) 
   if (!success) return res.status(404).json({ error: '用户不存在' });
   addLog('info', 'admin', `${disabled ? '禁用' : '启用'}用户: ${req.params.id}`);
   res.json({ success: true });
+});
+
+// 管理员按用户开启/关闭共享 API 权限；共享的是服务端调用权限，不返回管理员 API Key。
+app.put("/api/admin/users/:id/api-share", authenticate, requireAdmin, (req, res) => {
+  const enabled = req.body?.enabled;
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'enabled 必须是布尔值' });
+  }
+
+  const targetUser = db.getUserById(req.params.id);
+  if (!targetUser) return res.status(404).json({ error: '用户不存在' });
+  if (targetUser.role === 'admin') return res.status(403).json({ error: '管理员账号不适用共享 API 权限' });
+
+  const success = db.updateUserAdminApiSharing(req.params.id, enabled ? 1 : 0);
+  if (!success) return res.status(404).json({ error: '用户不存在或不是普通用户' });
+
+  addLog('info', 'admin', `${enabled ? '开启' : '关闭'}用户管理员 API 共享: ${req.params.id}`);
+  res.json({
+    success: true,
+    enabled,
+    adminApiAvailable: Boolean(db.getAdminSharedApiKey()),
+  });
 });
 
 // 删除用户及其所有数据（管理员）
@@ -1710,7 +1762,7 @@ app.post("/api/ai/imports/parse", authenticate, async (req, res) => {
   try {
     const userId = (req as any).user.userId;
     const credential = resolveAiImportCredential(userId);
-    if (!credential) return res.status(400).json({ error: '请先在设置中保存个人 API Key' });
+    if (!credential) return res.status(400).json({ error: getMissingCodeBuddyCredentialMessage(userId) });
     const images = Array.isArray(req.body.images) ? req.body.images.map((image: any) => ({
       name: String(image.name || 'image'),
       mimeType: String(image.mimeType || ''),
@@ -2883,10 +2935,11 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
 
   // 检查用户是否有 API Key
   if (!userCredential) {
-    addLog('warn', 'ai', `用户 ${userId} 未配置 API Key`, { userId });
-    try { saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: '请先在设置中保存个人 API Key' }); } catch {}
+    const missingCredentialMessage = getMissingCodeBuddyCredentialMessage(userId);
+    addLog('warn', 'ai', `用户 ${userId} 未配置可用 API`, { userId });
+    try { saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: missingCredentialMessage }); } catch {}
     return res.status(401).json({ 
-      error: '请先在设置中保存个人 API Key',
+      error: missingCredentialMessage,
       needLogin: true 
     });
   }
