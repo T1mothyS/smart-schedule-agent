@@ -32,6 +32,16 @@ import { createReadableUserExport, createSchedulesCsv } from './export-service.j
 import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
 import { createApiRateLimiter, securityHeaders } from './http-security.js';
 import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
+import { shiftScheduleDateValue } from './schedule-actions.js';
+import { assertNoLegacyCodeBuddyConfig } from './codebuddy-config.js';
+import {
+  buildAiPlanSnapshot,
+  normaliseAiPlanOperations,
+  previewAiPlanOperation as planOperationPreview,
+  rawOperationsFromSnapshot,
+  updateAiPlanOperation,
+  type PendingAiOperation,
+} from './ai-plan.js';
 
 // 数据库实例（等待初始化后赋值）
 let db: typeof dbModule;
@@ -139,19 +149,7 @@ function getAvailableModels(
 }
 
 function resolveCodeBuddyCredential(userId: string): dbModule.DbUserApiKey | undefined {
-  const stored = db.getUserApiKey(userId);
-  const globalBaseUrl = process.env.CODEBUDDY_BASE_URL?.trim() || null;
-  if (stored) return { ...stored, base_url: stored.base_url || globalBaseUrl };
-  const apiKey = process.env.CODEBUDDY_API_KEY?.trim();
-  if (!apiKey) return undefined;
-  return {
-    id: `environment:${userId}`,
-    user_id: userId,
-    api_key: apiKey,
-    base_url: globalBaseUrl,
-    created_at: 'environment',
-    updated_at: 'environment',
-  };
+  return db.getUserApiKey(userId) || undefined;
 }
 
 function resolveAiImportCredential(userId: string): { apiKey: string; baseUrl?: string | null; model: string } | null {
@@ -302,19 +300,16 @@ app.get("/api/check-login", authenticate, async (req, res) => {
   if (authHeader?.startsWith('Bearer ')) {
     try {
       const payload = jwt.verify(authHeader.slice(7), JWT_SECRET) as JwtPayload;
-      const storedKey = db.getUserApiKey(payload.userId);
       const userKey = resolveCodeBuddyCredential(payload.userId);
       
       if (userKey?.api_key) {
         response.isLoggedIn = true;
         response.hasApiKey = true;
         // 脱敏显示
-        response.apiKey = storedKey
-          ? storedKey.api_key.slice(0, 8) + '****' + storedKey.api_key.slice(-4)
-          : '服务器默认配置';
+        response.apiKey = userKey.api_key.slice(0, 8) + '****' + userKey.api_key.slice(-4);
       } else {
         response.hasApiKey = false;
-        response.error = '未配置 API Key，请在设置页输入您的 CodeBuddy API Key';
+        response.error = '未配置个人 API Key，请在设置中保存当前账号的凭据';
       }
     } catch {
       response.error = '登录状态验证失败';
@@ -336,7 +331,7 @@ app.get("/api/models", authenticate, async (req, res) => {
 
     if (!userCredential) {
       return res.status(401).json({ 
-        error: '请先在设置页输入 API Key',
+        error: '请先在设置中保存个人 API Key',
       });
     }
 
@@ -390,7 +385,9 @@ app.get("/api/ai-schedule/history", authenticate, (req, res) => {
   try {
     const payload = (req as any).user as JwtPayload;
     cleanupAiScheduleHistory(payload.userId);
-    res.json({ messages: db.getAiScheduleMessages(payload.userId, 0).map(toAiScheduleHistoryMessage) });
+    const messages = db.getAiScheduleMessages(payload.userId, 0);
+    hydratePendingAiSchedulePlans(payload.userId, messages);
+    res.json({ messages: messages.map(toAiScheduleHistoryMessage) });
   } catch (error: any) {
     console.error("[AI History] Error:", error);
     res.json({ messages: [] });
@@ -413,6 +410,29 @@ app.patch("/api/ai-schedule/history/:id", authenticate, (req, res) => {
     res.json({ success: true });
   } catch (error: any) {
     res.status(400).json({ error: error?.message || '更新历史消息失败' });
+  }
+});
+
+app.patch("/api/ai-chat/plans/:planId/operations/:key", authenticate, (req, res) => {
+  try {
+    cleanupExpiredAiScheduleState();
+    const userId = ((req as any).user as JwtPayload).userId;
+    const plan = aiSchedulePlans.get(req.params.planId);
+    if (!plan || plan.userId !== userId) return res.status(404).json({ error: '待确认计划不存在或已过期，请重新生成。' });
+    if (plan.confirmedResult) return res.status(409).json({ error: '计划已经确认执行，不能再编辑。' });
+    if (!/^\d+$/.test(req.params.key)) return res.status(400).json({ error: '计划操作编号不正确' });
+    const index = Number(req.params.key);
+    const current = plan.operations[index];
+    if (!current || current.key !== req.params.key) return res.status(404).json({ error: '计划操作不存在' });
+    const updated = updateAiPlanOperation(current, req.body || {});
+    plan.operations[index] = updated;
+    const snapshot = buildAiPlanSnapshot(plan);
+    if (plan.historyMessageId) {
+      db.updateAiScheduleMessage(plan.historyMessageId, userId, { plan: JSON.stringify(snapshot) });
+    }
+    res.json({ success: true, planId: plan.id, operation: planOperationPreview(updated, index) });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '保存计划修改失败' });
   }
 });
 
@@ -444,7 +464,7 @@ app.post("/api/verify-api-key", authenticate, async (req, res) => {
     if (!userCredential) {
       return res.status(401).json({ 
         valid: false, 
-        error: 'API Key 未配置，请在设置页输入',
+        error: 'API Key 未配置，请在设置中保存个人凭据',
         code: 'NO_KEY'
       });
     }
@@ -611,9 +631,7 @@ function validateRuntimeConfig(): void {
   if (process.env.BACKGROUND_JOBS_ENABLED === 'true' && !process.env.SMTP_PASS?.trim()) {
     throw new Error('[Config] 启用后台任务时必须配置 SMTP_PASS');
   }
-  if (process.env.CODEBUDDY_BASE_URL?.trim()) {
-    process.env.CODEBUDDY_BASE_URL = normaliseCodeBuddyBaseUrl(process.env.CODEBUDDY_BASE_URL) || '';
-  }
+  assertNoLegacyCodeBuddyConfig(process.env);
 }
 
 // JWT payload 类型
@@ -1692,7 +1710,7 @@ app.post("/api/ai/imports/parse", authenticate, async (req, res) => {
   try {
     const userId = (req as any).user.userId;
     const credential = resolveAiImportCredential(userId);
-    if (!credential) return res.status(400).json({ error: '请先在设置中配置 CodeBuddy API Key' });
+    if (!credential) return res.status(400).json({ error: '请先在设置中保存个人 API Key' });
     const images = Array.isArray(req.body.images) ? req.body.images.map((image: any) => ({
       name: String(image.name || 'image'),
       mimeType: String(image.mimeType || ''),
@@ -2087,6 +2105,50 @@ app.post("/api/schedules/:id/toggle", authenticate, (req, res) => {
   }
 });
 
+app.post("/api/schedules/:id/actions", authenticate, (req, res) => {
+  try {
+    const userId = (req as any).user?.userId;
+    const schedule = scheduleStore.getSchedule(req.params.id);
+    if (!schedule) return res.status(404).json({ error: '日程不存在' });
+    if (schedule.user_id !== userId) return res.status(403).json({ error: '无权操作该日程' });
+    if (schedule.id.startsWith('reminder-cycle:')) return res.status(400).json({ error: '周期事务请在周期事务页面操作' });
+    if (schedule.is_completed) return res.status(400).json({ error: '已完成事项不能执行该操作' });
+
+    const action = String(req.body?.action || '');
+    if (action === 'defer-one-day') {
+      if (schedule.is_unscheduled) return res.status(400).json({ error: '无固定期限待办不能顺延' });
+      const updated = scheduleStore.updateSchedule(schedule.id, {
+        start_time: shiftScheduleDateValue(schedule.start_time),
+        end_time: schedule.end_time ? shiftScheduleDateValue(schedule.end_time) : undefined,
+      });
+      if (!updated) return res.status(404).json({ error: '日程不存在' });
+      addLog('info', 'schedule', '行动中心顺延日程一天', { userId, scheduleId: schedule.id });
+      return res.json({ action, schedule: updated });
+    }
+
+    if (action === 'convert-to-unscheduled') {
+      if (schedule.is_unscheduled) return res.status(400).json({ error: '事项已经是无固定期限待办' });
+      const updated = scheduleStore.updateSchedule(schedule.id, {
+        type: 'todo',
+        start_time: new Date().toISOString(),
+        end_time: undefined,
+        all_day: false,
+        is_unscheduled: true,
+        reminders: [],
+        is_repeated: false,
+        repeat_rule: undefined,
+      });
+      if (!updated) return res.status(404).json({ error: '日程不存在' });
+      addLog('info', 'schedule', '行动中心转为无固定期限待办', { userId, scheduleId: schedule.id });
+      return res.json({ action, schedule: updated });
+    }
+
+    return res.status(400).json({ error: '未知日程操作' });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '日程操作失败' });
+  }
+});
+
 // 获取所有分类
 app.get("/api/categories", authenticate, (req, res) => {
   try {
@@ -2475,8 +2537,9 @@ interface PendingAiSchedulePlan {
   intent: string;
   reply: string;
   warnings: string[];
-  operations: any[];
+  operations: PendingAiOperation[];
   expiresAt: number;
+  historyMessageId?: string;
   confirmedResult?: any;
 }
 
@@ -2538,33 +2601,30 @@ function cleanupExpiredAiScheduleState(): void {
   for (const [id, request] of aiChatRequestRecords) if (request.expiresAt <= now) aiChatRequestRecords.delete(id);
 }
 
-function isAiChatRequestId(value: unknown): value is string {
-  return typeof value === 'string' && /^[a-zA-Z0-9_-]{12,120}$/.test(value);
+function hydratePendingAiSchedulePlans(userId: string, messages: dbModule.DbAiScheduleMessage[]): void {
+  for (const message of messages) {
+    if (message.role !== 'assistant' || message.type !== 'plan' || !message.plan) continue;
+    const snapshot = parseHistoryJson(message.plan);
+    if (!snapshot?.id || !snapshot?.expiresAt || Date.parse(String(snapshot.expiresAt)) <= Date.now()) continue;
+    const operations = rawOperationsFromSnapshot(snapshot);
+    if (!operations.length) continue;
+    aiSchedulePlans.set(String(snapshot.id), {
+      id: String(snapshot.id),
+      userId,
+      targetCalendarId: String(snapshot.targetCalendarId || 'personal'),
+      today: String(snapshot.today || getLocalDateString()),
+      intent: String(snapshot.intent || 'create'),
+      reply: String(snapshot.reply || '已整理出待确认的执行计划。'),
+      warnings: Array.isArray(snapshot.warnings) ? snapshot.warnings.map(String) : [],
+      operations,
+      expiresAt: Date.parse(String(snapshot.expiresAt)),
+      historyMessageId: message.id,
+    });
+  }
 }
 
-function planOperationPreview(operation: any, index: number): any {
-  const data = operation?.data || {};
-  const recurrence = operation?.recurrence || data.recurrence;
-  const operationType = operation?.type === 'create_recurring' ? 'create_recurring' : operation?.type;
-  return {
-    key: String(index),
-    type: operationType,
-    title: String(data.title || operation?.title || '未命名事项').slice(0, 160),
-    startTime: data.start_time || null,
-    endTime: data.end_time || null,
-    allDay: data.all_day === true,
-    isUnscheduled: data.is_unscheduled === true,
-    location: data.location || null,
-    notes: data.notes || null,
-    recurrence: recurrence ? {
-      frequency: recurrence.frequency || 'interval',
-      interval: Number(recurrence.interval || 1),
-      unit: recurrence.unit || 'day',
-      anchorDate: recurrence.anchorDate || String(data.start_time || '').slice(0, 10) || null,
-      reminderOffsets: Array.isArray(recurrence.reminderOffsets) ? recurrence.reminderOffsets : [1, 0],
-      reminderTime: recurrence.reminderTime || '09:00',
-    } : null,
-  };
+function isAiChatRequestId(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-zA-Z0-9_-]{12,120}$/.test(value);
 }
 
 function buildAiPlanWarnings(text: string, operations: any[], modelWarnings: unknown): string[] {
@@ -2824,9 +2884,9 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
   // 检查用户是否有 API Key
   if (!userCredential) {
     addLog('warn', 'ai', `用户 ${userId} 未配置 API Key`, { userId });
-    try { saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: '请先在设置页输入您的 CodeBuddy API Key' }); } catch {}
+    try { saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: '请先在设置中保存个人 API Key' }); } catch {}
     return res.status(401).json({ 
-      error: '请先在设置页输入您的 CodeBuddy API Key',
+      error: '请先在设置中保存个人 API Key',
       needLogin: true 
     });
   }
@@ -3088,7 +3148,7 @@ priority 识别：
     if (parsedResult.repaired) {
       addLog('warn', 'ai', 'AI 返回 JSON 含未转义双引号，已自动修复');
     }
-    const operations = Array.isArray(parsed.operations) ? parsed.operations : [];
+    const operations = normaliseAiPlanOperations(parsed.operations);
     console.log('[AI Chat] Parsed plan:', { intent: parsed.intent, operationCount: operations.length });
     addLog('info', 'ai', `AI解析完成，意图: ${parsed.intent}，操作数: ${operations.length}`, {
       intent: parsed.intent,
@@ -3120,12 +3180,7 @@ priority 识别：
         scheduleItems: sortedSchedules,
         changed: false,
         requiresConfirmation: true,
-        plan: {
-          id: plan.id,
-          expiresAt: new Date(plan.expiresAt).toISOString(),
-          warnings: plan.warnings,
-          operations: operations.map(planOperationPreview),
-        },
+        plan: buildAiPlanSnapshot(plan),
       };
     })() : {
       success: true,
@@ -3140,6 +3195,14 @@ priority 识别：
     try {
       const historyMessage = saveAiScheduleResponseHistory(userId, response);
       response.historyMessageId = historyMessage.id;
+      if (response.requiresConfirmation) {
+        const pendingPlan = aiSchedulePlans.get(response.plan?.id);
+        if (pendingPlan) {
+          pendingPlan.historyMessageId = historyMessage.id;
+          response.plan = buildAiPlanSnapshot(pendingPlan);
+          db.updateAiScheduleMessage(historyMessage.id, userId, { plan: JSON.stringify(response.plan) });
+        }
+      }
     } catch (historyError) {
       console.error('[AI History] 保存助手消息失败:', historyError);
     }

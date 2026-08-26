@@ -131,7 +131,7 @@ interface LoginStatus {
 export function SettingsPage() {
   const { user, authHeaders, logout, isAuthenticated } = useAuth();
 
-  // ---------- 环境变量配置 ----------
+  // ---------- 当前账号的 AI 凭据 ----------
   const [showEnvConfig, setShowEnvConfig] = useState(false);
   const [envConfig, setEnvConfig] = useState({
     apiKey: '',
@@ -143,7 +143,7 @@ export function SettingsPage() {
     checking: true,
   });
 
-  // 加载用户的 API Key
+  // 加载当前账号的 API Key
   const loadUserApiKey = useCallback(async () => {
     try {
       const res = await fetch('/api/user-api-key', { headers: authHeaders() });
@@ -221,7 +221,7 @@ export function SettingsPage() {
     } finally {
       setVerifying(false);
     }
-  }, []);
+  }, [authHeaders]);
 
   const saveEnvConfig = async () => {
     if (!envConfig.apiKey.trim()) {
@@ -585,10 +585,10 @@ export function SettingsPage() {
           }} size="small">退出登录</Button>
         </div>
 
-        {/* ---------- AI CodeBuddy 登录配置 ---------- */}
+        {/* ---------- 当前账号的 AI 凭据 ---------- */}
         <div>
           <h2 className="text-lg font-medium mb-3" style={{ color: 'var(--td-text-color-primary)' }}>
-            AI CodeBuddy 登录
+            AI 个人 API Key
           </h2>
 
           {/* 登录状态指示器 */}
@@ -601,8 +601,8 @@ export function SettingsPage() {
                   <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
                   <span className="text-sm font-medium text-green-600">已登录</span>
                 </div>
-                <span className="text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>
-                  方式：
+                  <span className="text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>
+                  当前账号凭据：
                   {loginStatus.hasApiKey ? (
                     <span className="ml-1 px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}>API Key</span>
                   ) : (
@@ -722,7 +722,7 @@ export function SettingsPage() {
                   {loginStatus.isLoggedIn ? '修改 API Key' : '配置 API Key'}
                 </Button>
                 <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                  API Key 将自动保存到您的账户
+                  仅保存到当前账号，服务器不使用全局默认 Key
                 </span>
               </div>
             )}

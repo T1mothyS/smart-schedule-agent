@@ -45,10 +45,11 @@ mkdir -p data
 - 独立随机的 `JWT_SECRET` 与 `BACKUP_ENCRYPTION_KEY`；
 - `ADMIN_INVITE_CODE`、`USER_INVITE_CODE`；
 - 官方 163 邮箱的 `SMTP_PASS` 授权码；
-- `CODEBUDDY_API_KEY`；
 - 正式域名对应的 `APP_URL`；
 - `APP_ENV=production`、`TRUST_PROXY_HOPS=1`；
 - 唯一一个 PM2 worker 设置 `BACKGROUND_JOBS_ENABLED=true`。本地或额外实例必须保持 `false`，否则会重复发送提醒和日报。
+
+AI API Key 不写入服务器环境变量。每位用户登录后在“设置”中保存自己的个人 API Key；服务器不提供 `CODEBUDDY_API_KEY` 或 `CODEBUDDY_BASE_URL` 默认回退，旧变量会阻止启动。
 
 邮箱自动识别是可选能力。启用时再填写 `IMAP_PASS`，并在 163 邮箱后台开启 IMAP/SMTP；SMTP 和 IMAP 可以使用同一官方邮箱，但授权码应按邮箱后台实际配置为准。
 

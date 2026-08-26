@@ -34,6 +34,9 @@ const LUNAR_NAME_MAP: Record<string, string> = {
   腊八节: '腊八',
 };
 
+const DAY_META_CACHE_LIMIT = 800;
+const dayMetaCache = new Map<string, CalendarDayMeta>();
+
 function pad(value: number): string {
   return String(value).padStart(2, '0');
 }
@@ -63,6 +66,9 @@ function getRuleFestival(date: Date): string | null {
 }
 
 export function getCalendarDayMeta(date: Date): CalendarDayMeta {
+  const cacheKey = toLocalDateKey(date);
+  const cached = dayMetaCache.get(cacheKey);
+  if (cached) return cached;
   const solar = Solar.fromYmd(date.getFullYear(), date.getMonth() + 1, date.getDate());
   const lunar = solar.getLunar();
   const monthDay = `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -78,12 +84,15 @@ export function getCalendarDayMeta(date: Date): CalendarDayMeta {
     getRuleFestival(date),
   ].filter((value): value is string => Boolean(value));
 
-  return {
+  const result = {
     lunarLabel: lunarDay === '初一' ? `${lunarMonth}月` : lunarDay,
     lunarFullLabel: `${lunarMonth}月${lunarDay}`,
     solarTerm: lunar.getJieQi() || '',
     festivals: Array.from(new Set(festivals)),
   };
+  if (dayMetaCache.size >= DAY_META_CACHE_LIMIT) dayMetaCache.clear();
+  dayMetaCache.set(cacheKey, result);
+  return result;
 }
 
 export function getPrimaryCalendarLabel(date: Date): string {

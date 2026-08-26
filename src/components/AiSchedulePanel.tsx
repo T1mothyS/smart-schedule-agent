@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Bot, Send, Loader2, CheckCircle2, Eye, EyeOff, MapPin, Clock, RotateCcw } from 'lucide-react';
+import { Bot, Send, Loader2, CheckCircle2, Edit3, Eye, EyeOff, MapPin, Clock, RotateCcw, Save, X } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { SCHEDULE_CATEGORY_COLORS, SCHEDULE_CATEGORY_LABELS } from '../utils/scheduleCategories';
 
@@ -24,6 +24,8 @@ interface Schedule {
 interface AiPlanOperation {
   key: string;
   type: 'create' | 'create_recurring' | 'update' | 'delete';
+  scheduleId?: string;
+  scheduleType?: 'event' | 'todo';
   title: string;
   startTime?: string | null;
   endTime?: string | null;
@@ -81,6 +83,149 @@ const PRIORITY_COLORS: Record<string, string> = {
 
 const AI_RESPONSE_TIMEOUT_MS = 330_000;
 const AI_RETRY_WINDOW_MS = 15 * 60 * 1000;
+
+interface PlanOperationForm {
+  title: string;
+  type: 'event' | 'todo';
+  startDate: string;
+  startTime: string;
+  endDate: string;
+  endTime: string;
+  allDay: boolean;
+  isUnscheduled: boolean;
+  location: string;
+  notes: string;
+  anchorDate: string;
+  reminderTime: string;
+  actionGuide: string;
+}
+
+function datePart(value?: string | null): string {
+  return value?.slice(0, 10) || '';
+}
+
+function timePart(value?: string | null): string {
+  return value?.slice(11, 16) || '';
+}
+
+function operationToForm(operation: AiPlanOperation): PlanOperationForm {
+  return {
+    title: operation.title || '',
+    type: operation.scheduleType || (operation.isUnscheduled ? 'todo' : 'event'),
+    startDate: datePart(operation.startTime),
+    startTime: timePart(operation.startTime) || '09:00',
+    endDate: datePart(operation.endTime) || datePart(operation.startTime),
+    endTime: timePart(operation.endTime),
+    allDay: operation.allDay === true,
+    isUnscheduled: operation.isUnscheduled === true,
+    location: operation.location || '',
+    notes: operation.notes || '',
+    anchorDate: operation.recurrence?.anchorDate || datePart(operation.startTime),
+    reminderTime: operation.recurrence?.reminderTime || '09:00',
+    actionGuide: operation.notes || '',
+  };
+}
+
+function PlanOperationCard({ operation, editing, saving, onStartEdit, onCancel, onSave }: {
+  operation: AiPlanOperation;
+  editing: boolean;
+  saving: boolean;
+  onStartEdit: () => void;
+  onCancel: () => void;
+  onSave: (patch: Record<string, unknown>) => Promise<void>;
+}) {
+  const [form, setForm] = useState<PlanOperationForm>(() => operationToForm(operation));
+
+  useEffect(() => {
+    setForm(operationToForm(operation));
+  }, [operation]);
+
+  const update = <K extends keyof PlanOperationForm>(key: K, value: PlanOperationForm[K]) => {
+    setForm(current => ({ ...current, [key]: value }));
+  };
+
+  const save = async () => {
+    if (!form.title.trim()) return window.alert('标题不能为空');
+    try {
+      if (operation.type === 'create_recurring') {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(form.anchorDate)) return window.alert('请填写有效的起始日期');
+        if (!/^\d{2}:\d{2}$/.test(form.reminderTime)) return window.alert('请填写有效的提醒时间');
+        await onSave({ title: form.title.trim(), anchorDate: form.anchorDate, reminderTime: form.reminderTime, actionGuide: form.actionGuide });
+        return;
+      }
+      if (!form.isUnscheduled && !/^\d{4}-\d{2}-\d{2}$/.test(form.startDate)) return window.alert('请填写有效的开始日期');
+      const startTime = form.isUnscheduled ? undefined : `${form.startDate}T${form.allDay ? '00:00' : (form.startTime || '09:00')}:00`;
+      const endTime = form.isUnscheduled || form.allDay || !form.endDate || !form.endTime
+        ? ''
+        : `${form.endDate}T${form.endTime}:00`;
+      await onSave({
+        type: form.isUnscheduled ? 'todo' : form.type,
+        title: form.title.trim(),
+        ...(startTime ? { startTime } : {}),
+        endTime,
+        allDay: form.isUnscheduled ? false : form.allDay,
+        isUnscheduled: form.isUnscheduled,
+        location: form.location,
+        notes: form.notes,
+      });
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : '保存计划项失败');
+    }
+  };
+
+  const actionLabel: Record<string, string> = { create: '新建日程', create_recurring: '周期事项', update: '修改日程', delete: '删除日程' };
+  const recurrenceUnit = operation.recurrence?.frequency === 'monthly' ? '月'
+    : operation.recurrence?.frequency === 'yearly' ? '年'
+      : operation.recurrence?.unit === 'month' ? '月'
+        : operation.recurrence?.unit === 'year' ? '年' : '天';
+  const timeLabel = operation.isUnscheduled
+    ? '无具体日期 · 挂起待办'
+    : operation.recurrence
+      ? `每 ${operation.recurrence.interval || 1} ${recurrenceUnit} · 起始 ${operation.recurrence.anchorDate || '待确认'}`
+      : operation.startTime ? `${formatDate(operation.startTime)} ${operation.allDay ? '全天' : formatTime(operation.startTime)}` : '时间待确认';
+  const editable = operation.type !== 'delete';
+
+  return <div
+    className="rounded-md px-2 py-1.5"
+    role={!editing && editable ? 'button' : undefined}
+    tabIndex={!editing && editable ? 0 : undefined}
+    onClick={() => { if (!editing && editable) onStartEdit(); }}
+    onKeyDown={event => {
+      if (!editing && editable && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault();
+        onStartEdit();
+      }
+    }}
+    style={{ backgroundColor: 'var(--td-bg-color-container)', border: '1px solid #DBEAFE', cursor: !editing && editable ? 'pointer' : undefined }}
+  >
+    {!editing ? <>
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-xs font-medium" style={{ color: 'var(--td-text-color-primary)' }}>{operation.title}</div>
+        {operation.type !== 'delete' && <button type="button" className="ai-plan-edit-button" onClick={event => { event.stopPropagation(); onStartEdit(); }} aria-label={`编辑计划项 ${operation.title}`}><Edit3 size={13} /> 编辑</button>}
+      </div>
+      <div className="text-[11px] mt-0.5" style={{ color: 'var(--td-text-color-secondary)' }}>{actionLabel[operation.type] || '处理'} · {timeLabel}</div>
+      {operation.location && <div className="text-[11px] mt-0.5" style={{ color: 'var(--td-text-color-secondary)' }}>地点：{operation.location}</div>}
+      {operation.notes && <div className="text-[11px] mt-0.5 whitespace-pre-line" style={{ color: 'var(--td-text-color-secondary)' }}>备注：{operation.notes}</div>}
+      {operation.type === 'delete' && <div className="text-[11px] mt-1" style={{ color: '#B45309' }}>删除计划不能编辑；如需调整，请取消后重新描述。</div>}
+    </> : <div className="ai-plan-operation-editor">
+      <div className="ai-plan-editor-head"><strong>编辑计划项</strong><button type="button" className="icon-button" onClick={onCancel} disabled={saving} aria-label="取消编辑"><X size={14} /></button></div>
+      {operation.type === 'create_recurring' ? <>
+        <label>标题<input value={form.title} onChange={event => update('title', event.target.value)} autoFocus /></label>
+        <div className="ai-plan-editor-grid"><label>起始日期<input type="date" value={form.anchorDate} onChange={event => update('anchorDate', event.target.value)} /></label><label>提醒时间<input type="time" value={form.reminderTime} onChange={event => update('reminderTime', event.target.value)} /></label></div>
+        <label>操作说明<textarea rows={2} value={form.actionGuide} onChange={event => update('actionGuide', event.target.value)} /></label>
+      </> : <>
+        <label>标题<input value={form.title} onChange={event => update('title', event.target.value)} autoFocus /></label>
+        <label>类型<select value={form.type} onChange={event => update('type', event.target.value as PlanOperationForm['type'])} disabled={form.isUnscheduled}><option value="event">日程</option><option value="todo">待办</option></select></label>
+        <div className="ai-plan-editor-grid"><label>开始日期<input type="date" value={form.startDate} onChange={event => update('startDate', event.target.value)} disabled={form.isUnscheduled} /></label><label>开始时间<input type="time" value={form.startTime} onChange={event => update('startTime', event.target.value)} disabled={form.isUnscheduled || form.allDay} /></label></div>
+        <div className="ai-plan-editor-grid"><label>结束日期<input type="date" value={form.endDate} onChange={event => update('endDate', event.target.value)} disabled={form.isUnscheduled || form.allDay} /></label><label>结束时间<input type="time" value={form.endTime} onChange={event => update('endTime', event.target.value)} disabled={form.isUnscheduled || form.allDay} /></label></div>
+        <div className="ai-plan-editor-checks"><label><input type="checkbox" checked={form.allDay} onChange={event => update('allDay', event.target.checked)} disabled={form.isUnscheduled} /> 全天</label><label><input type="checkbox" checked={form.isUnscheduled} onChange={event => update('isUnscheduled', event.target.checked)} /> 无固定期限待办</label></div>
+        <label>地点<input value={form.location} onChange={event => update('location', event.target.value)} /></label>
+        <label>备注<textarea rows={2} value={form.notes} onChange={event => update('notes', event.target.value)} /></label>
+      </>}
+      <div className="ai-plan-editor-actions"><button type="button" className="secondary-button" onClick={onCancel} disabled={saving}>取消</button><button type="button" className="primary-button" onClick={save} disabled={saving}><Save size={13} />{saving ? '保存中…' : '保存这项'}</button></div>
+    </div>}
+  </div>;
+}
 
 function createRequestId(): string {
   return globalThis.crypto?.randomUUID?.() || `ai_${Date.now()}_${Math.random().toString(36).slice(2)}`;
@@ -197,15 +342,18 @@ function ScheduleMiniCard({ schedule, onOpen, onOpenMenu }: {
 
 // ==================== 消息气泡 ====================
 
-function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan, onDiscardPlan, confirmingPlanId }: {
+function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan, onDiscardPlan, onUpdatePlanOperation, confirmingPlanId, savingPlanOperationKey }: {
   msg: ChatMessage;
   onOpenSchedule?: (id: string) => void;
   onOpenScheduleMenu?: (id: string, x: number, y: number) => void;
   onConfirmPlan?: (messageId: string, planId: string) => void;
   onDiscardPlan?: (messageId: string) => void;
+  onUpdatePlanOperation?: (planId: string, key: string, patch: Record<string, unknown>) => Promise<void>;
   confirmingPlanId?: string | null;
+  savingPlanOperationKey?: string | null;
 }) {
   const isUser = msg.role === 'user';
+  const [editingOperationKey, setEditingOperationKey] = useState<string | null>(null);
 
   if (isUser) {
     return (
@@ -273,26 +421,18 @@ function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan,
                   <div key={`${warning}-${index}`} className="text-xs mb-1" style={{ color: '#B45309' }}>需核对：{warning}</div>
                 ))}
                 <div className="space-y-1.5">
-                  {msg.plan.operations.map(operation => {
-                    const actionLabel: Record<string, string> = { create: '新建日程', create_recurring: '周期事项', update: '修改日程', delete: '删除日程' };
-                    const recurrenceUnit = operation.recurrence?.frequency === 'monthly' ? '月'
-                      : operation.recurrence?.frequency === 'yearly' ? '年'
-                        : operation.recurrence?.unit === 'month' ? '月'
-                          : operation.recurrence?.unit === 'year' ? '年' : '天';
-                    const timeLabel = operation.isUnscheduled
-                      ? '无具体日期 · 挂起待办'
-                      : operation.recurrence
-                      ? `每 ${operation.recurrence.interval || 1} ${recurrenceUnit} · 起始 ${operation.recurrence.anchorDate || '待确认'}`
-                      : operation.startTime ? `${formatDate(operation.startTime)} ${operation.allDay ? '全天' : formatTime(operation.startTime)}` : '时间待确认';
-                    return (
-                      <div key={operation.key} className="rounded-md px-2 py-1.5" style={{ backgroundColor: 'var(--td-bg-color-container)', border: '1px solid #DBEAFE' }}>
-                        <div className="text-xs font-medium" style={{ color: 'var(--td-text-color-primary)' }}>{operation.title}</div>
-                        <div className="text-[11px] mt-0.5" style={{ color: 'var(--td-text-color-secondary)' }}>{actionLabel[operation.type] || '处理'} · {timeLabel}</div>
-                        {operation.location && <div className="text-[11px] mt-0.5" style={{ color: 'var(--td-text-color-secondary)' }}>地点：{operation.location}</div>}
-                        {operation.notes && <div className="text-[11px] mt-0.5 whitespace-pre-line" style={{ color: 'var(--td-text-color-secondary)' }}>备注：{operation.notes}</div>}
-                      </div>
-                    );
-                  })}
+                  {msg.plan.operations.map(operation => <PlanOperationCard
+                    key={operation.key}
+                    operation={operation}
+                    editing={editingOperationKey === operation.key}
+                    saving={savingPlanOperationKey === `${msg.plan!.id}:${operation.key}`}
+                    onStartEdit={() => setEditingOperationKey(operation.key)}
+                    onCancel={() => setEditingOperationKey(null)}
+                    onSave={async patch => {
+                      await onUpdatePlanOperation?.(msg.plan!.id, operation.key, patch);
+                      setEditingOperationKey(null);
+                    }}
+                  />)}
                 </div>
                 <div className="flex justify-end gap-2 mt-2.5">
                   <button type="button" className="secondary-button" onClick={() => onDiscardPlan?.(msg.id)} disabled={confirmingPlanId === msg.plan.id}>取消</button>
@@ -336,6 +476,7 @@ export function AiSchedulePanel({
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [confirmingPlanId, setConfirmingPlanId] = useState<string | null>(null);
+  const [savingPlanOperationKey, setSavingPlanOperationKey] = useState<string | null>(null);
   const { isAuthenticated, token, authHeaders } = useAuth();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -378,6 +519,29 @@ export function AiSchedulePanel({
     textarea.style.height = `${Math.max(nextHeight, 38)}px`;
     textarea.style.overflowY = textarea.scrollHeight > 96 ? 'auto' : 'hidden';
   }, [inputText, collapsed]);
+
+  const handleUpdatePlanOperation = useCallback(async (planId: string, key: string, patch: Record<string, unknown>) => {
+    const savingKey = `${planId}:${key}`;
+    setSavingPlanOperationKey(savingKey);
+    try {
+      const response = await fetch(`/api/ai-chat/plans/${encodeURIComponent(planId)}/operations/${encodeURIComponent(key)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(patch),
+      });
+      const data = await readJsonResponse(response);
+      if (!response.ok || !data.operation) throw new Error(data.error || '保存计划项失败');
+      setMessages(previous => previous.map(message => message.plan?.id === planId ? {
+        ...message,
+        plan: {
+          ...message.plan!,
+          operations: message.plan!.operations.map(operation => operation.key === key ? { ...operation, ...data.operation } : operation),
+        },
+      } : message));
+    } finally {
+      setSavingPlanOperationKey(null);
+    }
+  }, [authHeaders]);
 
   const handleSubmit = useCallback(async () => {
     const text = inputText.trim();
@@ -450,7 +614,7 @@ export function AiSchedulePanel({
         role: 'assistant',
         type: 'error',
         text: isLoginError 
-          ? (errorMsg || '请先配置 API Key 或登录 CodeBuddy CLI')
+          ? (errorMsg || '请先在设置中保存个人 API Key')
           : mayStillBeProcessing
             ? '请求已超出前端等待时间，服务端可能仍在整理计划。内容已保留，请勿修改内容；稍后再次发送可取得同一结果，不会重复创建日程。'
           : (errorMsg || '处理失败，请重试'),
@@ -651,11 +815,13 @@ export function AiSchedulePanel({
           <MessageBubble
             key={msg.id}
             msg={msg}
-          onOpenSchedule={onOpenSchedule}
+            onOpenSchedule={onOpenSchedule}
             onOpenScheduleMenu={onOpenScheduleMenu}
             onConfirmPlan={handleConfirmPlan}
             onDiscardPlan={handleDiscardPlan}
+            onUpdatePlanOperation={handleUpdatePlanOperation}
             confirmingPlanId={confirmingPlanId}
+            savingPlanOperationKey={savingPlanOperationKey}
           />
         ))}
 

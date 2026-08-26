@@ -50,7 +50,7 @@ export function AgendaView({
   const selectionFromScrollRef = useRef<string | null>(null);
   const programmaticScrollRef = useRef(false);
   const scrollIdleTimerRef = useRef<number | null>(null);
-  const frameRef = useRef<number | null>(null);
+  const programmaticScrollTimerRef = useRef<number | null>(null);
   const selectedKey = toLocalDateKey(selectedDate);
   const todayKey = toLocalDateKey(new Date());
 
@@ -96,8 +96,16 @@ export function AgendaView({
     }
     const element = containerRef.current?.querySelector<HTMLElement>(`[data-agenda-date="${selectedKey}"]`);
     if (!element) return;
+    if (programmaticScrollTimerRef.current != null) window.clearTimeout(programmaticScrollTimerRef.current);
     programmaticScrollRef.current = true;
     element.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    programmaticScrollTimerRef.current = window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+      programmaticScrollTimerRef.current = null;
+    }, 700);
+    return () => {
+      if (programmaticScrollTimerRef.current != null) window.clearTimeout(programmaticScrollTimerRef.current);
+    };
   }, [selectedKey]);
 
   useEffect(() => {
@@ -120,26 +128,33 @@ export function AgendaView({
       onSelectDate(group.date);
     };
     const onScroll = () => {
+      if (programmaticScrollRef.current) return;
       if (scrollIdleTimerRef.current != null) window.clearTimeout(scrollIdleTimerRef.current);
       scrollIdleTimerRef.current = window.setTimeout(() => {
-        programmaticScrollRef.current = false;
-        if (frameRef.current != null) window.cancelAnimationFrame(frameRef.current);
-        frameRef.current = window.requestAnimationFrame(syncDateFromScroll);
-      }, 120);
-      if (programmaticScrollRef.current) return;
-      if (frameRef.current != null) window.cancelAnimationFrame(frameRef.current);
-      frameRef.current = window.requestAnimationFrame(syncDateFromScroll);
+        scrollIdleTimerRef.current = null;
+        syncDateFromScroll();
+      }, 140);
     };
-    const cancelProgrammaticScroll = () => { programmaticScrollRef.current = false; };
+    const cancelProgrammaticScroll = () => {
+      programmaticScrollRef.current = false;
+      if (programmaticScrollTimerRef.current != null) {
+        window.clearTimeout(programmaticScrollTimerRef.current);
+        programmaticScrollTimerRef.current = null;
+      }
+    };
     container.addEventListener('scroll', onScroll, { passive: true });
     container.addEventListener('wheel', cancelProgrammaticScroll, { passive: true });
     container.addEventListener('touchstart', cancelProgrammaticScroll, { passive: true });
+    container.addEventListener('pointerdown', cancelProgrammaticScroll, { passive: true });
+    container.addEventListener('keydown', cancelProgrammaticScroll);
     return () => {
       container.removeEventListener('scroll', onScroll);
       container.removeEventListener('wheel', cancelProgrammaticScroll);
       container.removeEventListener('touchstart', cancelProgrammaticScroll);
+      container.removeEventListener('pointerdown', cancelProgrammaticScroll);
+      container.removeEventListener('keydown', cancelProgrammaticScroll);
       if (scrollIdleTimerRef.current != null) window.clearTimeout(scrollIdleTimerRef.current);
-      if (frameRef.current != null) window.cancelAnimationFrame(frameRef.current);
+      if (programmaticScrollTimerRef.current != null) window.clearTimeout(programmaticScrollTimerRef.current);
     };
   }, [groups, selectedKey, onSelectDate]);
 

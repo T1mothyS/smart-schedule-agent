@@ -445,7 +445,7 @@ P0/P1 任务先于视觉优化和架构扩展。只有当用户量、附件量�
 - JWT_SECRET、BACKUP_ENCRYPTION_KEY；
 - ADMIN_INVITE_CODE、USER_INVITE_CODE；
 - SMTP_PASS、IMAP_PASS；
-- CODEBUDDY_API_KEY；
+- 各账号保存的 CodeBuddy API Key 和自定义 Base URL；服务器级 `CODEBUDDY_API_KEY` / `CODEBUDDY_BASE_URL` 已禁止；
 - OSS_ACCESS_KEY_ID、OSS_ACCESS_KEY_SECRET；
 - 生产 APP_URL 及其他服务器内部配置。
 
@@ -639,6 +639,14 @@ Git 历史显示项目已经经历了基础架构、日历工作区、AI 客户�
 - 生产准备：预检发现服务器仍为 Node `20.20.2` 且依赖清单与当前版本不同；已保留旧 apt Node 20，另安装并校验官方 Node `22.23.2`，在独立暂存目录用 `registry.npmmirror.com` 完成 `npm ci`、服务器侧类型检查和 58 项测试。官方 npm registry 在该服务器多次出现 tarball `ETIMEDOUT/ECONNRESET`，未据此修改锁文件。
 - 部署结果：新目录原子切换后，应用因生产 `.env` 中历史邀请码长度不足 12 个字符而触发既有安全闸门，未监听 3000；没有修改或输出任何密钥。已自动回滚到提交 `0547280fc0b7fd63e41880cb4d49aa701852a100`，PM2 为 `online`，本机与公网根路径 `/api/health` 均返回 200，旧版本数据、`.env`、回滚目录和升级前备份均保留；失败新版本保存在 `/root/smart-schedule-agent.failed-workspace-20260825-201304-startup`。
 - 待办与边界：需要在明确提供或授权生成两个互不相同且至少 12 字符的生产邀请码后，才能不绕过安全校验重新启动 `126c389`；在此之前不得把生产 `.env` 改为 development、关闭校验或猜测新凭据。GitHub 已更新，生产最新版本尚未上线。
+
+### 2026-08-26：行动中心、AI 计划编辑与账号凭据隔离
+
+- 用户意图：按照 `C:\Users\Elysia\Downloads\PLAN (1).md` 执行行动中心、日历表单、AI 待确认计划、完成记录和 API Key 隔离改造；保持不新增依赖、数据库表、邮件/推送或部署动作。
+- 实际修改：服务器端移除全局 CodeBuddy 凭据回退并拒绝旧环境变量；新增日程 `defer-one-day`、`convert-to-unscheduled` 行动接口；待确认 AI 计划支持逐项 PATCH 编辑、历史快照恢复和稳定操作编号。行动中心“完成”直接登记空白完成记录，已完成详情可编辑证明信息并增删附件，操作菜单支持编辑、删除、顺延一天和转为无固定期限；周期事项编辑导向 `/reminders?edit=`。日历表单默认展开所有字段，农历元数据增加有界缓存，日历滚动只在 140ms 空闲后同步日期；AI 计划卡片仅允许编辑待确认卡片，不改变普通聊天文字只读行为。
+- 文档同步：`.env.example`、`README.md`、`DEPLOY.md` 和本记录同步说明个人 API Key 由账号设置保存，未写入真实凭据。
+- 验证结果：`npm test` 67 项全部通过，`npm run typecheck`、临时 `ELECTRON_APP_URL=https://gotimothy.online/today` 的 `npm run build`、官方 registry 的 `npm audit --audit-level=high`（0 vulnerabilities）和 `git diff --check` 通过。隔离浏览器已验证行动中心登录、直接完成不弹证明窗、完成详情和完成记录编辑入口、菜单按事项类型裁剪、日程顺延、日历表单桌面/390×844 移动端布局、无“高级选项”和账号级 API Key 文案；“转为无固定期限”的原生确认框未接受，改由接口代码和测试覆盖，未改变隔离数据。
+- Git/部署状态：在独立工作树 `feature/calendar-plan-implementation` 实施；生产服务器、真实 SMTP/IMAP、部署和推送尚未执行，完成后只建立本地 commit。
 
 ## 13. 参考文件
 
