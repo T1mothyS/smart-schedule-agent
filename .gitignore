@@ -1,6 +1,11 @@
 .env
 .env.*
 !.env.example
+
+# Local-only project guidance and deployment notes
+AGENTS.md
+DEPLOY.md
+
 node_modules/
 dist/
 dist-electron/
