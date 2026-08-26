@@ -7,7 +7,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 ## 1. 当前能力
 
 - 登录后默认进入 `/today` 今日行动中心。
-- 日历支持日程、待办、分类、优先级和完成状态。
+- 日历支持日程、待办、分类、优先级和完成状态；带时间的待办是时间点事项，不保存持续时长，日视图使用固定视觉卡片高度展示。
 - 周期事务支持信用卡、SIM、订阅、保险、证件、会员、房租、水电、车辆年检和自定义规则。
 - 周期事务会按当前周期到期日同步为日历全天待办，完成后继续生成下一周期事项。
 - 通知支持邮件、站内消息、浏览器通知、免打扰、失败重试和发送记录。
@@ -49,7 +49,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 - Node.js 22.12 或更高版本。
 - npm（随 Node.js 安装）。
-- 需要使用 AI 功能时准备 CodeBuddy API Key。
+- 需要使用 AI 功能时准备个人 CodeBuddy API Key，登录后在“设置”中保存。
 - 需要发送邮件时准备官方 163 邮箱的客户端授权码。
 
 先检查版本：
@@ -91,12 +91,13 @@ SMTP_PORT=465
 SMTP_USER=aicalendarofficial@163.com
 SMTP_PASS=163邮箱客户端授权码
 
-CODEBUDDY_API_KEY=你的CodeBuddy_API_Key
 PORT=3000
 APP_TIMEZONE=Asia/Shanghai
 APP_URL=http://localhost:5173/today
 APP_ENV=development
 ```
+
+AI 凭据按账号保存，不再从服务器 `.env` 读取默认的 `CODEBUDDY_API_KEY` 或 `CODEBUDDY_BASE_URL`。登录后进入“设置”，输入个人 API Key；如需自定义地址，也只保存到当前账号。旧的服务器级变量会阻止服务启动，避免账号之间发生凭据串用。
 
 不要把真实密钥、授权码或邀请码写进 `.env.example`，也不要提交 `.env`。
 
@@ -239,8 +240,6 @@ cp .env.example .env
 
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
-| `CODEBUDDY_API_KEY` | AI 功能必需 | 服务器默认使用的 CodeBuddy API Key |
-| `CODEBUDDY_BASE_URL` | 否 | 自定义 CodeBuddy API 地址；只接受不含账号、查询参数和片段的公网 HTTPS 域名，不接受 IP、本机或内部域名 |
 | `PORT` | 否 | 后端监听端口，默认 `3000` |
 | `APP_TIMEZONE` | 建议 | 业务时区，当前建议 `Asia/Shanghai` |
 | `APP_URL` | 是 | 邮件按钮跳转地址；生产环境填写 HTTPS 域名，例如 `https://example.com/today` |

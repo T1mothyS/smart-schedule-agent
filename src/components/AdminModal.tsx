@@ -12,6 +12,7 @@ import {
   RefreshIcon,
   DeleteIcon,
   DownloadIcon,
+  CopyIcon,
 } from 'tdesign-icons-react';
 import { useAuth } from '../hooks/useAuth';
 
@@ -20,6 +21,7 @@ interface User {
   email: string;
   role: 'admin' | 'user';
   disabled: boolean;
+  admin_shared_api_enabled: boolean;
   created_at: string;
   updated_at: string;
   last_login_at: string | null;
@@ -33,6 +35,9 @@ interface LogEntry {
   data?: any;
 }
 
+const PRODUCTION_INVITE_COMMAND = `$sshKey = 'C:\\Users\\Elysia\\.ssh\\gotimothy_online_ed25519'
+& ssh -i $sshKey root@47.95.114.137 "grep -E '^(ADMIN_INVITE_CODE|USER_INVITE_CODE)=' /root/smart-schedule-agent/.env"`;
+
 // ==================== 用户管理表格 ====================
 function UserManagementTab({ onClose }: { onClose?: () => void }) {
   const { authHeaders } = useAuth();
@@ -43,6 +48,8 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [showInviteHelp, setShowInviteHelp] = useState(false);
+  const [inviteCommandCopied, setInviteCommandCopied] = useState(false);
 
   // 使用 ref 存储 authHeaders 避免无限循环
   const authHeadersRef = React.useRef(authHeaders);
@@ -108,6 +115,47 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
       MessagePlugin.error('操作失败');
     } finally {
       setLoadingAction(null);
+    }
+  };
+
+  const handleToggleAdminApiSharing = async (user: User) => {
+    if (user.role === 'admin') return;
+    const previous = Boolean(user.admin_shared_api_enabled);
+    const enabled = !previous;
+    const actionKey = `${user.id}:api-share`;
+    setUsers(current => current.map(row => row.id === user.id ? { ...row, admin_shared_api_enabled: enabled } : row));
+    setLoadingAction(actionKey);
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/api-share`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeadersRef.current() },
+        body: JSON.stringify({ enabled }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '共享 API 权限更新失败');
+      const confirmed = typeof data.enabled === 'boolean' ? data.enabled : enabled;
+      setUsers(current => current.map(row => row.id === user.id ? { ...row, admin_shared_api_enabled: confirmed } : row));
+      if (confirmed && data.adminApiAvailable === false) {
+        MessagePlugin.warning('权限已开启，但当前没有可用的管理员 API Key');
+      } else {
+        MessagePlugin.success(confirmed ? '已共享管理员 API' : '已取消共享管理员 API');
+      }
+    } catch (error) {
+      setUsers(current => current.map(row => row.id === user.id ? { ...row, admin_shared_api_enabled: previous } : row));
+      MessagePlugin.error(error instanceof Error ? error.message : '共享 API 权限更新失败');
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const copyInviteCommand = async () => {
+    try {
+      await navigator.clipboard.writeText(PRODUCTION_INVITE_COMMAND);
+      setInviteCommandCopied(true);
+      MessagePlugin.success('已复制');
+      window.setTimeout(() => setInviteCommandCopied(false), 1800);
+    } catch {
+      MessagePlugin.error('自动复制失败，请手动选择命令');
     }
   };
 
@@ -225,7 +273,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
     {
       colKey: 'actions',
       title: '操作',
-      width: 320,
+      width: 420,
       cell: ({ row }: { row: User }) => (
         <div className="flex items-center gap-1 flex-wrap">
           {/* 角色切换 */}
@@ -240,6 +288,26 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             ]}
             disabled={row.role === 'admin'}
           />
+          {/* 管理员 API 共享 */}
+          <Button
+            size="small"
+            variant="outline"
+            theme={row.admin_shared_api_enabled ? 'primary' : 'default'}
+            onClick={() => handleToggleAdminApiSharing(row)}
+            loading={loadingAction === `${row.id}:api-share`}
+            disabled={row.role === 'admin'}
+          >
+            {row.role === 'admin' ? '管理员账号' : row.admin_shared_api_enabled ? '取消共享' : '共享 API'}
+          </Button>
+          <span
+            className="text-xs px-2 py-0.5 rounded-full"
+            style={{
+              backgroundColor: row.admin_shared_api_enabled ? '#D1FAE5' : '#F3F4F6',
+              color: row.admin_shared_api_enabled ? '#047857' : '#6B7280',
+            }}
+          >
+            {row.admin_shared_api_enabled ? '已共享' : '未共享'}
+          </span>
           {/* 启用/禁用 */}
           <Button
             size="small"
@@ -287,6 +355,36 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
 
   return (
     <div>
+      {/* 生产环境邀请码查询方法；这里只展示查询命令，不读取或回显邀请码。 */}
+      <section className="mb-4 rounded-lg border p-3" style={{ borderColor: 'var(--td-component-stroke)', backgroundColor: 'var(--td-bg-color-page)' }}>
+        <div className="flex items-center gap-2 mb-2">
+          <h3 className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>生产环境邀请码</h3>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label="查看生产环境邀请码查询说明"
+              aria-expanded={showInviteHelp}
+              title="查看查询说明"
+              onClick={() => setShowInviteHelp(value => !value)}
+              className="inline-flex h-5 w-5 items-center justify-center rounded-full border text-xs font-semibold"
+              style={{ borderColor: 'var(--td-component-stroke)', color: 'var(--td-text-color-secondary)' }}
+            >
+              ?
+            </button>
+            {showInviteHelp && (
+              <div role="tooltip" className="absolute left-0 top-7 z-10 w-80 max-w-[calc(100vw-3rem)] rounded-lg border p-2 text-xs leading-5 shadow-lg" style={{ borderColor: 'var(--td-component-stroke)', color: 'var(--td-text-color-secondary)', backgroundColor: 'var(--td-bg-color-container)' }}>
+                通过 SSH 从生产服务器的 .env 文件读取当前管理员邀请码和用户邀请码。需要当前电脑已配置对应 SSH Key，并拥有服务器访问权限。
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex items-start gap-2 flex-wrap">
+          <pre className="min-w-0 flex-1 overflow-x-auto rounded-md border p-2 text-xs leading-5" style={{ borderColor: 'var(--td-component-stroke)', color: 'var(--td-text-color-primary)', backgroundColor: 'var(--td-bg-color-container)', whiteSpace: 'pre', fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}><code>{PRODUCTION_INVITE_COMMAND}</code></pre>
+          <Button size="small" variant="outline" icon={<CopyIcon />} onClick={copyInviteCommand}>
+            {inviteCommandCopied ? '已复制' : '复制命令'}
+          </Button>
+        </div>
+      </section>
       {/* 搜索栏 */}
       <div className="flex items-center gap-3 mb-4">
         <Input

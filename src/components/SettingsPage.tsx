@@ -124,6 +124,7 @@ interface LoginStatus {
   isLoggedIn: boolean;
   checking: boolean;
   hasApiKey?: boolean;
+  usingSharedApi?: boolean;
   apiKey?: string;
   error?: string;
 }
@@ -131,7 +132,7 @@ interface LoginStatus {
 export function SettingsPage() {
   const { user, authHeaders, logout, isAuthenticated } = useAuth();
 
-  // ---------- 环境变量配置 ----------
+  // ---------- 当前账号的 AI 凭据 ----------
   const [showEnvConfig, setShowEnvConfig] = useState(false);
   const [envConfig, setEnvConfig] = useState({
     apiKey: '',
@@ -143,7 +144,7 @@ export function SettingsPage() {
     checking: true,
   });
 
-  // 加载用户的 API Key
+  // 加载当前账号的 API Key
   const loadUserApiKey = useCallback(async () => {
     try {
       const res = await fetch('/api/user-api-key', { headers: authHeaders() });
@@ -175,6 +176,7 @@ export function SettingsPage() {
           isLoggedIn: data.isLoggedIn ?? false,
           checking: false,
           hasApiKey: data.hasApiKey,
+          usingSharedApi: data.usingSharedApi,
           apiKey: data.apiKey,
           error: data.error,
         });
@@ -221,7 +223,7 @@ export function SettingsPage() {
     } finally {
       setVerifying(false);
     }
-  }, []);
+  }, [authHeaders]);
 
   const saveEnvConfig = async () => {
     if (!envConfig.apiKey.trim()) {
@@ -585,10 +587,10 @@ export function SettingsPage() {
           }} size="small">退出登录</Button>
         </div>
 
-        {/* ---------- AI CodeBuddy 登录配置 ---------- */}
+        {/* ---------- 当前账号的 AI 凭据 ---------- */}
         <div>
           <h2 className="text-lg font-medium mb-3" style={{ color: 'var(--td-text-color-primary)' }}>
-            AI CodeBuddy 登录
+            AI 个人 API Key
           </h2>
 
           {/* 登录状态指示器 */}
@@ -601,14 +603,19 @@ export function SettingsPage() {
                   <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
                   <span className="text-sm font-medium text-green-600">已登录</span>
                 </div>
-                <span className="text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>
-                  方式：
-                  {loginStatus.hasApiKey ? (
+                  <span className="text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>
+                  当前账号凭据：
+                  {loginStatus.usingSharedApi ? (
+                    <span className="ml-1 px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: '#D1FAE5', color: '#047857' }}>管理员共享 API</span>
+                  ) : loginStatus.hasApiKey ? (
                     <span className="ml-1 px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: '#DBEAFE', color: '#1D4ED8' }}>API Key</span>
                   ) : (
                     <span className="ml-1 px-1.5 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: '#E5E7EB', color: '#6B7280' }}>未配置</span>
                   )}
                 </span>
+                {loginStatus.usingSharedApi && (
+                  <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>密钥仅在服务器端使用</span>
+                )}
                 {loginStatus.apiKey && (
                   <span className="text-xs ml-2" style={{ color: 'var(--td-text-color-placeholder)' }}>
                     ({loginStatus.apiKey})
@@ -722,7 +729,7 @@ export function SettingsPage() {
                   {loginStatus.isLoggedIn ? '修改 API Key' : '配置 API Key'}
                 </Button>
                 <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-                  API Key 将自动保存到您的账户
+                  仅保存到当前账号，服务器不使用全局默认 Key
                 </span>
               </div>
             )}

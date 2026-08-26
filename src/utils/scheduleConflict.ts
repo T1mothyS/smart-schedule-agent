@@ -19,6 +19,8 @@ export interface ConflictDismissal {
 }
 
 export const CONFLICT_DISMISS_TTL_MS = 4 * 60 * 60 * 1000;
+const DEFAULT_EVENT_DURATION_MS = 60 * 60 * 1000;
+const DEFAULT_TODO_POINT_DURATION_MS = 60 * 1000;
 
 /**
  * Parse a schedule timestamp while preserving the existing local-calendar
@@ -46,9 +48,13 @@ export function parseScheduleDate(value: string): Date {
 function getScheduleRange(schedule: ConflictSchedule): { start: number; end: number } | null {
   const start = parseScheduleDate(schedule.start_time).getTime();
   if (!Number.isFinite(start)) return null;
+  // 待办没有持续时长；这里仅用一分钟的内存时间窗判断同一时间点的冲突，绝不回写 end_time。
+  const fallbackDuration = schedule.type === 'todo'
+    ? DEFAULT_TODO_POINT_DURATION_MS
+    : DEFAULT_EVENT_DURATION_MS;
   const end = schedule.end_time
     ? parseScheduleDate(schedule.end_time).getTime()
-    : start + 60 * 60 * 1000;
+    : start + fallbackDuration;
   if (!Number.isFinite(end)) return null;
   return { start, end };
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ChevronDown, ChevronLeft, ChevronRight, Plus, MapPin, Clock, CheckCircle2,
   Circle, Trash2, Edit3, Calendar, CalendarDays, LayoutList, LayoutGrid, X, Bell, AlertTriangle,
@@ -490,7 +490,6 @@ export function ScheduleFormModal({
   onClose: () => void;
 }) {
   const isEditing = !!editingSchedule;
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [form, setForm] = useState({
     type: (editingSchedule?.type || 'event') as 'event' | 'todo',
     title: editingSchedule?.title || '',
@@ -501,7 +500,7 @@ export function ScheduleFormModal({
     startTime: editingSchedule && !editingSchedule.all_day
       ? formatTime(editingSchedule.start_time)
       : '09:00',
-    endTime: editingSchedule?.end_time && !editingSchedule.all_day
+    endTime: editingSchedule?.type === 'event' && editingSchedule.end_time && !editingSchedule.all_day
       ? formatTime(editingSchedule.end_time)
       : '10:00',
     all_day: editingSchedule?.all_day || false,
@@ -529,8 +528,8 @@ export function ScheduleFormModal({
       : form.all_day
       ? `${form.date}T00:00:00`
       : `${form.date}T${form.startTime}:00`;
-    // 待办任务也需要 end_time（用于冲突检测和排版），时长固定1小时
-    const endTime = isUnscheduled || form.all_day
+    // 待办是时间点；结束时间只属于有持续时长的事件。
+    const endTime = form.type === 'todo' || isUnscheduled || form.all_day
       ? undefined
       : `${form.date}T${form.endTime}:00`;
 
@@ -572,6 +571,7 @@ export function ScheduleFormModal({
         style={{ backgroundColor: 'var(--td-bg-color-container)' }}
         onMouseDown={e => e.stopPropagation()}
       >
+        <div className="schedule-form-scroll">
         {/* 标题 */}
         <div className="flex items-center justify-between mb-5">
           <h3 className="schedule-form-heading" style={{ color: 'var(--td-text-color-primary)' }}>
@@ -719,25 +719,19 @@ export function ScheduleFormModal({
             </div>
           )}
 
-          {/* 待办时间选择器（只需设置开始时间，占用1小时） */}
+          {/* 待办时间点选择器，不设置持续时长 */}
           {form.type === 'todo' && !isUnscheduled && (
             <div>
               <div className="text-xs mb-1.5 font-medium" style={{ color: 'var(--td-text-color-secondary)' }}>
-                待办时间
+                待办时间点
               </div>
               <div className="flex gap-3 items-center">
                 <SmartTimePicker
                   value={form.startTime}
-                  onChange={v => {
-                    set('startTime', v);
-                    // 待办自动设置1小时时长
-                    const [h, m] = v.split(':').map(Number);
-                    const endH = (h + 1) % 24;
-                    set('endTime', `${String(endH).padStart(2,'0')}:${String(m).padStart(2,'0')}`);
-                  }}
-                  label="开始"
+                  onChange={v => set('startTime', v)}
+                  label="时间点"
                 />
-                <span style={{ color: 'var(--td-text-color-secondary)', fontSize: '12px' }}>时长1小时</span>
+                <span style={{ color: 'var(--td-text-color-secondary)', fontSize: '12px' }}>不设置持续时长</span>
               </div>
             </div>
           )}
@@ -753,20 +747,7 @@ export function ScheduleFormModal({
             />
           </div>}
 
-          <button
-            type="button"
-            className={showAdvanced ? 'schedule-advanced-toggle open' : 'schedule-advanced-toggle'}
-            onClick={() => setShowAdvanced(value => !value)}
-            aria-expanded={showAdvanced}
-          >
-            <div>
-              <strong>高级选项</strong>
-              <span>地点、分类、优先级、备注与重复</span>
-            </div>
-            <ChevronDown size={17} />
-          </button>
-
-          {showAdvanced && <div className="schedule-advanced-options">
+          <div className="schedule-advanced-options schedule-form-details">
           {/* 地点 */}
           <input
             type="text"
@@ -872,7 +853,7 @@ export function ScheduleFormModal({
               ))}
             </div>
           </div>}
-          </div>}
+          </div>
         </div>
 
         <div className="flex gap-2 mt-6">
@@ -894,6 +875,7 @@ export function ScheduleFormModal({
           >
             {isEditing ? '保存修改' : '添加日程'}
           </button>
+        </div>
         </div>
       </div>
     </div>
@@ -1192,7 +1174,7 @@ function DayView({
         <div className="relative">
           {HOURS.map(hour => {
             const hourSchedules = timedSchedules.filter(s => getScheduleHour(s) === hour);
-            // 待办任务显示在对应小时（固定1小时高度）
+            // 待办任务显示在对应小时（固定视觉高度，与持续时长无关）
             const hourTodos = timedTodos.filter(s => getScheduleHour(s) === hour);
             // 待办和事件分开显示，不合并
             
@@ -1837,18 +1819,30 @@ function MonthView({
 
 // ==================== 详情弹窗 ====================
 
+export interface CompletionProofDisplay {
+  note: string | null;
+  amountCents: number | null;
+  currency: string;
+  billDate: string | null;
+  attachments: Array<{ id: string; originalName: string }>;
+}
+
 export function ScheduleDetailModal({
   schedule,
   onClose,
   onDelete,
   onToggle,
   onEdit,
+  completionProof,
+  onEditCompletion,
 }: {
   schedule: Schedule;
   onClose: () => void;
   onDelete: (id: string) => void;
   onToggle: (id: string) => void;
   onEdit: (s: Schedule) => void;
+  completionProof?: CompletionProofDisplay | null;
+  onEditCompletion?: () => void;
 }) {
   const pColor = PRIORITY_COLORS[schedule.priority] || PRIORITY_COLORS.medium;
   const catColor = CATEGORY_COLORS[schedule.category] || '#6B7280';
@@ -1913,6 +1907,15 @@ export function ScheduleDetailModal({
               {schedule.description}
             </div>
           )}
+          {completionProof && (
+            <div className="mt-2 p-3 rounded-xl text-sm" style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-secondary)' }}>
+              <strong style={{ color: 'var(--td-text-color-primary)' }}>完成记录</strong>
+              {completionProof.note && <div className="mt-1">备注：{completionProof.note}</div>}
+              {completionProof.amountCents != null && <div className="mt-1">金额：{(completionProof.amountCents / 100).toFixed(2)} {completionProof.currency}</div>}
+              {completionProof.billDate && <div className="mt-1">账单日：{completionProof.billDate}</div>}
+              {completionProof.attachments.length > 0 && <div className="mt-1">附件：{completionProof.attachments.map(file => file.originalName).join('、')}</div>}
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2">
@@ -1937,6 +1940,13 @@ export function ScheduleDetailModal({
           >
             <Edit3 className="w-3.5 h-3.5" />编辑
           </button>
+          {onEditCompletion && <button
+            onClick={onEditCompletion}
+            className="flex items-center justify-center gap-1 px-3 py-2 rounded-lg text-sm font-medium"
+            style={{ backgroundColor: 'var(--td-bg-color-component)', color: 'var(--td-text-color-secondary)' }}
+          >
+            <Edit3 className="w-3.5 h-3.5" />编辑完成记录
+          </button>}
         </div>
       </div>
     </div>
@@ -2078,21 +2088,28 @@ export function CalendarView({
   }, [openScheduleMenuRequest?.nonce]);
 
   // 根据左侧六类日程分类过滤
-  const visibleSchedules = ((activeCategoryIds && activeCategoryIds.length > 0)
+  const visibleSchedules = useMemo(() => ((activeCategoryIds && activeCategoryIds.length > 0)
     ? schedules.filter(s => activeCategoryIds.includes(s.category))
-    : schedules).filter(schedule => !schedule.is_unscheduled);
+    : schedules).filter(schedule => !schedule.is_unscheduled), [activeCategoryIds, schedules]);
 
   // 冲突提醒覆盖当前仍有重叠的日程/待办；已经结束的历史冲突由 getConflictPairs 自动排除。
   // 这样跨午夜仍在持续的日程也能参与“今天”的冲突判断。
-  const bannerConflictSchedules = visibleSchedules.filter(isTimedConflictSchedule);
-  const bannerConflictPairs = getConflictPairs(bannerConflictSchedules, conflictClock);
-  const bannerConflictingIds = new Set<string>();
-  bannerConflictPairs.forEach(({ a, b }) => {
-    bannerConflictingIds.add(a.id);
-    bannerConflictingIds.add(b.id);
-  });
-  const bannerConflictKey = buildConflictKey(bannerConflictSchedules, bannerConflictingIds);
-  const bannerConflictExpiryAt = getConflictExpiryAt(bannerConflictPairs);
+  const { bannerConflictSchedules, bannerConflictPairs, bannerConflictingIds, bannerConflictKey, bannerConflictExpiryAt } = useMemo(() => {
+    const conflictSchedules = visibleSchedules.filter(isTimedConflictSchedule);
+    const conflictPairs = getConflictPairs(conflictSchedules, conflictClock);
+    const conflictingIds = new Set<string>();
+    conflictPairs.forEach(({ a, b }) => {
+      conflictingIds.add(a.id);
+      conflictingIds.add(b.id);
+    });
+    return {
+      bannerConflictSchedules: conflictSchedules,
+      bannerConflictPairs: conflictPairs,
+      bannerConflictingIds: conflictingIds,
+      bannerConflictKey: buildConflictKey(conflictSchedules, conflictingIds),
+      bannerConflictExpiryAt: getConflictExpiryAt(conflictPairs),
+    };
+  }, [conflictClock, visibleSchedules]);
 
   useEffect(() => {
     if (!bannerConflictExpiryAt) return;

@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import type { CreditCardConfig, GenericReminderConfig, ReminderStats, ReminderTask, ReminderTaskType, SimConfig } from '../reminder-types';
+import { useLocation } from 'react-router-dom';
 
 interface ReminderPageProps {
   theme?: string;
@@ -171,6 +172,7 @@ function configToForm(task: ReminderTask): FormState {
 
 export function ReminderPage() {
   const { authHeaders } = useAuth();
+  const location = useLocation();
   const [tasks, setTasks] = useState<ReminderTask[]>([]);
   const [stats, setStats] = useState<ReminderStats>({ total: 0, active: 0, dueSoon: 0, expired: 0 });
   const [loading, setLoading] = useState(true);
@@ -208,6 +210,15 @@ export function ReminderPage() {
   const updateForm = (key: keyof FormState, value: string) => setForm(current => ({ ...current, [key]: value }));
   const openCreate = (type: ReminderTaskType = 'credit_card') => { setEditing(null); setForm({ ...initialForm, type, lastOperationDate: today() }); setFormOpen(true); };
   const openEdit = (task: ReminderTask) => { setEditing(task); setForm(configToForm(task)); setFormOpen(true); };
+
+  useEffect(() => {
+    const taskId = new URLSearchParams(location.search).get('edit');
+    if (!taskId || !tasks.length) return;
+    const task = tasks.find(item => item.id === taskId);
+    if (!task) return;
+    openEdit(task);
+    window.history.replaceState({}, '', location.pathname);
+  }, [location.pathname, location.search, tasks]);
 
   const saveTask = async (event: FormEvent) => {
     event.preventDefault();

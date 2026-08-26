@@ -69,6 +69,37 @@ test('旧版 end_time 非空表可保存未指定结束时间的普通日程', (
   statement.free();
 });
 
+test('待办不保留结束时间并兼容旧版非空字段', () => {
+  const startTime = '2026-08-27T11:00:00';
+  const created = schedules.createSchedule({
+    id: 'legacy-todo-point',
+    user_id: 'legacy-user',
+    calendar_id: 'personal',
+    type: 'todo',
+    title: '发送会议纪要',
+    start_time: startTime,
+    end_time: '2026-08-27T12:00:00',
+    all_day: false,
+    is_unscheduled: false,
+    category: 'work',
+    priority: 'medium',
+    is_completed: false,
+    is_repeated: false,
+    reminders: [],
+    is_high_risk: false,
+  });
+
+  assert.equal(created.end_time, undefined);
+  const persistedDb = new SQL.Database(fs.readFileSync(scheduleDbPath));
+  const statement = persistedDb.prepare("SELECT start_time, end_time, type FROM schedules WHERE id = 'legacy-todo-point'");
+  assert.equal(statement.step(), true);
+  assert.deepEqual(statement.getAsObject(), { start_time: startTime, end_time: '', type: 'todo' });
+  statement.free();
+
+  const updated = schedules.updateSchedule(created.id, { end_time: '2026-08-27T13:00:00' });
+  assert.equal(updated?.end_time, undefined);
+});
+
 test.after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });

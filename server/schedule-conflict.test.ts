@@ -31,6 +31,15 @@ test('event 和 todo 使用同一套有效冲突判断', () => {
   assert.equal(getConflictPairs([event, todo], now).length, 1);
 });
 
+test('无结束时间待办按时间点参与冲突，不扩展为一小时', () => {
+  const todo = schedule({ id: 'point-todo', type: 'todo', start_time: '2026-08-21T09:00:00' });
+  const laterEvent = schedule({ id: 'later-event', type: 'event', start_time: '2026-08-21T09:30:00', end_time: '2026-08-21T10:00:00' });
+  const sameStartEvent = schedule({ id: 'same-start-event', type: 'event', start_time: '2026-08-21T09:00:00', end_time: '2026-08-21T10:00:00' });
+
+  assert.equal(checkScheduleConflict(todo, laterEvent), false);
+  assert.equal(checkScheduleConflict(todo, sameStartEvent), true);
+});
+
 test('今天和未来的冲突可见，已经结束的冲突隐藏', () => {
   const today = schedule({ id: 'today', type: 'event', start_time: '2026-08-20T09:00:00', end_time: '2026-08-20T10:00:00' });
   const todayTodo = schedule({ id: 'today-todo', type: 'todo', start_time: '2026-08-20T09:30:00', end_time: '2026-08-20T10:30:00' });
