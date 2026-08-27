@@ -14,13 +14,13 @@ import { toggleScheduleCompletion } from "./schedule-completion-service.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import cron from "node-cron";
-import { generateCode, sendDailyReminderEmail, sendVerificationEmail, sendReminderTestEmail } from "./email-service.js";
+import { generateCode, getEmailConfigurationSummary, sendDailyReminderEmail, sendVerificationEmail, sendReminderTestEmail, summarizeEmailSendResult } from "./email-service.js";
 import { processCycleReminders } from "./reminder-service.js";
 import * as activityStore from "./activity-store.js";
 import { initActivityDb } from "./activity-store.js";
 import { getActionCenter } from "./action-center.js";
 import * as attachmentService from "./attachment-service.js";
-import { processNotificationQueue } from "./notification-service.js";
+import { processNotificationQueue, type NotificationLogger } from "./notification-service.js";
 import { enqueueDueDailyDigestNotifications, enqueueDueHighPriorityScheduleEmails } from './notification-scheduler.js';
 import * as backupService from "./backup-service.js";
 import { parseAiImport, type AiImportDraft } from "./ai-import-service.js";
@@ -35,6 +35,7 @@ import { createApiRateLimiter, securityHeaders } from './http-security.js';
 import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
 import { shiftScheduleDateValue } from './schedule-actions.js';
 import { assertNoLegacyCodeBuddyConfig } from './codebuddy-config.js';
+import { addLog, allLogs, clearLogs, listLogs } from './log-service.js';
 import {
   buildAiPlanSnapshot,
   normaliseAiPlanOperations,
@@ -74,6 +75,17 @@ function describeError(error: unknown): string {
     if (serialized && serialized !== '{}') return serialized;
   } catch {}
   return String(error || '未知错误');
+}
+
+function describeErrorData(error: unknown, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const code = typeof error === 'object' && error && 'code' in error
+    ? String((error as { code?: unknown }).code || '')
+    : '';
+  return {
+    ...extra,
+    error: describeError(error),
+    ...(code ? { errorCode: code } : {}),
+  };
 }
 
 // 【修复】默认使用国内版 API（codebuddy.cn）
@@ -184,67 +196,18 @@ function resolveAiImportCredential(userId: string): { apiKey: string; baseUrl?: 
   } : null;
 }
 
-// ==================== 日志系统 ====================
-// 内存日志缓冲区（最多保留500条）
-const MAX_LOG_ENTRIES = 500;
-interface LogEntry {
-  timestamp: string;
-  level: 'info' | 'warn' | 'error' | 'debug';
-  category: 'schedule' | 'ai' | 'db' | 'system' | 'reminder' | 'auth' | 'admin';
-  message: string;
-  data?: any;
-}
-const logBuffer: LogEntry[] = [];
-
-// 记录日志
-function addLog(level: LogEntry['level'], category: LogEntry['category'], message: string, data?: any) {
-  const now = new Date();
-  // 使用本地时间：YYYY-MM-DD HH:MM:SS.mmm
-  const pad = (n: number, len = 2) => String(n).padStart(len, '0');
-  const timestamp = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())} ` +
-    `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}.${pad(now.getMilliseconds(), 3)}`;
-  const entry: LogEntry = {
-    timestamp,
-    level,
-    category,
-    message,
-    data
-  };
-  logBuffer.push(entry);
-  // 同时输出到控制台（方便服务端排查）
-  const prefix = `[${timestamp}] [${level.toUpperCase()}] [${category}]`;
-  if (level === 'error') console.error(prefix, message, data ?? '');
-  else if (level === 'warn') console.warn(prefix, message, data ?? '');
-  else console.log(prefix, message, data ?? '');
-  if (logBuffer.length > MAX_LOG_ENTRIES) {
-    logBuffer.shift();
-  }
-}
-
 // 日志 API
 app.get("/api/logs", authenticate, requireAdmin, (req, res) => {
   const { level, category, limit } = req.query;
-  let filtered = [...logBuffer];
-  
-  if (level && level !== 'all') {
-    filtered = filtered.filter(l => l.level === level);
-  }
-  if (category && category !== 'all') {
-    filtered = filtered.filter(l => l.category === category);
-  }
-  
-  const maxItems = limit ? parseInt(limit as string) : 100;
-  filtered = filtered.slice(-maxItems);
-  
-  res.json({ 
-    logs: filtered,
-    total: logBuffer.length,
-    max: MAX_LOG_ENTRIES
-  });
+  res.json(listLogs({
+    level: level ? String(level) : undefined,
+    category: category ? String(category) : undefined,
+    limit: limit ? Number(limit) : undefined,
+  }));
 });
 
 app.delete("/api/logs", authenticate, requireAdmin, (req, res) => {
-  logBuffer.length = 0;
+  clearLogs();
   addLog('info', 'system', '日志已清空');
   res.json({ success: true });
 });
@@ -255,18 +218,19 @@ app.get("/api/logs/export", authenticate, requireAdmin, (req, res) => {
   const now = new Date();
   const pad = (n: number, len = 2) => String(n).padStart(len, '0');
   const filename = `schedule-logs-${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const logs = allLogs();
   
   if (format === 'json') {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
-    res.json({ exportedAt: now.toISOString(), total: logBuffer.length, logs: logBuffer });
+    res.json({ exportedAt: now.toISOString(), total: logs.length, logs });
   } else {
     // 默认 txt 格式
-    const lines = logBuffer.map(l => {
+    const lines = logs.map(l => {
       const data = l.data ? `  ${JSON.stringify(l.data)}` : '';
       return `[${l.timestamp}] [${l.level.toUpperCase().padEnd(5)}] [${l.category.padEnd(8)}] ${l.message}${data}`;
     });
-    const header = `智能日程表 - 调试日志导出\n导出时间: ${now.toLocaleString('zh-CN')}\n共 ${logBuffer.length} 条记录\n${'='.repeat(80)}\n\n`;
+    const header = `智能日程表 - 调试日志导出\n导出时间: ${now.toLocaleString('zh-CN')}\n共 ${logs.length} 条记录\n${'='.repeat(80)}\n\n`;
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}.txt"`);
     res.send(header + lines.join('\n'));
@@ -751,11 +715,19 @@ app.post("/api/auth/send-register-code", async (req, res) => {
     };
     db.createEmailCode(codeRecord);
     // 发送邮件
-    await sendVerificationEmail(email, code, 'register');
-    addLog('info', 'auth', `注册验证码已发送至 ${email}，权限: ${role}`, { email, role });
+    const sendResult = await sendVerificationEmail(email, code, 'register');
+    addLog('info', 'auth', `注册验证码已发送至 ${email}，权限: ${role}`, {
+      event: 'verification_email_sent',
+      email,
+      purpose: 'register',
+      role,
+      ...summarizeEmailSendResult(sendResult),
+    });
     res.json({ success: true, message: '验证码已发送到您的邮箱' });
   } catch (error: any) {
-    addLog('error', 'auth', `发送验证码失败: ${error.message}`);
+    addLog('error', 'auth', '发送验证码失败', describeErrorData(error, {
+      event: 'verification_email_failed',
+    }));
     console.error('[Send Register Code] Error:', error);
     res.status(500).json({ error: '发送验证码失败: ' + (error?.message || '未知错误') });
   }
@@ -1026,11 +998,19 @@ app.post("/api/action-center/send-email", authenticate, async (req, res) => {
     const payload = (req as any).user as JwtPayload;
     const reminderEmail = db.getReminderEmail(payload.userId) || payload.email;
     if (!reminderEmail) return res.status(400).json({ error: '没有绑定通知邮箱，请先在设置中配置。' });
-    await sendDailyReminderEmail(reminderEmail, payload.userId);
-    addLog('info', 'reminder', '用户手动发送今日安排邮件', { userId: payload.userId });
+    const sendResult = await sendDailyReminderEmail(reminderEmail, payload.userId);
+    addLog('info', 'reminder', '用户手动发送今日安排邮件成功', {
+      event: 'manual_daily_email_sent',
+      userId: payload.userId,
+      recipient: reminderEmail,
+      ...summarizeEmailSendResult(sendResult),
+    });
     res.json({ success: true, message: `今天的安排已发送至 ${reminderEmail}` });
   } catch (error: any) {
-    addLog('error', 'reminder', '手动发送今日安排邮件失败', { error: error?.message, userId: (req as any).user?.userId });
+    addLog('error', 'reminder', '手动发送今日安排邮件失败', describeErrorData(error, {
+      event: 'manual_daily_email_failed',
+      userId: (req as any).user?.userId,
+    }));
     res.status(502).json({ error: error?.message || '邮件发送失败，请稍后重试。' });
   }
 });
@@ -1130,8 +1110,8 @@ app.get("/api/notification-preferences", authenticate, (req, res) => {
 });
 
 app.put("/api/notification-preferences", authenticate, (req, res) => {
+  const payload = (req as any).user as JwtPayload;
   try {
-    const payload = (req as any).user as JwtPayload;
     const current = db.getReminder(payload.userId);
     const reminderEmail = String(req.body.reminderEmail ?? current?.reminder_email ?? payload.email).trim();
     const hour = Number(req.body.hour ?? current?.hour ?? 8);
@@ -1199,8 +1179,35 @@ app.put("/api/notification-preferences", authenticate, (req, res) => {
       created_at: current?.created_at || now,
       updated_at: now,
     });
+    const persisted = db.getReminder(payload.userId) || saved;
+    addLog('info', 'reminder', '通知设置已保存', {
+      event: 'notification_preferences_saved',
+      userId: payload.userId,
+      before: current ? {
+        enabled: Boolean(current.enabled),
+        time: `${String(current.hour).padStart(2, '0')}:${String(current.minute).padStart(2, '0')}`,
+        reminderEmail: current.reminder_email || null,
+        emailEnabled: current.email_enabled !== 0,
+        inAppEnabled: current.in_app_enabled !== 0,
+        browserEnabled: current.browser_enabled !== 0,
+        timezone: current.timezone || 'Asia/Shanghai',
+      } : null,
+      after: {
+        enabled: Boolean(persisted.enabled),
+        time: `${String(persisted.hour).padStart(2, '0')}:${String(persisted.minute).padStart(2, '0')}`,
+        reminderEmail: persisted.reminder_email || null,
+        emailEnabled: persisted.email_enabled !== 0,
+        inAppEnabled: persisted.in_app_enabled !== 0,
+        browserEnabled: persisted.browser_enabled !== 0,
+        timezone: persisted.timezone || 'Asia/Shanghai',
+      },
+    });
     res.json({ success: true, preference: saved });
   } catch (error: any) {
+    addLog('error', 'reminder', '通知设置保存失败', describeErrorData(error, {
+      event: 'notification_preferences_save_failed',
+      userId: payload.userId,
+    }));
     res.status(400).json({ error: error?.message || '保存通知设置失败' });
   }
 });
@@ -1234,8 +1241,28 @@ app.post("/api/notifications/:id/read", authenticate, (req, res) => {
 });
 
 app.post("/api/notifications/:id/retry", authenticate, (req, res) => {
-  const item = activityStore.retryNotification(req.params.id, (req as any).user.userId);
-  if (!item) return res.status(404).json({ error: '失败通知不存在' });
+  const userId = (req as any).user.userId;
+  const item = activityStore.retryNotification(req.params.id, userId);
+  if (!item) {
+    addLog('warn', 'reminder', '手动重试通知失败：通知不存在或状态不可重试', {
+      event: 'notification_retry_not_found',
+      userId,
+      notificationId: req.params.id,
+    });
+    return res.status(404).json({ error: '失败通知不存在' });
+  }
+  addLog('info', 'reminder', '用户手动重试通知', {
+    event: 'notification_retry_requested',
+    userId,
+    notificationId: item.id,
+    sourceType: item.sourceType,
+    sourceId: item.sourceId,
+    channel: item.channel,
+    kind: item.kind,
+    status: item.status,
+    attempts: item.attempts,
+    nextRetryAt: item.nextRetryAt,
+  });
   res.json({ notification: item });
 });
 
@@ -1748,11 +1775,20 @@ app.get("/api/cycle-reminders/:id/history", authenticate, (req, res) => {
 app.post("/api/cycle-reminders/test-email", authenticate, async (req, res) => {
   try {
     const payload = (req as any).user as JwtPayload;
-    await sendReminderTestEmail(db.getReminderEmail(payload.userId) || payload.email);
-    addLog('info', 'reminder', '周期提醒测试邮件发送成功');
+    const reminderEmail = db.getReminderEmail(payload.userId) || payload.email;
+    const sendResult = await sendReminderTestEmail(reminderEmail);
+    addLog('info', 'reminder', '周期提醒测试邮件发送成功', {
+      event: 'reminder_test_email_sent',
+      userId: payload.userId,
+      recipient: reminderEmail,
+      ...summarizeEmailSendResult(sendResult),
+    });
     res.json({ success: true });
   } catch (error: any) {
-    addLog('error', 'reminder', '周期提醒测试邮件发送失败: ' + (error?.message || error));
+    addLog('error', 'reminder', '周期提醒测试邮件发送失败', describeErrorData(error, {
+      event: 'reminder_test_email_failed',
+      userId: (req as any).user?.userId,
+    }));
     res.status(500).json({ error: error?.message || '测试邮件发送失败' });
   }
 });
@@ -2045,8 +2081,14 @@ app.post("/api/schedules", authenticate, (req, res) => {
     
     const created = scheduleStore.createSchedule(schedule);
     addLog('info', 'schedule', '手动创建日程', {
+      event: 'schedule_created',
+      userId,
       id: created?.id,
+      type: created?.type,
+      priority: created?.priority,
       all_day: schedule.all_day,
+      is_unscheduled: created?.is_unscheduled,
+      is_completed: created?.is_completed,
       start_time: schedule.start_time,
       category: schedule.category
     });
@@ -2076,7 +2118,15 @@ app.patch("/api/schedules/:id", authenticate, (req, res) => {
     const updates = normaliseScheduleApiFields(req.body || {}, userId, existing);
     const updated = scheduleStore.updateSchedule(id, updates);
     addLog('info', 'schedule', '更新日程', {
+      event: 'schedule_updated',
+      userId,
       id: updated?.id,
+      type: updated?.type,
+      priority: updated?.priority,
+      start_time: updated?.start_time,
+      all_day: updated?.all_day,
+      is_unscheduled: updated?.is_unscheduled,
+      is_completed: updated?.is_completed,
       changedFields: Object.keys(req.body || {}).slice(0, 30),
     });
     res.json({ schedule: updated });
@@ -2103,8 +2153,25 @@ app.put("/api/schedules/:id", authenticate, (req, res) => {
     
     const updates = normaliseScheduleApiFields(req.body || {}, userId, existing);
     const updated = scheduleStore.updateSchedule(id, updates);
+    addLog('info', 'schedule', '更新日程', {
+      event: 'schedule_updated',
+      userId,
+      id: updated?.id,
+      type: updated?.type,
+      priority: updated?.priority,
+      start_time: updated?.start_time,
+      all_day: updated?.all_day,
+      is_unscheduled: updated?.is_unscheduled,
+      is_completed: updated?.is_completed,
+      changedFields: Object.keys(req.body || {}).slice(0, 30),
+    });
     res.json({ schedule: updated });
   } catch (error: any) {
+    addLog('error', 'schedule', '更新日程失败', describeErrorData(error, {
+      event: 'schedule_update_failed',
+      userId: (req as any).user?.userId,
+      scheduleId: req.params.id,
+    }));
     res.status(400).json({ error: error?.message || "更新日程失败" });
   }
 });
@@ -3342,9 +3409,17 @@ if (isProduction) {
   });
 }
 
+const backgroundJobsEnabled = process.env.BACKGROUND_JOBS_ENABLED === 'true';
+
 // 异步启动服务器（等待数据库初始化）
 async function startServer() {
+  const startedAt = Date.now();
   try {
+    addLog('debug', 'system', '服务启动开始', {
+      event: 'service_starting',
+      pid: process.pid,
+      nodeVersion: process.version,
+    });
     validateRuntimeConfig();
     // 初始化数据库
     console.log('[Startup] 初始化数据库...');
@@ -3367,6 +3442,10 @@ async function startServer() {
     attachmentService.attachmentsRoot();
     console.log('[Startup] 活动数据库初始化完成');
     dbInitialized = true;
+    addLog('info', 'db', '业务数据库初始化完成', {
+      event: 'database_initialization_completed',
+      durationMs: Date.now() - startedAt,
+    });
 
     // 启动服务器
     app.listen(PORT, () => {
@@ -3384,10 +3463,22 @@ async function startServer() {
       addLog('info', 'system', `服务器启动成功，端口 ${PORT}`);
       addLog('info', 'system', `数据库: sql.js`);
       addLog('info', 'system', `环境: ${process.env.APP_ENV || process.env.NODE_ENV || 'development'}`);
-      addLog('info', 'system', '邀请码已配置（具体值不会写入日志）');
+      addLog('info', 'system', '启动配置已记录', {
+        event: 'service_started',
+        pid: process.pid,
+        nodeVersion: process.version,
+        backgroundJobsEnabled,
+        appTimezone: process.env.APP_TIMEZONE || 'Asia/Shanghai',
+        email: getEmailConfigurationSummary(),
+        inviteCodesConfigured: Boolean(ADMIN_INVITE_CODE && USER_INVITE_CODE),
+      });
     });
   } catch (error) {
-    console.error('[Startup] 服务器启动失败:', error);
+    addLog('error', 'system', '服务器启动失败', describeErrorData(error, {
+      event: 'service_start_failed',
+      pid: process.pid,
+      durationMs: Date.now() - startedAt,
+    }));
     process.exit(1);
   }
 }
@@ -3397,43 +3488,79 @@ startServer();
 // ============================================================
 // 每日邮件提醒定时任务（每分钟检查一次）
 // ============================================================
-const backgroundJobsEnabled = process.env.BACKGROUND_JOBS_ENABLED === 'true';
 if (!backgroundJobsEnabled) {
-  console.log('[Jobs] 后台定时任务未启用；如需生产提醒，请显式配置 BACKGROUND_JOBS_ENABLED=true');
+  addLog('warn', 'system', '后台定时任务未启用', {
+    event: 'background_jobs_disabled',
+    backgroundJobsEnabled,
+  });
 }
 
 if (backgroundJobsEnabled) {
 cron.schedule('* * * * *', () => {
-  if (!dbInitialized) return;
+  const tickStartedAt = Date.now();
+  if (!dbInitialized) {
+    addLog('warn', 'reminder', '提醒定时任务跳过：数据库尚未初始化', {
+      event: 'reminder_cron_skipped',
+      dbInitialized,
+    });
+    return;
+  }
+  const now = new Date();
   try {
-    const now = new Date();
-    const schedulerLog = (message: string, error?: unknown) => {
-      addLog('warn', 'reminder', message, {
-        error: error instanceof Error ? error.message : String(error || ''),
-      });
+    const schedulerLog: NotificationLogger = (message, error, data = {}) => {
+      addLog(error ? 'warn' : 'debug', 'reminder', message, error
+        ? describeErrorData(error, { event: 'reminder_scheduler_detail', ...data })
+        : { event: 'reminder_scheduler_detail', ...data });
     };
     const dailyResult = enqueueDueDailyDigestNotifications(now, schedulerLog);
     const priorityResult = enqueueDueHighPriorityScheduleEmails(now, schedulerLog);
-    if (dailyResult.due > 0 || priorityResult.due > 0) {
-      addLog('info', 'reminder', '提醒扫描完成', { daily: dailyResult, highPriority: priorityResult });
-    }
+    addLog('info', 'reminder', '提醒扫描完成', {
+      event: 'reminder_scheduler_scan_completed',
+      now: now.toISOString(),
+      durationMs: Date.now() - tickStartedAt,
+      daily: dailyResult,
+      highPriority: priorityResult,
+    });
   } catch (err) {
-    console.error('[Cron] 每日提醒任务出错:', err);
+    addLog('error', 'reminder', '提醒调度入队失败', describeErrorData(err, {
+      event: 'reminder_scheduler_scan_failed',
+      now: now.toISOString(),
+      durationMs: Date.now() - tickStartedAt,
+    }));
   }
 
   processCycleReminders((message, error) => {
-    if (error) addLog('error', 'reminder', message, { error: error instanceof Error ? error.message : String(error) });
-    else addLog('info', 'reminder', message);
+    if (error) addLog('error', 'reminder', message, describeErrorData(error, { event: 'cycle_reminder_error' }));
+    else addLog('debug', 'reminder', message, { event: 'cycle_reminder_queue' });
   }).catch(error => {
-    addLog('error', 'reminder', '周期提醒检查失败: ' + (error?.message || error));
+    addLog('error', 'reminder', '周期提醒检查失败', describeErrorData(error, { event: 'cycle_reminder_scan_failed' }));
   });
 
-  processNotificationQueue((message, error) => {
-    if (error) addLog('error', 'reminder', message, { error: error instanceof Error ? error.message : String(error) });
-    else addLog('info', 'reminder', message);
-  }).catch(error => addLog('error', 'reminder', '通知队列处理失败: ' + (error?.message || error)));
+  processNotificationQueue((message, error, data = {}) => {
+    if (error) addLog('error', 'reminder', message, describeErrorData(error, data));
+    else addLog('debug', 'reminder', message, data);
+  }).then(queueResult => {
+    addLog('debug', 'reminder', '通知队列本次统计', {
+      event: 'notification_queue_tick_result',
+      ...queueResult,
+      durationMs: Date.now() - tickStartedAt,
+    });
+  }).catch(error => addLog('error', 'reminder', '通知队列处理失败', describeErrorData(error, {
+    event: 'notification_queue_processing_failed',
+    durationMs: Date.now() - tickStartedAt,
+  })));
 
-  activityStore.expireAiImports();
+  try {
+    const expiredImports = activityStore.expireAiImports();
+    if (expiredImports > 0) addLog('info', 'ai', '清理 AI 助手过期草稿', {
+      event: 'ai_imports_expired',
+      count: expiredImports,
+    });
+  } catch (error) {
+    addLog('error', 'ai', '清理 AI 助手过期草稿失败', describeErrorData(error, {
+      event: 'ai_imports_expire_failed',
+    }));
+  }
 });
 
 cron.schedule('30 3 * * *', async () => {

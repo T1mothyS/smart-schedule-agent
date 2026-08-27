@@ -65,6 +65,11 @@ export interface NotificationDelivery {
   updatedAt: string;
 }
 
+export interface EnqueueNotificationResult {
+  notification: NotificationDelivery;
+  created: boolean;
+}
+
 export interface AiImportRecord {
   id: string;
   userId: string;
@@ -437,6 +442,32 @@ export function getUserAttachmentBytes(userId: string): number {
   return Number(row?.total || 0);
 }
 
+export function enqueueNotificationDetailed(input: {
+  userId: string;
+  sourceType: string;
+  sourceId: string;
+  instanceId?: string | null;
+  channel: NotificationChannel;
+  kind: string;
+  title: string;
+  body: string;
+  scheduledAt: string;
+  dedupeKey: string;
+}): EnqueueNotificationResult {
+  const existing = queryOne<any>('SELECT * FROM notification_deliveries WHERE dedupe_key = ?', [input.dedupeKey]);
+  if (existing) return { notification: rowToNotification(existing), created: false };
+  const now = nowIso();
+  const id = uuidv4();
+  run(
+    `INSERT INTO notification_deliveries
+      (id, user_id, source_type, source_id, instance_id, channel, kind, title, body, scheduled_at, status, attempts, max_attempts, dedupe_key, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 4, ?, ?, ?)`,
+    [id, input.userId, input.sourceType, input.sourceId, input.instanceId || null, input.channel, input.kind,
+      input.title, input.body, input.scheduledAt, input.dedupeKey, now, now],
+  );
+  return { notification: getNotification(id)!, created: true };
+}
+
 export function enqueueNotification(input: {
   userId: string;
   sourceType: string;
@@ -449,18 +480,7 @@ export function enqueueNotification(input: {
   scheduledAt: string;
   dedupeKey: string;
 }): NotificationDelivery {
-  const existing = queryOne<any>('SELECT * FROM notification_deliveries WHERE dedupe_key = ?', [input.dedupeKey]);
-  if (existing) return rowToNotification(existing);
-  const now = nowIso();
-  const id = uuidv4();
-  run(
-    `INSERT INTO notification_deliveries
-      (id, user_id, source_type, source_id, instance_id, channel, kind, title, body, scheduled_at, status, attempts, max_attempts, dedupe_key, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 4, ?, ?, ?)`,
-    [id, input.userId, input.sourceType, input.sourceId, input.instanceId || null, input.channel, input.kind,
-      input.title, input.body, input.scheduledAt, input.dedupeKey, now, now],
-  );
-  return getNotification(id)!;
+  return enqueueNotificationDetailed(input).notification;
 }
 
 export function getNotification(id: string, userId?: string): NotificationDelivery | null {

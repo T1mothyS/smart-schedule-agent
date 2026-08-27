@@ -11,6 +11,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - 周期事务支持信用卡、SIM、订阅、保险、证件、会员、房租、水电、车辆年检和自定义规则。
 - 周期事务会按当前周期到期日同步为日历全天待办，完成后继续生成下一周期事项。
 - 通知支持邮件、站内消息、浏览器通知、免打扰、失败重试和发送记录。
+- 通知调度会记录扫描、筛选、入队、去重、领取、SMTP 接受/拒收、重试和最终状态；调试日志会持久化并在服务重启后保留。
 - 完成时可保存备注、金额、账单日期、图片或 PDF 证明。
 - 支持可读 JSON/CSV 导出、用户加密导出/恢复和管理员全站快照。
 - AI 可从自然语言或截图生成待确认草稿；确认前不会写入正式数据。
@@ -36,6 +37,8 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - 当前版本：`0.1.0-260827.1902`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
 - 每日摘要邮件链路：账号提醒设置 → 每日摘要调度器 → 持久化通知队列 → 固定发件邮箱；按账号时区和日期幂等去重。
 - 高优先级邮件链路：高优先级事件/待办 → 开始前 1–15 分钟调度器 → 持久化通知队列 → 固定发件邮箱；不依赖每日提醒或邮件开关。
+- 同一账号同一自然日的每日摘要只允许生成一封；当天已经发送后再修改提醒时间，不会在当天重复发送。
+- 邮件只有在 Nodemailer 返回至少一个 `accepted` 且没有 `rejected/pending` 时才标记为 `sent`；这表示 SMTP 已接受，不等同于收件箱最终到达。
 - 浏览器提前提醒仍可单独使用，不替代高优先级固定邮件。
 
 ## 2. 技术结构
@@ -353,6 +356,7 @@ cp .env.example .env
 | `server/notification-service.ts` | 持久化通知调度、免打扰、幂等去重、失败重试和发送状态 |
 | `server/notification-scheduler.ts` | 每日摘要和高优先级固定邮件的时区扫描、筛选与幂等入队 |
 | `server/email-service.ts` | 固定 163 官方发件邮箱、邮件模板、SMTP 校验和错误转换 |
+| `server/log-service.ts` | 脱敏结构化日志、持久化 JSONL、轮转和管理员日志读取 |
 | `server/daily-email-template.ts` | 每日摘要邮件的天气、进度、分类与完整日程模板 |
 | `server/weather-service.ts` | Open-Meteo 地点搜索、天气读取、缓存、超时和天气代码转换 |
 | `server/export-service.ts` | 当前账号的可读 JSON/CSV 数据导出与表格公式注入防护 |
@@ -381,6 +385,7 @@ cp .env.example .env
 | `data/schedule.db` | 日历、分类和日程数据 |
 | `data/reminder.db` | 周期事务、周期实例和完成历史兼容数据 |
 | `data/activity.db` | 统一完成记录、附件元数据、通知、偏好和 AI 导入草稿 |
+| `data/application.log` | 最近的脱敏结构化运行日志；达到大小上限后轮转为 `application.1.log` 等文件 |
 | `data/attachments/` | 按用户隔离并以哈希名称保存的附件实体 |
 | `data/migration-backups/` | 数据迁移前自动生成的数据库快照 |
 | `data/backups/` | 管理员全站加密快照，首次生成后出现 |
@@ -546,6 +551,8 @@ pm2 restart smart-schedule --update-env
 5. `SMTP_PASS` 是否为有效客户端授权码。
 6. 通知记录中是否显示重试或最终失败原因。
 7. 收件箱垃圾邮件规则是否拦截。
+
+管理员可以在“调试日志”中按 `reminder` 分类查看完整链路。重点看同一 `notificationId` 是否依次出现 `email_send_started`、`email_smtp_accepted` 和 `notification_sent`；若 SMTP 没有接受收件人，会出现 `email_smtp_rejected` 和 `notification_failed`，并记录 `errorCode`、`lastError` 与 `nextRetryAt`；若只有 `daily_digest` 的 `deduplicatedCount`，说明当天已经发送过，修改时间不会再补发。
 
 ### 能否删除 `.env.example`
 

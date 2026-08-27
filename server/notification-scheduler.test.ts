@@ -104,8 +104,12 @@ test('每日摘要按账号保存的时区时间入队，并由日期去重', ()
   saveReminder(userId, { enabled: 1, hour: 8, minute: 0, email_enabled: 1, in_app_enabled: 0, browser_enabled: 0 });
 
   const atEight = new Date('2026-08-27T00:00:20.000Z');
-  scheduler.enqueueDueDailyDigestNotifications(atEight);
-  scheduler.enqueueDueDailyDigestNotifications(atEight);
+  const first = scheduler.enqueueDueDailyDigestNotifications(atEight);
+  const second = scheduler.enqueueDueDailyDigestNotifications(atEight);
+  assert.equal(first.created, 1);
+  assert.equal(first.deduplicated, 0);
+  assert.equal(second.created, 0);
+  assert.equal(second.deduplicated, 1);
   assert.equal(activity.listNotifications(userId).length, 1);
   assert.equal(activity.listNotifications(userId)[0]?.kind, 'daily_digest');
 
@@ -146,9 +150,19 @@ test('高优先级固定邮件绕过渠道开关和免打扰，且重复扫描�
   createSchedule(disabledUserId, 'disabled-user-event', '2026-08-27T08:10:00');
 
   const atEight = new Date('2026-08-27T00:00:30.000Z');
-  scheduler.enqueueDueHighPriorityScheduleEmails(atEight);
-  scheduler.enqueueDueHighPriorityScheduleEmails(atEight);
+  const events: Array<{ message: string; data?: Record<string, unknown> }> = [];
+  const first = scheduler.enqueueDueHighPriorityScheduleEmails(atEight, (message, _error, data) => {
+    events.push({ message, data });
+  });
+  const second = scheduler.enqueueDueHighPriorityScheduleEmails(atEight, (message, _error, data) => {
+    events.push({ message, data });
+  });
   let notifications = activity.listNotifications(userId);
+  assert.equal(first.created, 2);
+  assert.equal(first.deduplicated, 0);
+  assert.equal(second.created, 0);
+  assert.equal(second.deduplicated, 2);
+  assert.equal(events.filter(event => event.data?.event === 'high_priority_email_enqueue').length, 4);
   assert.equal(notifications.length, 2);
   assert.ok(notifications.every(item => item.channel === 'email' && item.kind === 'high_priority_schedule'));
   assert.deepEqual(

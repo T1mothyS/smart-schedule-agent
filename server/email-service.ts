@@ -19,6 +19,19 @@ const SMTP_HOST = (process.env.SMTP_HOST || 'smtp.163.com').trim();
 const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
 const SMTP_USER = (process.env.SMTP_USER || OFFICIAL_SENDER_EMAIL).trim();
 
+export function getEmailConfigurationSummary(): Record<string, unknown> {
+  return {
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_PORT === 465,
+    user: SMTP_USER,
+    passwordConfigured: Boolean(process.env.SMTP_PASS?.trim()),
+    hostMatchesOfficial: SMTP_HOST.toLowerCase() === 'smtp.163.com',
+    userMatchesOfficial: SMTP_USER.toLowerCase() === OFFICIAL_SENDER_EMAIL,
+    portValid: Number.isInteger(SMTP_PORT) && SMTP_PORT > 0,
+  };
+}
+
 // 创建 transporter
 const transporter = nodemailer.createTransport({
   host: SMTP_HOST,
@@ -33,6 +46,74 @@ const transporter = nodemailer.createTransport({
     pass: process.env.SMTP_PASS || '',
   },
 });
+
+export interface EmailSendResult {
+  accepted: string[];
+  rejected: string[];
+  pending: string[];
+  response: string | null;
+  messageId: string | null;
+  envelope: {
+    from: string | null;
+    to: string[];
+  } | null;
+}
+
+function addressList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(item => String(item)).filter(Boolean);
+  if (value == null || value === '') return [];
+  return [String(value)];
+}
+
+/**
+ * 将 Nodemailer 的返回对象压缩为可记录、可测试的 SMTP 结果。
+ * 不把原始对象直接写入日志，避免把连接内部字段或邮件正文带入日志。
+ */
+export function normalizeEmailSendResult(info: unknown): EmailSendResult {
+  const value = info && typeof info === 'object' ? info as Record<string, unknown> : {};
+  const rawEnvelope = value.envelope && typeof value.envelope === 'object'
+    ? value.envelope as Record<string, unknown>
+    : null;
+  return {
+    accepted: addressList(value.accepted),
+    rejected: addressList(value.rejected),
+    pending: addressList(value.pending),
+    response: value.response == null ? null : String(value.response),
+    messageId: value.messageId == null ? null : String(value.messageId),
+    envelope: rawEnvelope ? {
+      from: rawEnvelope.from == null ? null : String(rawEnvelope.from),
+      to: addressList(rawEnvelope.to),
+    } : null,
+  };
+}
+
+/**
+ * SMTP 连接成功不等于目标收件人被接受。单收件人邮件若没有 accepted，必须进入失败重试，
+ * 不能仅凭 sendMail() 没抛异常就标记为 sent。
+ */
+export function assertEmailSendResult(info: unknown): EmailSendResult {
+  const result = normalizeEmailSendResult(info);
+  if (result.accepted.length === 0 || result.rejected.length > 0 || result.pending.length > 0) {
+    const error = new Error(
+      `SMTP 未接受邮件：accepted=${result.accepted.length}, rejected=${result.rejected.length}, pending=${result.pending.length}`,
+    ) as Error & { code?: string; emailResult?: EmailSendResult };
+    error.code = 'EENVELOPE';
+    error.emailResult = result;
+    throw error;
+  }
+  return result;
+}
+
+export function summarizeEmailSendResult(result: EmailSendResult): Record<string, unknown> {
+  return {
+    messageId: result.messageId,
+    response: result.response,
+    acceptedCount: result.accepted.length,
+    rejectedCount: result.rejected.length,
+    pendingCount: result.pending.length,
+    envelopeToCount: result.envelope?.to.length ?? 0,
+  };
+}
 
 export function formatDateTimeInTimezone(
   date = new Date(),
@@ -57,21 +138,30 @@ function dateInTimezone(date = new Date(), timezone = process.env.APP_TIMEZONE |
   return formatDateTimeInTimezone(date, timezone).slice(0, 10);
 }
 
+function emailConfigurationError(message: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string };
+  error.code = 'EMAIL_CONFIG';
+  return error;
+}
+
 function assertEmailConfiguration(to: string): void {
   if (!to.trim()) {
-    throw new Error('没有可用的收件邮箱，请先在右上角“设置”中配置提醒邮箱');
+    throw emailConfigurationError('没有可用的收件邮箱，请先在右上角“设置”中配置提醒邮箱');
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to.trim())) {
+    throw emailConfigurationError('收件邮箱格式不正确，请在“设置”中检查提醒邮箱');
   }
   if (SMTP_HOST.toLowerCase() !== 'smtp.163.com') {
-    throw new Error('邮件服务配置不一致：SMTP_HOST 必须设置为 smtp.163.com');
+    throw emailConfigurationError('邮件服务配置不一致：SMTP_HOST 必须设置为 smtp.163.com');
   }
   if (SMTP_USER.toLowerCase() !== OFFICIAL_SENDER_EMAIL) {
-    throw new Error(`邮件服务配置不一致：SMTP_USER 必须设置为 ${OFFICIAL_SENDER_EMAIL}`);
+    throw emailConfigurationError(`邮件服务配置不一致：SMTP_USER 必须设置为 ${OFFICIAL_SENDER_EMAIL}`);
   }
   if (!Number.isInteger(SMTP_PORT) || SMTP_PORT <= 0) {
-    throw new Error('邮件服务配置错误：SMTP_PORT 必须是有效端口，推荐使用 465');
+    throw emailConfigurationError('邮件服务配置错误：SMTP_PORT 必须是有效端口，推荐使用 465');
   }
   if (!process.env.SMTP_PASS?.trim()) {
-    throw new Error('邮件服务尚未配置：请在 .env 的 SMTP_PASS 中填写 163 邮箱客户端授权码');
+    throw emailConfigurationError('邮件服务尚未配置：请在 .env 的 SMTP_PASS 中填写 163 邮箱客户端授权码');
   }
 }
 
@@ -81,10 +171,11 @@ async function sendEmail(message: {
   subject: string;
   html?: string;
   text?: string;
-}): Promise<void> {
+}): Promise<EmailSendResult> {
   assertEmailConfiguration(message.to);
   try {
-    await transporter.sendMail(message);
+    const info = await transporter.sendMail(message);
+    return assertEmailSendResult(info);
   } catch (error) {
     const details = error instanceof Error ? error.message : String(error);
     const code = typeof error === 'object' && error && 'code' in error
@@ -92,10 +183,14 @@ async function sendEmail(message: {
       : '';
 
     if (code === 'EAUTH') {
-      throw new Error('163 邮箱认证失败：请确认已开启 SMTP 服务，并且 SMTP_PASS 填写的是客户端授权码而不是网页登录密码');
+      const mapped = new Error('163 邮箱认证失败：请确认已开启 SMTP 服务，并且 SMTP_PASS 填写的是客户端授权码而不是网页登录密码') as Error & { code?: string };
+      mapped.code = code;
+      throw mapped;
     }
     if (['ECONNECTION', 'ECONNRESET', 'ESOCKET', 'ETIMEDOUT'].includes(code) || /TLS|socket/i.test(details)) {
-      throw new Error(`无法与 163 邮箱建立安全连接，请检查 SMTP_HOST、SMTP_PORT 和服务器出站网络。原始错误：${details}`);
+      const mapped = new Error(`无法与 163 邮箱建立安全连接，请检查 SMTP_HOST、SMTP_PORT 和服务器出站网络。原始错误：${details}`) as Error & { code?: string };
+      mapped.code = code || 'ESMTP_CONNECTION';
+      throw mapped;
     }
     throw error;
   }
@@ -107,7 +202,7 @@ export function generateCode(): string {
 }
 
 // 发送验证码邮件
-export async function sendVerificationEmail(to: string, code: string, purpose: 'register' | 'reset_password'): Promise<void> {
+export async function sendVerificationEmail(to: string, code: string, purpose: 'register' | 'reset_password'): Promise<EmailSendResult> {
   const subject = purpose === 'register' ? '【AI Calendar】注册验证码' : '【AI Calendar】重置密码验证码';
   const html = purpose === 'register' ? `
     <div style="font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; max-width: 500px; margin: 0 auto; padding: 30px; background: #f9fafb; border-radius: 12px;">
@@ -135,7 +230,7 @@ export async function sendVerificationEmail(to: string, code: string, purpose: '
     </div>
   `;
 
-  await sendEmail({
+  return sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
     subject,
@@ -144,7 +239,7 @@ export async function sendVerificationEmail(to: string, code: string, purpose: '
 }
 
 // 发送每日提醒邮件
-export async function sendDailyReminderEmail(to: string, userId: string, dateOverride?: string): Promise<void> {
+export async function sendDailyReminderEmail(to: string, userId: string, dateOverride?: string): Promise<EmailSendResult> {
   const preference = db.getReminder(userId);
   const timezone = preference?.timezone || 'Asia/Shanghai';
   const dateStr = dateOverride || dateInTimezone(new Date(), timezone);
@@ -172,7 +267,7 @@ export async function sendDailyReminderEmail(to: string, userId: string, dateOve
     weatherError,
   });
 
-  await sendEmail({
+  return sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
     subject: rendered.subject,
@@ -201,7 +296,7 @@ export async function sendCycleReminderEmail(input: {
   cycle: ReminderCycle;
   reminderType: string;
   scheduledDate: string;
-}): Promise<void> {
+}): Promise<EmailSendResult> {
   const { task, cycle, reminderType, scheduledDate } = input;
   const to = input.to;
   const appUrl = process.env.APP_URL || 'http://localhost:3000/schedule';
@@ -249,7 +344,7 @@ export async function sendCycleReminderEmail(input: {
     `;
   }
 
-  await sendEmail({
+  return sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
     subject,
@@ -268,9 +363,9 @@ export async function sendCycleReminderEmail(input: {
   });
 }
 
-export async function sendQueuedNotificationEmail(to: string, title: string, body: string): Promise<void> {
+export async function sendQueuedNotificationEmail(to: string, title: string, body: string): Promise<EmailSendResult> {
   const appUrl = process.env.APP_URL || 'http://localhost:3000/today';
-  await sendEmail({
+  return sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
     subject: title,
@@ -287,8 +382,8 @@ export async function sendQueuedNotificationEmail(to: string, title: string, bod
   });
 }
 
-export async function sendReminderTestEmail(to: string): Promise<void> {
-  await sendEmail({
+export async function sendReminderTestEmail(to: string): Promise<EmailSendResult> {
+  return sendEmail({
     from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
     to,
     subject: '【测试成功】周期提醒系统邮件发送正常',

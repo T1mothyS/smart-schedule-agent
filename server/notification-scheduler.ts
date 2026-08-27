@@ -1,7 +1,11 @@
 import * as db from './db.js';
 import * as scheduleStore from './schedule-store.js';
 import { todayInTimezone } from './reminder-store.js';
-import { enqueueUserEmailNotification, enqueueUserNotification } from './notification-service.js';
+import {
+  enqueueUserEmailNotificationDetailed,
+  enqueueUserNotificationDetailed,
+  type NotificationLogger,
+} from './notification-service.js';
 import type { DbReminder } from './db.js';
 import type { Schedule } from './schedule-store.js';
 
@@ -12,6 +16,11 @@ export interface DailyDigestScheduleResult {
   scanned: number;
   due: number;
   queued: number;
+  created: number;
+  deduplicated: number;
+  schedulesScanned: number;
+  errors: number;
+  configuredTimes: Record<string, number>;
 }
 
 export interface HighPriorityScheduleResult {
@@ -19,6 +28,10 @@ export interface HighPriorityScheduleResult {
   schedulesScanned: number;
   due: number;
   queued: number;
+  created: number;
+  deduplicated: number;
+  errors: number;
+  skipped: Record<string, number>;
 }
 
 interface LocalDateTimeParts {
@@ -31,7 +44,7 @@ interface LocalDateTimeParts {
   millisecond: number;
 }
 
-export type NotificationSchedulerLogger = (message: string, error?: unknown) => void;
+export type NotificationSchedulerLogger = NotificationLogger;
 
 function timePartsInTimezone(date: Date, timezone: string): LocalDateTimeParts {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -124,15 +137,6 @@ function hasExplicitStartTime(schedule: Schedule): boolean {
   return /[T ]\d{2}:\d{2}/.test(String(schedule.start_time || ''));
 }
 
-function isHighPrioritySchedule(schedule: Schedule): boolean {
-  return (schedule.type === 'event' || schedule.type === 'todo')
-    && schedule.priority === 'high'
-    && !schedule.is_completed
-    && !schedule.all_day
-    && !schedule.is_unscheduled
-    && hasExplicitStartTime(schedule);
-}
-
 function highPriorityEmailBody(schedule: Schedule, now: Date, timezone: string): string {
   const start = parseScheduleStart(schedule.start_time, timezone);
   const minutes = start ? Math.max(1, Math.ceil((start.getTime() - now.getTime()) / MINUTE_MS)) : 15;
@@ -153,7 +157,14 @@ export function enqueueDueDailyDigestNotifications(
   const reminders = db.getAllEnabledReminders();
   let due = 0;
   let queued = 0;
+  let created = 0;
+  let deduplicated = 0;
+  let schedulesScanned = 0;
+  let errors = 0;
+  const configuredTimes: Record<string, number> = {};
   for (const reminder of reminders) {
+    const configuredTime = `${reminder.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai'}:${String(reminder.hour).padStart(2, '0')}:${String(reminder.minute).padStart(2, '0')}`;
+    configuredTimes[configuredTime] = (configuredTimes[configuredTime] || 0) + 1;
     try {
       const timezone = reminder.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai';
       const local = timePartsInTimezone(now, timezone);
@@ -161,7 +172,8 @@ export function enqueueDueDailyDigestNotifications(
       due += 1;
       const localDate = todayInTimezone(timezone, now);
       const schedules = scheduleStore.getSchedulesByDate(localDate, reminder.user_id).filter(item => !item.is_completed);
-      const notifications = enqueueUserNotification({
+      schedulesScanned += schedules.length;
+      const notifications = enqueueUserNotificationDetailed({
         userId: reminder.user_id,
         sourceType: 'digest',
         sourceId: localDate,
@@ -172,12 +184,45 @@ export function enqueueDueDailyDigestNotifications(
         dedupePrefix: `daily:${reminder.user_id}:${localDate}`,
       });
       queued += notifications.length;
+      created += notifications.filter(item => item.created).length;
+      deduplicated += notifications.filter(item => !item.created).length;
+      log?.('每日摘要扫描命中，通知入队结果已记录', undefined, {
+        event: 'daily_digest_enqueue',
+        userId: reminder.user_id,
+        timezone,
+        localDate,
+        localTime: `${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`,
+        configuredTime: `${String(reminder.hour).padStart(2, '0')}:${String(reminder.minute).padStart(2, '0')}`,
+        incompleteScheduleCount: schedules.length,
+        queuedCount: notifications.length,
+        createdCount: notifications.filter(item => item.created).length,
+        deduplicatedCount: notifications.filter(item => !item.created).length,
+        channels: notifications.map(item => item.notification.channel),
+        notificationIds: notifications.map(item => item.notification.id),
+        notificationStatuses: notifications.map(item => item.notification.status),
+        notificationAttempts: notifications.map(item => item.notification.attempts),
+      });
     } catch (error) {
       // 无效时区等单账号配置不应阻断其他账号的扫描。
-      log?.(`跳过账号 ${reminder.user_id} 的每日摘要扫描`, error);
+      errors += 1;
+      log?.(`跳过账号 ${reminder.user_id} 的每日摘要扫描`, error, {
+        event: 'daily_digest_scan_error',
+        userId: reminder.user_id,
+        configuredTime: `${String(reminder.hour).padStart(2, '0')}:${String(reminder.minute).padStart(2, '0')}`,
+        timezone: reminder.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai',
+      });
     }
   }
-  return { scanned: reminders.length, due, queued };
+  return {
+    scanned: reminders.length,
+    due,
+    queued,
+    created,
+    deduplicated,
+    schedulesScanned,
+    errors,
+    configuredTimes,
+  };
 }
 
 /**
@@ -192,6 +237,19 @@ export function enqueueDueHighPriorityScheduleEmails(
   let schedulesScanned = 0;
   let due = 0;
   let queued = 0;
+  let created = 0;
+  let deduplicated = 0;
+  let errors = 0;
+  const skipped: Record<string, number> = {
+    notEventOrTodo: 0,
+    notHighPriority: 0,
+    completed: 0,
+    allDay: 0,
+    unscheduled: 0,
+    missingExplicitStart: 0,
+    invalidStart: 0,
+    outsideWindow: 0,
+  };
   for (const user of users) {
     const preference: DbReminder | undefined = db.getReminder(user.id);
     const timezone = preference?.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai';
@@ -199,13 +257,42 @@ export function enqueueDueHighPriorityScheduleEmails(
       const schedules = scheduleStore.getAllSchedules(user.id);
       schedulesScanned += schedules.length;
       for (const schedule of schedules) {
-        if (!isHighPrioritySchedule(schedule)) continue;
+        if (schedule.type !== 'event' && schedule.type !== 'todo') {
+          skipped.notEventOrTodo += 1;
+          continue;
+        }
+        if (schedule.priority !== 'high') {
+          skipped.notHighPriority += 1;
+          continue;
+        }
+        if (schedule.is_completed) {
+          skipped.completed += 1;
+          continue;
+        }
+        if (schedule.all_day) {
+          skipped.allDay += 1;
+          continue;
+        }
+        if (schedule.is_unscheduled) {
+          skipped.unscheduled += 1;
+          continue;
+        }
+        if (!hasExplicitStartTime(schedule)) {
+          skipped.missingExplicitStart += 1;
+          continue;
+        }
         const start = parseScheduleStart(schedule.start_time, timezone);
-        if (!start) continue;
+        if (!start) {
+          skipped.invalidStart += 1;
+          continue;
+        }
         const remaining = start.getTime() - now.getTime();
-        if (remaining <= 0 || remaining > HIGH_PRIORITY_WINDOW_MS) continue;
+        if (remaining <= 0 || remaining > HIGH_PRIORITY_WINDOW_MS) {
+          skipped.outsideWindow += 1;
+          continue;
+        }
         due += 1;
-        enqueueUserEmailNotification({
+        const notification = enqueueUserEmailNotificationDetailed({
           userId: user.id,
           sourceType: 'schedule',
           sourceId: schedule.id,
@@ -216,11 +303,39 @@ export function enqueueDueHighPriorityScheduleEmails(
           dedupeKey: `high-priority:${schedule.id}:${schedule.start_time}`,
         });
         queued += 1;
+        if (notification.created) created += 1;
+        else deduplicated += 1;
+        log?.('高优先级日程命中，邮件通知入队结果已记录', undefined, {
+          event: 'high_priority_email_enqueue',
+          userId: user.id,
+          scheduleId: schedule.id,
+          timezone,
+          scheduleStart: schedule.start_time,
+          remainingSeconds: Math.max(0, Math.round(remaining / 1_000)),
+          notificationId: notification.notification.id,
+          created: notification.created,
+          notificationStatus: notification.notification.status,
+          notificationAttempts: notification.notification.attempts,
+          dedupeKey: notification.notification.dedupeKey,
+        });
       }
     } catch (error) {
       // 单账号日程读取失败不应阻断其他账号的高优先级扫描。
-      log?.(`跳过账号 ${user.id} 的高优先级扫描`, error);
+      errors += 1;
+      log?.(`跳过账号 ${user.id} 的高优先级扫描`, error, {
+        event: 'high_priority_scan_error',
+        userId: user.id,
+      });
     }
   }
-  return { usersScanned: users.length, schedulesScanned, due, queued };
+  return {
+    usersScanned: users.length,
+    schedulesScanned,
+    due,
+    queued,
+    created,
+    deduplicated,
+    errors,
+    skipped,
+  };
 }

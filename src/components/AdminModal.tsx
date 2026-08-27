@@ -424,6 +424,7 @@ function DebugLogsTab() {
   const [category, setCategory] = useState('all');
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [total, setTotal] = useState(0);
+  const [maxLogs, setMaxLogs] = useState(0);
   const [exporting, setExporting] = useState(false);
   const logContainerRef = React.useRef<HTMLDivElement>(null);
   const intervalRef = React.useRef<number | null>(null);
@@ -434,6 +435,7 @@ function DebugLogsTab() {
       const data = await res.json();
       setLogs(data.logs || []);
       setTotal(data.total ?? 0);
+      setMaxLogs(data.max ?? 0);
     } catch (e) {
       console.error('获取日志失败', e);
     }
@@ -510,6 +512,9 @@ function DebugLogsTab() {
       case 'ai': return '#8B5CF6';
       case 'db': return '#10B981';
       case 'system': return '#6B7280';
+      case 'reminder': return '#F59E0B';
+      case 'auth': return '#14B8A6';
+      case 'admin': return '#EF4444';
       default: return '#6B7280';
     }
   };
@@ -537,13 +542,13 @@ function DebugLogsTab() {
           清空
         </Button>
         <span className="ml-auto text-xs" style={{ color: 'var(--td-text-color-secondary)' }}>
-          缓冲区共 {total} 条
+          已保留 {total} 条{maxLogs ? `（上限 ${maxLogs} 条，重启后保留）` : ''}
         </span>
       </div>
 
       {/* 分类过滤 */}
       <div className="flex gap-2 mb-3">
-        {['all', 'schedule', 'ai', 'db', 'system'].map(cat => (
+        {['all', 'schedule', 'ai', 'db', 'system', 'reminder', 'auth', 'admin'].map(cat => (
           <button
             key={cat}
             onClick={() => setCategory(cat)}
