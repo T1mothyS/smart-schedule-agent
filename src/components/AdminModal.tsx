@@ -513,6 +513,7 @@ function DebugLogsTab() {
       case 'db': return '#10B981';
       case 'system': return '#6B7280';
       case 'reminder': return '#F59E0B';
+      case 'mail': return '#0EA5E9';
       case 'auth': return '#14B8A6';
       case 'admin': return '#EF4444';
       default: return '#6B7280';
@@ -547,8 +548,8 @@ function DebugLogsTab() {
       </div>
 
       {/* 分类过滤 */}
-      <div className="flex gap-2 mb-3">
-        {['all', 'schedule', 'ai', 'db', 'system', 'reminder', 'auth', 'admin'].map(cat => (
+      <div className="flex gap-2 mb-3 flex-wrap">
+        {['all', 'schedule', 'ai', 'db', 'system', 'reminder', 'mail', 'auth', 'admin'].map(cat => (
           <button
             key={cat}
             onClick={() => setCategory(cat)}
@@ -565,7 +566,7 @@ function DebugLogsTab() {
       {/* 日志列表 */}
       <div
         ref={logContainerRef}
-        className="h-80 overflow-y-auto rounded border p-2 font-mono text-xs"
+        className="h-80 overflow-auto rounded border p-2 font-mono text-xs"
         style={{
           backgroundColor: 'var(--td-bg-color-component)',
           borderColor: 'var(--td-component-stroke)',
@@ -579,8 +580,12 @@ function DebugLogsTab() {
           logs.map((log, idx) => (
             <div
               key={idx}
-              className="py-0.5 flex gap-2 items-start"
-              style={{ borderBottom: '1px solid var(--td-component-stroke)' }}
+              className="py-0.5 flex gap-2 items-center whitespace-nowrap"
+              style={{
+                minWidth: '100%',
+                width: 'max-content',
+                borderBottom: '1px solid var(--td-component-stroke)',
+              }}
             >
               <span className="opacity-50 flex-shrink-0 whitespace-nowrap">{log.timestamp}</span>
               <span
@@ -595,9 +600,9 @@ function DebugLogsTab() {
               >
                 {log.category}
               </span>
-              <span style={{ color: 'var(--td-text-color-primary)' }}>{log.message}</span>
+              <span className="flex-shrink-0" style={{ color: 'var(--td-text-color-primary)' }}>{log.message}</span>
               {log.data && (
-                <span className="opacity-60" style={{ color: 'var(--td-text-color-secondary)' }}>
+                <span className="opacity-60 flex-shrink-0" style={{ color: 'var(--td-text-color-secondary)' }}>
                   {JSON.stringify(log.data)}
                 </span>
               )}

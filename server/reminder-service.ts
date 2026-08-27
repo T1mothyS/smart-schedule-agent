@@ -22,6 +22,7 @@ export async function processCycleReminders(log?: NotificationLogger): Promise<v
         title: `【事务提醒】${reminder.task.name}`,
         body: `截止日期：${reminder.cycle.dueDate}\n${config.actionGuide || '请完成本周期事务并登记。'}`,
         dedupePrefix: `cycle:${reminder.cycle.id}:${reminder.reminderType}:${reminder.scheduledDate}`,
+        log,
       });
       markDeliverySent(reminder.id);
       log?.('周期提醒已进入通知队列', undefined, {

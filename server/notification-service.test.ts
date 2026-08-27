@@ -128,6 +128,47 @@ test('邮件配置错误会记录错误码、失败状态和下一次重试时�
   assert.ok(failure?.data?.nextRetryAt);
 });
 
+test('邮件通知创建和重复入队会通过日志回调留下链路事件', () => {
+  const userId = 'notification-service-enqueue-log-user';
+  const now = new Date().toISOString();
+  db.createUser({
+    id: userId,
+    email: 'notification-service-enqueue-log@example.com',
+    password_hash: 'not-a-real-password',
+    role: 'user',
+    disabled: 0,
+    created_at: now,
+    updated_at: now,
+  });
+
+  const events: Array<{ message: string; data?: Record<string, unknown> }> = [];
+  const log = (message: string, _error?: unknown, data?: Record<string, unknown>) => events.push({ message, data });
+  const input = {
+    userId,
+    sourceType: 'schedule',
+    sourceId: 'notification-service-enqueue-log-schedule',
+    kind: 'high_priority_schedule',
+    title: '测试邮件队列日志',
+    body: '测试内容',
+    scheduledAt: now,
+    dedupeKey: 'notification-service-enqueue-log-test',
+    log,
+  };
+
+  const first = notifications.enqueueUserEmailNotificationDetailed(input);
+  const second = notifications.enqueueUserEmailNotificationDetailed(input);
+
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.deepEqual(events.map(event => event.data?.event), [
+    'notification_created',
+    'notification_deduplicated',
+  ]);
+  assert.equal(events[0]?.data?.channel, 'email');
+  assert.equal(events[0]?.data?.notificationId, first.notification.id);
+  assert.equal(events[1]?.data?.notificationId, first.notification.id);
+});
+
 test.after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });

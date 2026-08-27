@@ -186,6 +186,7 @@ export function enqueueDueDailyDigestNotifications(
         // 不再按“账号 + 自然日”全局去重；修改当天提醒时间后允许再次触发。
         // 同一配置时间的重复扫描仍保持幂等，避免同一分钟重复入队。
         dedupePrefix: `daily:${reminder.user_id}:${localDate}:${timezone}:${configuredHour}:${configuredMinute}`,
+        log,
       });
       queued += notifications.length;
       created += notifications.filter(item => item.created).length;
@@ -306,6 +307,7 @@ export function enqueueDueHighPriorityScheduleEmails(
           body: highPriorityEmailBody(schedule, now, timezone),
           scheduledAt: now.toISOString(),
           dedupeKey: `high-priority:${schedule.id}:${schedule.start_time}`,
+          log,
         });
         queued += 1;
         if (notification.created) created += 1;

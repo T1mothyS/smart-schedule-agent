@@ -10,6 +10,7 @@ import * as db from './db.js';
 import { getSchedulesByDate } from './schedule-store.js';
 import { renderDailyReminderEmail } from './daily-email-template.js';
 import { getDailyWeather } from './weather-service.js';
+import { addLog } from './log-service.js';
 
 const OFFICIAL_SENDER_EMAIL = 'aicalendarofficial@163.com';
 
@@ -115,6 +116,18 @@ export function summarizeEmailSendResult(result: EmailSendResult): Record<string
   };
 }
 
+function getErrorCode(error: unknown): string | null {
+  if (typeof error !== 'object' || !error || !('code' in error)) return null;
+  const code = String((error as { code?: unknown }).code || '').trim();
+  return code || null;
+}
+
+function getEmailResultFromError(error: unknown): EmailSendResult | null {
+  if (typeof error !== 'object' || !error || !('emailResult' in error)) return null;
+  const result = (error as { emailResult?: unknown }).emailResult;
+  return result && typeof result === 'object' ? result as EmailSendResult : null;
+}
+
 export function formatDateTimeInTimezone(
   date = new Date(),
   timezone = process.env.APP_TIMEZONE || 'Asia/Shanghai',
@@ -171,28 +184,63 @@ async function sendEmail(message: {
   subject: string;
   html?: string;
   text?: string;
+  mailType: string;
 }): Promise<EmailSendResult> {
-  assertEmailConfiguration(message.to);
+  const { mailType, ...mailOptions } = message;
+  const startedAt = Date.now();
+  addLog('debug', 'mail', '邮件传输开始', {
+    event: 'mail_send_started',
+    mailType,
+    recipient: message.to,
+    subjectLength: message.subject.length,
+    hasHtml: Boolean(message.html),
+    hasText: Boolean(message.text),
+  });
   try {
-    const info = await transporter.sendMail(message);
-    return assertEmailSendResult(info);
+    assertEmailConfiguration(message.to);
+    const info = await transporter.sendMail(mailOptions);
+    const result = normalizeEmailSendResult(info);
+    addLog(
+      result.accepted.length > 0 && result.rejected.length === 0 && result.pending.length === 0 ? 'info' : 'warn',
+      'mail',
+      'SMTP 已返回邮件反馈',
+      {
+        event: 'mail_smtp_feedback',
+        mailType,
+        recipient: message.to,
+        durationMs: Date.now() - startedAt,
+        ...summarizeEmailSendResult(result),
+      },
+    );
+    return assertEmailSendResult(result);
   } catch (error) {
     const details = error instanceof Error ? error.message : String(error);
-    const code = typeof error === 'object' && error && 'code' in error
-      ? String((error as { code?: unknown }).code || '')
-      : '';
+    const code = getErrorCode(error);
+
+    let mappedError = error;
 
     if (code === 'EAUTH') {
       const mapped = new Error('163 邮箱认证失败：请确认已开启 SMTP 服务，并且 SMTP_PASS 填写的是客户端授权码而不是网页登录密码') as Error & { code?: string };
       mapped.code = code;
-      throw mapped;
+      mappedError = mapped;
     }
-    if (['ECONNECTION', 'ECONNRESET', 'ESOCKET', 'ETIMEDOUT'].includes(code) || /TLS|socket/i.test(details)) {
+    if (mappedError === error && (['ECONNECTION', 'ECONNRESET', 'ESOCKET', 'ETIMEDOUT'].includes(code || '') || /TLS|socket/i.test(details))) {
       const mapped = new Error(`无法与 163 邮箱建立安全连接，请检查 SMTP_HOST、SMTP_PORT 和服务器出站网络。原始错误：${details}`) as Error & { code?: string };
       mapped.code = code || 'ESMTP_CONNECTION';
-      throw mapped;
+      mappedError = mapped;
     }
-    throw error;
+    const mappedCode = getErrorCode(mappedError);
+    const emailResult = getEmailResultFromError(mappedError) || getEmailResultFromError(error);
+    addLog('error', 'mail', '邮件传输失败', {
+      event: 'mail_send_failed',
+      mailType,
+      recipient: message.to,
+      durationMs: Date.now() - startedAt,
+      error: mappedError instanceof Error ? mappedError.message : details,
+      ...(mappedCode ? { errorCode: mappedCode } : {}),
+      ...(emailResult ? summarizeEmailSendResult(emailResult) : {}),
+    });
+    throw mappedError;
   }
 }
 
@@ -235,6 +283,7 @@ export async function sendVerificationEmail(to: string, code: string, purpose: '
     to,
     subject,
     html,
+    mailType: purpose === 'register' ? 'register_verification' : 'password_reset_verification',
   });
 }
 
@@ -272,6 +321,7 @@ export async function sendDailyReminderEmail(to: string, userId: string, dateOve
     to,
     subject: rendered.subject,
     html: rendered.html,
+    mailType: 'daily_digest',
   });
 }
 
@@ -360,6 +410,7 @@ export async function sendCycleReminderEmail(input: {
         </div>
       </div>
     `,
+    mailType: 'cycle_reminder',
   });
 }
 
@@ -379,6 +430,7 @@ export async function sendQueuedNotificationEmail(to: string, title: string, bod
         </div>
       </div>
     `,
+    mailType: 'queued_notification',
   });
 }
 
@@ -395,5 +447,6 @@ export async function sendReminderTestEmail(to: string): Promise<EmailSendResult
       `收件地址：${to}`,
       '服务版本：smart-schedule-agent',
     ].join('\n'),
+    mailType: 'reminder_test',
   });
 }

@@ -35,7 +35,7 @@ import { createApiRateLimiter, securityHeaders } from './http-security.js';
 import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
 import { shiftScheduleDateValue } from './schedule-actions.js';
 import { assertNoLegacyCodeBuddyConfig } from './codebuddy-config.js';
-import { addLog, allLogs, clearLogs, listLogs } from './log-service.js';
+import { addLog, allLogs, clearLogs, listLogs, type LogCategory } from './log-service.js';
 import {
   buildAiPlanSnapshot,
   normaliseAiPlanOperations,
@@ -86,6 +86,19 @@ function describeErrorData(error: unknown, extra: Record<string, unknown> = {}):
     error: describeError(error),
     ...(code ? { errorCode: code } : {}),
   };
+}
+
+function notificationLogCategory(data: Record<string, unknown> = {}): LogCategory {
+  const event = typeof data.event === 'string' ? data.event : '';
+  const channels = Array.isArray(data.channels) ? data.channels : [];
+  if (
+    data.channel === 'email'
+    || event.startsWith('email_')
+    || event.startsWith('mail_')
+    || event === 'high_priority_email_enqueue'
+    || (event === 'daily_digest_enqueue' && channels.includes('email'))
+  ) return 'mail';
+  return 'reminder';
 }
 
 // 【修复】默认使用国内版 API（codebuddy.cn）
@@ -716,7 +729,7 @@ app.post("/api/auth/send-register-code", async (req, res) => {
     db.createEmailCode(codeRecord);
     // 发送邮件
     const sendResult = await sendVerificationEmail(email, code, 'register');
-    addLog('info', 'auth', `注册验证码已发送至 ${email}，权限: ${role}`, {
+    addLog('info', 'mail', `注册验证码已发送至 ${email}，权限: ${role}`, {
       event: 'verification_email_sent',
       email,
       purpose: 'register',
@@ -725,7 +738,7 @@ app.post("/api/auth/send-register-code", async (req, res) => {
     });
     res.json({ success: true, message: '验证码已发送到您的邮箱' });
   } catch (error: any) {
-    addLog('error', 'auth', '发送验证码失败', describeErrorData(error, {
+    addLog('error', 'mail', '发送验证码失败', describeErrorData(error, {
       event: 'verification_email_failed',
     }));
     console.error('[Send Register Code] Error:', error);
@@ -999,7 +1012,7 @@ app.post("/api/action-center/send-email", authenticate, async (req, res) => {
     const reminderEmail = db.getReminderEmail(payload.userId) || payload.email;
     if (!reminderEmail) return res.status(400).json({ error: '没有绑定通知邮箱，请先在设置中配置。' });
     const sendResult = await sendDailyReminderEmail(reminderEmail, payload.userId);
-    addLog('info', 'reminder', '用户手动发送今日安排邮件成功', {
+    addLog('info', 'mail', '用户手动发送今日安排邮件成功', {
       event: 'manual_daily_email_sent',
       userId: payload.userId,
       recipient: reminderEmail,
@@ -1007,7 +1020,7 @@ app.post("/api/action-center/send-email", authenticate, async (req, res) => {
     });
     res.json({ success: true, message: `今天的安排已发送至 ${reminderEmail}` });
   } catch (error: any) {
-    addLog('error', 'reminder', '手动发送今日安排邮件失败', describeErrorData(error, {
+    addLog('error', 'mail', '手动发送今日安排邮件失败', describeErrorData(error, {
       event: 'manual_daily_email_failed',
       userId: (req as any).user?.userId,
     }));
@@ -1777,7 +1790,7 @@ app.post("/api/cycle-reminders/test-email", authenticate, async (req, res) => {
     const payload = (req as any).user as JwtPayload;
     const reminderEmail = db.getReminderEmail(payload.userId) || payload.email;
     const sendResult = await sendReminderTestEmail(reminderEmail);
-    addLog('info', 'reminder', '周期提醒测试邮件发送成功', {
+    addLog('info', 'mail', '周期提醒测试邮件发送成功', {
       event: 'reminder_test_email_sent',
       userId: payload.userId,
       recipient: reminderEmail,
@@ -1785,7 +1798,7 @@ app.post("/api/cycle-reminders/test-email", authenticate, async (req, res) => {
     });
     res.json({ success: true });
   } catch (error: any) {
-    addLog('error', 'reminder', '周期提醒测试邮件发送失败', describeErrorData(error, {
+    addLog('error', 'mail', '周期提醒测试邮件发送失败', describeErrorData(error, {
       event: 'reminder_test_email_failed',
       userId: (req as any).user?.userId,
     }));
@@ -3509,7 +3522,8 @@ cron.schedule('* * * * *', () => {
   const now = new Date();
   try {
     const schedulerLog: NotificationLogger = (message, error, data = {}) => {
-      addLog(error ? 'warn' : 'debug', 'reminder', message, error
+      const category = notificationLogCategory(data);
+      addLog(error ? 'warn' : 'debug', category, message, error
         ? describeErrorData(error, { event: 'reminder_scheduler_detail', ...data })
         : { event: 'reminder_scheduler_detail', ...data });
     };
@@ -3538,8 +3552,9 @@ cron.schedule('* * * * *', () => {
   });
 
   processNotificationQueue((message, error, data = {}) => {
-    if (error) addLog('error', 'reminder', message, describeErrorData(error, data));
-    else addLog('debug', 'reminder', message, data);
+    const category = notificationLogCategory(data);
+    if (error) addLog('error', category, message, describeErrorData(error, data));
+    else addLog('debug', category, message, data);
   }).then(queueResult => {
     addLog('debug', 'reminder', '通知队列本次统计', {
       event: 'notification_queue_tick_result',

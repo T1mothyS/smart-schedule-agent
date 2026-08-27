@@ -11,7 +11,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - 周期事务支持信用卡、SIM、订阅、保险、证件、会员、房租、水电、车辆年检和自定义规则。
 - 周期事务会按当前周期到期日同步为日历全天待办，完成后继续生成下一周期事项。
 - 通知支持邮件、站内消息、浏览器通知、免打扰、失败重试和发送记录。
-- 通知调度会记录扫描、筛选、入队、去重、领取、SMTP 接受/拒收、重试和最终状态；调试日志会持久化并在服务重启后保留。
+- 通知调度会记录扫描、筛选、入队、去重、领取、SMTP 接受/拒收、重试和最终状态；调试日志会持久化并在服务重启后保留。管理员日志新增 `mail` 分类，可单独查看邮件传输链路。
 - 完成时可保存备注、金额、账单日期、图片或 PDF 证明。
 - 支持可读 JSON/CSV 导出、用户加密导出/恢复和管理员全站快照。
 - AI 可从自然语言或截图生成待确认草稿；确认前不会写入正式数据。
@@ -34,7 +34,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 ### 1.1 版本与邮件链路
 
-- 当前版本：`0.1.1-260827.2153`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
+- 当前版本：`0.2.0-260827.2216`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
 - 每日摘要邮件链路：账号提醒设置 → 每日摘要调度器 → 持久化通知队列 → 固定发件邮箱；按账号、时区、日期和配置时间组成触发键幂等。
 - 高优先级邮件链路：高优先级事件/待办 → 开始前 1–15 分钟调度器 → 持久化通知队列 → 固定发件邮箱；不依赖每日提醒或邮件开关。
 - 每日摘要不再按账号和自然日全局去重；同一配置时间的重复扫描仍按触发键幂等，修改当天提醒时间后可以再次生成邮件。
@@ -257,7 +257,7 @@ cp .env.example .env
 | `APP_URL` | 是 | 邮件按钮跳转地址；生产环境填写 HTTPS 域名，例如 `https://example.com/today` |
 | `APP_ENV` | 是 | 本地为 `development`，服务器为 `production`；避免 Vite 读取 `NODE_ENV` 产生构建警告 |
 | `TRUST_PROXY_HOPS` | 反向代理时必需 | Nginx 直接代理到 Node 时通常为 `1`；本地直连保持 `0` |
-| `BACKGROUND_JOBS_ENABLED` | 是 | 仅唯一生产 worker 设为 `true`；本地、测试和额外实例保持 `false`，防止重复发信 |
+| `BACKGROUND_JOBS_ENABLED` | 是 | 默认 `false`；本地实际验收提醒时临时设为 `true`，生产环境只允许唯一 worker 开启，额外实例保持 `false` 防止重复发信 |
 | `ELECTRON_APP_URL` | Electron 打包必需 | 写入安装包的公开 HTTPS 页面地址，不包含任何密钥 |
 | `VITE_DEV_HOST` / `VITE_ALLOWED_HOST` | 局域网调试可选 | 默认只允许本机访问；确需局域网调试时同时显式配置监听地址和允许主机 |
 
@@ -554,7 +554,7 @@ pm2 restart smart-schedule --update-env
 
 本地开发还必须显式设置 `BACKGROUND_JOBS_ENABLED=true` 并重启后端；设置页的“自动提醒”只保存账号级开关，不会替代服务进程的后台任务开关。生产环境只允许唯一一个 worker 开启该配置，避免重复发送。
 
-管理员可以在“调试日志”中按 `reminder` 分类查看完整链路。重点看同一 `notificationId` 是否依次出现 `email_send_started`、`email_smtp_accepted` 和 `notification_sent`；若 SMTP 没有接受收件人，会出现 `email_smtp_rejected` 和 `notification_failed`，并记录 `errorCode`、`lastError` 与 `nextRetryAt`；若 `daily_digest` 的 `deduplicatedCount` 增加，表示同一配置时间被重复扫描，修改提醒时间后应使用新的触发键重新入队。
+管理员可以在“调试日志”中按 `reminder` 分类查看扫描、筛选和队列汇总，按 `mail` 分类查看邮件通知创建、领取、发送开始、SMTP 反馈、成功落库、失败与重试。重点看同一 `notificationId` 是否依次出现 `notification_created`、`notification_claimed`、`mail_send_started`、`mail_smtp_feedback` 和 `notification_sent`；若 SMTP 没有接受收件人，会出现 `mail_send_failed`、`email_smtp_rejected` 和 `notification_failed`，并记录 `errorCode`、`lastError` 与 `nextRetryAt`。SMTP 反馈表示发件服务器处理结果，不等同于收件箱最终到达。
 
 ### 能否删除 `.env.example`
 

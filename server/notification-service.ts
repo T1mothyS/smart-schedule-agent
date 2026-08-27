@@ -69,6 +69,7 @@ export function enqueueUserNotificationDetailed(input: {
   body: string;
   scheduledAt?: string;
   dedupePrefix: string;
+  log?: NotificationLogger;
 }): activityStore.EnqueueNotificationResult[] {
   const preference = db.getReminder(input.userId);
   const scheduledAt = quietAdjustedDate(input.userId, input.scheduledAt || new Date().toISOString());
@@ -76,7 +77,7 @@ export function enqueueUserNotificationDetailed(input: {
   if (preference?.email_enabled !== 0) channels.push('email');
   if (preference?.in_app_enabled !== 0) channels.push('in_app');
   if (preference?.browser_enabled !== 0) channels.push('browser');
-  return channels.map(channel => activityStore.enqueueNotificationDetailed({
+  const results = channels.map(channel => activityStore.enqueueNotificationDetailed({
     userId: input.userId,
     sourceType: input.sourceType,
     sourceId: input.sourceId,
@@ -88,6 +89,17 @@ export function enqueueUserNotificationDetailed(input: {
     scheduledAt,
     dedupeKey: `${input.dedupePrefix}:${channel}`,
   }));
+  for (const result of results) {
+    input.log?.(
+      result.created ? '通知已创建并进入通知队列' : '通知入队命中已有记录',
+      undefined,
+      notificationLogData(result.notification, {
+        event: result.created ? 'notification_created' : 'notification_deduplicated',
+        created: result.created,
+      }),
+    );
+  }
+  return results;
 }
 
 /**
@@ -120,8 +132,9 @@ export function enqueueUserEmailNotificationDetailed(input: {
   body: string;
   scheduledAt?: string;
   dedupeKey: string;
+  log?: NotificationLogger;
 }): activityStore.EnqueueNotificationResult {
-  return activityStore.enqueueNotificationDetailed({
+  const result = activityStore.enqueueNotificationDetailed({
     userId: input.userId,
     sourceType: input.sourceType,
     sourceId: input.sourceId,
@@ -133,6 +146,15 @@ export function enqueueUserEmailNotificationDetailed(input: {
     scheduledAt: input.scheduledAt || new Date().toISOString(),
     dedupeKey: input.dedupeKey,
   });
+  input.log?.(
+    result.created ? '邮件通知已创建并进入通知队列' : '邮件通知入队命中已有记录',
+    undefined,
+    notificationLogData(result.notification, {
+      event: result.created ? 'notification_created' : 'notification_deduplicated',
+      created: result.created,
+    }),
+  );
+  return result;
 }
 
 function notificationLogData(item: activityStore.NotificationDelivery, extra: Record<string, unknown> = {}): Record<string, unknown> {

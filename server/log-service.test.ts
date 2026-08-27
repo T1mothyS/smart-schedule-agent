@@ -22,7 +22,7 @@ test('服务重启后会先加载已有持久化日志', () => {
 
 test('日志会持久化并对邮箱和凭据字段脱敏', () => {
   logService.clearLogs();
-  logService.addLog('info', 'reminder', '邮件发送开始至 alice@example.com', {
+  logService.addLog('info', 'mail', '邮件发送开始至 alice@example.com', {
     event: 'email_send_started',
     recipient: 'alice@example.com',
     password: 'must-not-appear',
@@ -33,6 +33,8 @@ test('日志会持久化并对邮箱和凭据字段脱敏', () => {
 
   const result = logService.listLogs({ limit: 10 });
   assert.equal(result.total, 1);
+  assert.equal(result.logs[0]?.category, 'mail');
+  assert.equal(logService.listLogs({ category: 'mail', limit: 10 }).total, 1);
   assert.equal(result.logs[0]?.message, '邮件发送开始至 a***@example.com');
   assert.deepEqual(result.logs[0]?.data, {
     event: 'email_send_started',
