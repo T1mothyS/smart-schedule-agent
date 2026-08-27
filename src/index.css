@@ -892,6 +892,49 @@ t-chat-sender::part(send-btn):disabled,
   flex: 0 0 68px;
   min-width: 0;
 }
+.settings-dialog-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px 0;
+  background: var(--td-bg-color-container);
+}
+.settings-dialog-version {
+  max-width: calc(100% - 44px);
+  overflow: hidden;
+  color: var(--td-text-color-placeholder);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-dialog-close {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+}
+.settings-dialog-close:hover {
+  background: var(--td-bg-color-component-hover);
+  color: var(--td-text-color-primary);
+}
+.settings-admin-link {
+  color: #6d28d9;
+  font-weight: 650;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.settings-admin-link:hover { color: #4c1d95; }
 .app-shell-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -1796,6 +1839,7 @@ t-chat-sender::part(send-btn):disabled,
 }
 
 @media (max-width: 520px) {
+  .settings-dialog-toolbar { padding-inline: 12px; }
   .settings-location-results button { align-items: flex-start; flex-direction: column; gap: 3px; }
   .settings-token-once { grid-template-columns: 1fr; }
   .settings-token-once code { grid-column: 1; }

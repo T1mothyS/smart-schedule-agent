@@ -20,7 +20,8 @@ import * as activityStore from "./activity-store.js";
 import { initActivityDb } from "./activity-store.js";
 import { getActionCenter } from "./action-center.js";
 import * as attachmentService from "./attachment-service.js";
-import { enqueueUserNotification, processNotificationQueue } from "./notification-service.js";
+import { processNotificationQueue } from "./notification-service.js";
+import { enqueueDueDailyDigestNotifications, enqueueDueHighPriorityScheduleEmails } from './notification-scheduler.js';
 import * as backupService from "./backup-service.js";
 import { parseAiImport, type AiImportDraft } from "./ai-import-service.js";
 import { pollEmailImports } from "./email-import-service.js";
@@ -3406,35 +3407,15 @@ cron.schedule('* * * * *', () => {
   if (!dbInitialized) return;
   try {
     const now = new Date();
-    const reminders = db.getAllEnabledReminders();
-    for (const reminder of reminders) {
-      try {
-        const timezone = reminder.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai';
-        const parts = new Intl.DateTimeFormat('en-GB', {
-          timeZone: timezone,
-          hour: '2-digit',
-          minute: '2-digit',
-          hourCycle: 'h23',
-        }).formatToParts(now);
-        const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
-        const localHour = Number(values.hour);
-        const localMinute = Number(values.minute);
-        const localDate = reminderStore.todayInTimezone(timezone, now);
-        if (reminder.hour === localHour && reminder.minute === localMinute) {
-          const schedules = scheduleStore.getSchedulesByDate(localDate, reminder.user_id).filter(item => !item.is_completed);
-          enqueueUserNotification({
-            userId: reminder.user_id,
-            sourceType: 'digest',
-            sourceId: localDate,
-            kind: 'daily_digest',
-            title: `今日行动提醒 · ${schedules.length} 项待处理`,
-            body: schedules.length ? schedules.map(item => `${item.start_time.slice(11, 16)} ${item.title}`).join('\n') : '今天暂无未完成日程。',
-            dedupePrefix: `daily:${reminder.user_id}:${localDate}`,
-          });
-        }
-      } catch (error: any) {
-        addLog('warn', 'reminder', '跳过时区配置无效的每日提醒', { userId: reminder.user_id, error: error?.message || String(error) });
-      }
+    const schedulerLog = (message: string, error?: unknown) => {
+      addLog('warn', 'reminder', message, {
+        error: error instanceof Error ? error.message : String(error || ''),
+      });
+    };
+    const dailyResult = enqueueDueDailyDigestNotifications(now, schedulerLog);
+    const priorityResult = enqueueDueHighPriorityScheduleEmails(now, schedulerLog);
+    if (dailyResult.due > 0 || priorityResult.due > 0) {
+      addLog('info', 'reminder', '提醒扫描完成', { daily: dailyResult, highPriority: priorityResult });
     }
   } catch (err) {
     console.error('[Cron] 每日提醒任务出错:', err);

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { saveNotificationPreferences } from '../src/services/notification-preferences.js';
+import {
+  saveAndReloadNotificationPreferences,
+  saveNotificationPreferences,
+} from '../src/services/notification-preferences.js';
 
 test('选择常驻地点会立即提交完整地点数据', async () => {
   const homeLocation = {
@@ -45,4 +48,27 @@ test('通知设置接口失败时不会被当作保存成功', async () => {
     ),
     /地点保存失败/,
   );
+});
+
+test('保存通知设置后会重新读取服务端持久化值', async () => {
+  const calls: string[] = [];
+  const persisted = {
+    enabled: true,
+    hour: 19,
+    minute: 0,
+    reminderEmail: 'saved@example.com',
+  };
+  const result = await saveAndReloadNotificationPreferences(
+    { enabled: true, hour: 19, minute: 0, reminderEmail: 'saved@example.com' },
+    { Authorization: 'Bearer test-token' },
+    async (input, init) => {
+      calls.push(`${init.method} ${input}`);
+      return init.method === 'PUT'
+        ? new Response(JSON.stringify({ success: true, preference: persisted }), { status: 200 })
+        : new Response(JSON.stringify({ preference: persisted }), { status: 200 });
+    },
+  );
+
+  assert.deepEqual(calls, ['PUT /api/notification-preferences', 'GET /api/notification-preferences']);
+  assert.deepEqual(result.preference, persisted);
 });

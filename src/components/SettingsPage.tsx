@@ -8,7 +8,10 @@ import {
 } from 'tdesign-react';
 import { CheckCircleFilledIcon } from 'tdesign-icons-react';
 import { useAuth } from '../hooks/useAuth';
-import { saveNotificationPreferences } from '../services/notification-preferences';
+import {
+  loadNotificationPreferences,
+  saveAndReloadNotificationPreferences,
+} from '../services/notification-preferences';
 
 interface HomeLocation {
   name: string;
@@ -129,7 +132,11 @@ interface LoginStatus {
   error?: string;
 }
 
-export function SettingsPage() {
+interface SettingsPageProps {
+  onOpenAdmin?: () => void;
+}
+
+export function SettingsPage({ onOpenAdmin }: SettingsPageProps) {
   const { user, authHeaders, logout, isAuthenticated } = useAuth();
 
   // ---------- 当前账号的 AI 凭据 ----------
@@ -281,26 +288,55 @@ export function SettingsPage() {
   const [dailyReportToken, setDailyReportToken] = useState('');
   const [dailyReportBusy, setDailyReportBusy] = useState(false);
 
+  const applyNotificationPreference = (preference: any) => {
+    setReminderEnabled(preference.enabled ?? false);
+    setReminderHour(preference.hour ?? 8);
+    setReminderMinute(preference.minute ?? 0);
+    setReminderEmail(preference.reminderEmail || user?.email || '');
+    setEmailEnabled(preference.emailEnabled !== false);
+    setInAppEnabled(preference.inAppEnabled !== false);
+    setBrowserEnabled(preference.browserEnabled !== false);
+    setQuietHoursEnabled(!!preference.quietHoursEnabled);
+    setQuietStart(preference.quietStart || '22:00');
+    setQuietEnd(preference.quietEnd || '08:00');
+    setHomeLocation(preference.homeLocation || null);
+  };
+
+  const sameHomeLocation = (left: any, right: any): boolean => {
+    if (left == null || right == null) return left == null && right == null;
+    return ['name', 'admin1', 'country', 'latitude', 'longitude', 'timezone'].every(key => left[key] === right[key]);
+  };
+
+  const preferenceMatchesPayload = (payload: Record<string, unknown>, preference: any): boolean => {
+    const booleanFields = ['enabled', 'emailEnabled', 'inAppEnabled', 'browserEnabled', 'quietHoursEnabled'] as const;
+    for (const field of booleanFields) {
+      if (field in payload && Boolean(payload[field]) !== Boolean(preference?.[field])) return false;
+    }
+    if ('hour' in payload && Number(payload.hour) !== Number(preference?.hour)) return false;
+    if ('minute' in payload && Number(payload.minute) !== Number(preference?.minute)) return false;
+    if ('reminderEmail' in payload && String(payload.reminderEmail || '').trim() !== String(preference?.reminderEmail || '').trim()) return false;
+    if ('quietStart' in payload && String(payload.quietStart || '') !== String(preference?.quietStart || '')) return false;
+    if ('quietEnd' in payload && String(payload.quietEnd || '') !== String(preference?.quietEnd || '')) return false;
+    if ('homeLocation' in payload && !sameHomeLocation(payload.homeLocation, preference?.homeLocation)) return false;
+    return true;
+  };
+
   const loadReminder = useCallback(async () => {
     try {
-      const res = await fetch('/api/notification-preferences', { headers: authHeaders() });
-      if (res.ok) {
-        const data = await res.json();
-        const preference = data.preference || {};
-        setReminderEnabled(preference.enabled ?? false);
-        setReminderHour(preference.hour ?? 8);
-        setReminderMinute(preference.minute ?? 0);
-        setReminderEmail(preference.reminderEmail || user?.email || '');
-        setEmailEnabled(preference.emailEnabled !== false);
-        setInAppEnabled(preference.inAppEnabled !== false);
-        setBrowserEnabled(preference.browserEnabled !== false);
-        setQuietHoursEnabled(!!preference.quietHoursEnabled);
-        setQuietStart(preference.quietStart || '22:00');
-        setQuietEnd(preference.quietEnd || '08:00');
-        setHomeLocation(preference.homeLocation || null);
-      }
+      const data = await loadNotificationPreferences(authHeaders());
+      applyNotificationPreference(data.preference || {});
     } catch {}
   }, [authHeaders]);
+
+  const saveAndConfirmNotificationPreferences = async (payload: Record<string, unknown>) => {
+    const data = await saveAndReloadNotificationPreferences(payload, authHeaders());
+    const preference = data.preference || {};
+    if (!preferenceMatchesPayload(payload, preference)) {
+      throw new Error('服务器保存的通知设置与当前选择不一致，请重试');
+    }
+    applyNotificationPreference(preference);
+    return preference;
+  };
 
   const notificationPayload = (overrides: Record<string, unknown> = {}) => ({
     enabled: reminderEnabled,
@@ -320,8 +356,7 @@ export function SettingsPage() {
   const saveReminderEmail = async () => {
     setLoadingReminder(true);
     try {
-      await saveNotificationPreferences(notificationPayload(), authHeaders());
-      setReminderEmail(reminderEmail.trim());
+      await saveAndConfirmNotificationPreferences(notificationPayload());
       MessagePlugin.success('通知设置已保存');
     } catch (error: any) {
       MessagePlugin.error(error?.message || '保存失败');
@@ -333,11 +368,10 @@ export function SettingsPage() {
   const saveHomeLocation = async (location: HomeLocation | null) => {
     setLocationSaving(true);
     try {
-      await saveNotificationPreferences(notificationPayload({ homeLocation: location }), authHeaders());
-      setHomeLocation(location);
+      const preference = await saveAndConfirmNotificationPreferences(notificationPayload({ homeLocation: location }));
       setLocationQuery('');
       setLocationResults([]);
-      MessagePlugin.success(location ? `常驻地点已保存：${location.name}` : '常驻地点已清除');
+      MessagePlugin.success(preference.homeLocation ? `常驻地点已保存：${preference.homeLocation.name}` : '常驻地点已清除');
     } catch (error: any) {
       MessagePlugin.error(error?.message || '常驻地点保存失败');
     } finally {
@@ -770,11 +804,11 @@ export function SettingsPage() {
                   setReminderEnabled(newVal);
                   setLoadingReminder(true);
                   try {
-                    await saveNotificationPreferences(notificationPayload({ enabled: newVal }), authHeaders());
+                    await saveAndConfirmNotificationPreferences(notificationPayload({ enabled: newVal }));
                     MessagePlugin.success(newVal ? '提醒已开启' : '提醒已关闭');
                   } catch (error: any) {
                     MessagePlugin.error(error?.message || '设置失败');
-                    setReminderEnabled(!newVal);
+                    await loadReminder();
                   } finally {
                     setLoadingReminder(false);
                   }
@@ -807,10 +841,11 @@ export function SettingsPage() {
                   onClick={async () => {
                     setLoadingReminder(true);
                     try {
-                      await saveNotificationPreferences(notificationPayload(), authHeaders());
+                      await saveAndConfirmNotificationPreferences(notificationPayload());
                       MessagePlugin.success('提醒时间已更新');
                     } catch (error: any) {
                       MessagePlugin.error(error?.message || '设置失败');
+                      await loadReminder();
                     } finally {
                       setLoadingReminder(false);
                     }
@@ -874,7 +909,7 @@ export function SettingsPage() {
             </div>
 
             <div className="mt-2 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              每日提醒和周期提醒都会发送到这里；官方发件邮箱：aicalendarofficial@163.com
+              每日摘要和周期提醒都会发送到这里；高优先级日程邮件是固定规则，不受邮件开关、免打扰和“开启每日提醒”影响；浏览器前台提醒仍可单独选择。官方发件邮箱：aicalendarofficial@163.com
             </div>
           </div>
         </div>
@@ -917,7 +952,7 @@ export function SettingsPage() {
         <div style={{ height: '1px', backgroundColor: 'var(--td-component-border)' }} />
 
         <div>
-          <h2 className="text-lg font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>19:00 日报只读接入</h2>
+          <h2 className="text-lg font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>日报令牌</h2>
           <p className="text-sm mb-4" style={{ color: 'var(--td-text-color-secondary)' }}>
             专用令牌只能读取当前账号指定日期的日程，不能修改数据，也不会返回附件、密码或 API Key。
           </p>
@@ -957,7 +992,7 @@ export function SettingsPage() {
                 您是管理员，可以访问用户管理和调试日志功能。
               </p>
               <p className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>
-                点击右上角的 <span className="font-medium" style={{ color: '#6D28D9' }}>👥 管理面板</span> 按钮访问。
+                点击 <button type="button" className="settings-admin-link" onClick={onOpenAdmin}>👥 管理面板</button> 访问。
               </p>
             </div>
           </div>

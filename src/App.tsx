@@ -16,6 +16,7 @@ import { ActionCenterPage } from './components/ActionCenterPage';
 import { AiImportPage } from './components/AiImportPage';
 import { MiniMonthCalendar } from './components/calendar/MiniMonthCalendar';
 import { SCHEDULE_CATEGORIES } from './utils/scheduleCategories';
+import { APP_CONFIG } from './config';
 
 // ==================== 日程主页（三栏布局） ====================
 
@@ -283,20 +284,18 @@ function AppContent() {
             }}
             onMouseDown={e => e.stopPropagation()}
           >
-            {/* 固定在右上角的关闭按钮 */}
-            <button
-              onClick={() => setShowSettings(false)}
-              className="fixed p-1.5 rounded-lg hover:opacity-60 z-50"
-              style={{
-                top: 'calc(50vh - 42.5vh + 16px)',
-                right: 'calc(50vw - 340px + 16px)',
-                backgroundColor: 'var(--td-bg-color-container)',
-                boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-              }}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--td-text-color-secondary)' }}><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
-            </button>
-            <SettingsPage />
+            <div className="settings-dialog-toolbar">
+              <span className="settings-dialog-version">V{APP_CONFIG.version}</span>
+              <button
+                type="button"
+                className="settings-dialog-close"
+                onClick={() => setShowSettings(false)}
+                aria-label="关闭设置"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+              </button>
+            </div>
+            <SettingsPage onOpenAdmin={() => { setShowSettings(false); setShowAdmin(true); }} />
           </div>
         </div>
       )}

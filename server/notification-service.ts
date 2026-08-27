@@ -65,6 +65,37 @@ export function enqueueUserNotification(input: {
   }));
 }
 
+/**
+ * 入队一条只发送邮件的通知。
+ *
+ * 该入口刻意不读取提醒渠道开关，也不调整免打扰时间，供固定规则的高优先级邮件使用。
+ * 仍然写入同一张持久化通知表，因此继续复用队列的发送、重试和状态记录能力。
+ */
+export function enqueueUserEmailNotification(input: {
+  userId: string;
+  sourceType: string;
+  sourceId: string;
+  instanceId?: string | null;
+  kind: string;
+  title: string;
+  body: string;
+  scheduledAt?: string;
+  dedupeKey: string;
+}): activityStore.NotificationDelivery {
+  return activityStore.enqueueNotification({
+    userId: input.userId,
+    sourceType: input.sourceType,
+    sourceId: input.sourceId,
+    instanceId: input.instanceId,
+    channel: 'email',
+    kind: input.kind,
+    title: input.title,
+    body: input.body,
+    scheduledAt: input.scheduledAt || new Date().toISOString(),
+    dedupeKey: input.dedupeKey,
+  });
+}
+
 export async function processNotificationQueue(log?: (message: string, error?: unknown) => void): Promise<void> {
   for (const item of activityStore.listDueNotifications()) {
     if (!activityStore.claimNotification(item.id)) continue;
