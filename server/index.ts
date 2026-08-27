@@ -3492,6 +3492,7 @@ if (!backgroundJobsEnabled) {
   addLog('warn', 'system', '后台定时任务未启用', {
     event: 'background_jobs_disabled',
     backgroundJobsEnabled,
+    configuredValue: process.env.BACKGROUND_JOBS_ENABLED || null,
   });
 }
 

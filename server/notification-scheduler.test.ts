@@ -98,7 +98,7 @@ test('日程本地时间按 Asia/Shanghai 解析，并支持跨午夜', () => {
   assert.equal(scheduler.parseScheduleStart('2026-02-30T08:10:00', 'Asia/Shanghai'), null);
 });
 
-test('每日摘要按账号保存的时区时间入队，并由日期去重', () => {
+test('每日摘要按同一配置时间幂等，修改当天时间可以再次入队', () => {
   const userId = 'daily-scheduler-user';
   createUser(userId);
   saveReminder(userId, { enabled: 1, hour: 8, minute: 0, email_enabled: 1, in_app_enabled: 0, browser_enabled: 0 });
@@ -114,14 +114,21 @@ test('每日摘要按账号保存的时区时间入队，并由日期去重', ()
   assert.equal(activity.listNotifications(userId)[0]?.kind, 'daily_digest');
 
   saveReminder(userId, { enabled: 1, hour: 9, minute: 0, email_enabled: 1, in_app_enabled: 0, browser_enabled: 0 });
-  scheduler.enqueueDueDailyDigestNotifications(atEight);
-  assert.equal(activity.listNotifications(userId).length, 1);
+  const atNine = new Date('2026-08-27T01:00:20.000Z');
+  const third = scheduler.enqueueDueDailyDigestNotifications(atNine);
+  assert.equal(third.created, 1);
+  assert.equal(third.deduplicated, 0);
+  assert.equal(activity.listNotifications(userId).length, 2);
 
   scheduler.enqueueDueDailyDigestNotifications(new Date('2026-08-28T01:00:20.000Z'));
-  assert.equal(activity.listNotifications(userId).length, 2);
+  assert.equal(activity.listNotifications(userId).length, 3);
   assert.deepEqual(
     activity.listNotifications(userId).map(item => item.dedupeKey).sort(),
-    [`daily:${userId}:2026-08-27:email`, `daily:${userId}:2026-08-28:email`].sort(),
+    [
+      `daily:${userId}:2026-08-27:Asia/Shanghai:08:00:email`,
+      `daily:${userId}:2026-08-27:Asia/Shanghai:09:00:email`,
+      `daily:${userId}:2026-08-28:Asia/Shanghai:09:00:email`,
+    ].sort(),
   );
 });
 

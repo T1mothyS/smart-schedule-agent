@@ -173,6 +173,8 @@ export function enqueueDueDailyDigestNotifications(
       const localDate = todayInTimezone(timezone, now);
       const schedules = scheduleStore.getSchedulesByDate(localDate, reminder.user_id).filter(item => !item.is_completed);
       schedulesScanned += schedules.length;
+      const configuredHour = String(reminder.hour).padStart(2, '0');
+      const configuredMinute = String(reminder.minute).padStart(2, '0');
       const notifications = enqueueUserNotificationDetailed({
         userId: reminder.user_id,
         sourceType: 'digest',
@@ -181,7 +183,9 @@ export function enqueueDueDailyDigestNotifications(
         title: `今日行动提醒 · ${schedules.length} 项待处理`,
         body: schedules.length ? schedules.map(item => `${item.start_time.slice(11, 16)} ${item.title}`).join('\n') : '今天暂无未完成日程。',
         scheduledAt: now.toISOString(),
-        dedupePrefix: `daily:${reminder.user_id}:${localDate}`,
+        // 不再按“账号 + 自然日”全局去重；修改当天提醒时间后允许再次触发。
+        // 同一配置时间的重复扫描仍保持幂等，避免同一分钟重复入队。
+        dedupePrefix: `daily:${reminder.user_id}:${localDate}:${timezone}:${configuredHour}:${configuredMinute}`,
       });
       queued += notifications.length;
       created += notifications.filter(item => item.created).length;
@@ -192,13 +196,14 @@ export function enqueueDueDailyDigestNotifications(
         timezone,
         localDate,
         localTime: `${String(local.hour).padStart(2, '0')}:${String(local.minute).padStart(2, '0')}`,
-        configuredTime: `${String(reminder.hour).padStart(2, '0')}:${String(reminder.minute).padStart(2, '0')}`,
+        configuredTime: `${configuredHour}:${configuredMinute}`,
         incompleteScheduleCount: schedules.length,
         queuedCount: notifications.length,
         createdCount: notifications.filter(item => item.created).length,
         deduplicatedCount: notifications.filter(item => !item.created).length,
         channels: notifications.map(item => item.notification.channel),
         notificationIds: notifications.map(item => item.notification.id),
+        dedupeKeys: notifications.map(item => item.notification.dedupeKey),
         notificationStatuses: notifications.map(item => item.notification.status),
         notificationAttempts: notifications.map(item => item.notification.attempts),
       });
