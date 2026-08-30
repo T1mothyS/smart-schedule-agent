@@ -21,7 +21,7 @@ const rules: RateRule[] = [
   { name: 'export', limit: 30, windowMs: 60 * 60_000, matches: req => req.method === 'GET' && req.path.startsWith('/api/exports/') },
   { name: 'weather', limit: 60, windowMs: 60_000, matches: req => req.method === 'GET' && req.path.startsWith('/api/weather/') },
   { name: 'daily-report-token', limit: 20, windowMs: 60 * 60_000, matches: req => ['POST', 'DELETE'].includes(req.method) && req.path === '/api/integrations/daily-report-token' },
-  { name: 'daily-report', limit: 120, windowMs: 60_000, matches: req => req.path === '/api/integrations/daily-report/agenda' },
+  { name: 'daily-report', limit: 120, windowMs: 60_000, matches: req => ['/api/integrations/daily-report/agenda', '/api/integrations/daily-report/reports'].includes(req.path) || req.path.startsWith('/api/integrations/daily-report/reports/') },
 ];
 
 export class InMemoryRateLimitStore {

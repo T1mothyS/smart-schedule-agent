@@ -17,6 +17,8 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - AI 可从自然语言或截图生成待确认草稿；确认前不会写入正式数据。
 - AI 助手支持普通问答；配置常驻城市/区县后，可查询 Open-Meteo 实时与未来天气。
 - 每日邮件摘要包含天气、进度、分类日程和完整明细，不与单项提醒混用。
+- 日报页面按日期保存当前账号的个人情报日报；网页与日报邮件共用受限 Markdown 渲染器，并严格按账号隔离。
+- 日报由外部 V2 程序在 Validator 通过后通过专用接口发布；“日报邮件”是独立于每日摘要的设置，首次发布时才入队，更新同一天内容不会重复发信。
 - 每日摘要按账号保存的时、分和时区入队；同一配置时间的重复扫描保持幂等，修改当天提醒时间后允许再次触发，不与单项提醒混用。
 - 高优先级、未完成且有明确开始时间的事件/待办，在开始前 15 分钟内发送固定邮件提醒；它不受邮件开关、免打扰和日报开关影响。
 - 可生成仅展示一次的只读日报令牌，供独立日报程序按日期读取当前账号日程；服务端只保存令牌哈希。
@@ -37,6 +39,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - 当前版本：`0.2.0-260827.2216`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
 - 每日摘要邮件链路：账号提醒设置 → 每日摘要调度器 → 持久化通知队列 → 固定发件邮箱；按账号、时区、日期和配置时间组成触发键幂等。
 - 高优先级邮件链路：高优先级事件/待办 → 开始前 1–15 分钟调度器 → 持久化通知队列 → 固定发件邮箱；不依赖每日提醒或邮件开关。
+- V2 日报链路：Validator 通过 → `PUT /api/integrations/daily-report/reports/:date` → 账号日报记录 → 可选日报邮件通知队列 → 固定发件邮箱；每个账号和日期最多自动尝试一次，失败后只能显式确认重试。
 - 每日摘要不再按账号和自然日全局去重；同一配置时间的重复扫描仍按触发键幂等，修改当天提醒时间后可以再次生成邮件。
 - 邮件只有在 Nodemailer 返回至少一个 `accepted` 且没有 `rejected/pending` 时才标记为 `sent`；这表示 SMTP 已接受，不等同于收件箱最终到达。
 - 浏览器提前提醒仍可单独使用，不替代高优先级固定邮件。
@@ -332,6 +335,7 @@ cp .env.example .env
 | `src/components/CalendarView.tsx` | 日历日期网格/时间视图展示 |
 | `src/components/ScheduleSidebar.tsx` | 日历侧栏、日历源和分类操作 |
 | `src/components/ReminderPage.tsx` | 周期事务模板、任务、完成和提醒历史页面 |
+| `src/components/DailyReportsPage.tsx` | 当前账号的日报列表、详情、状态和显式邮件重试页面 |
 | `src/components/SettingsPage.tsx` | 模型、常驻地、提醒、数据导出、只读日报令牌、备份和邮箱导入设置 |
 | `src/components/AiImportPage.tsx` | 自然语言/截图智能导入、草稿校对与确认 |
 | `src/components/AiSchedulePanel.tsx` | 普通问答、天气查询和待确认日程建议的 AI 助手 |
@@ -353,6 +357,8 @@ cp .env.example .env
 | `server/reminder-calendar-sync.ts` | 将周期任务同步为日历全天待办，并维护完成、下一周期和删除联动 |
 | `server/action-center.ts` | 聚合日程、待办和周期事务，计算“下一步”和行动中心分组 |
 | `server/activity-store.ts` | `activity.db` 的完成记录、附件元数据、通知队列、偏好和 AI 草稿访问层 |
+| `server/daily-report-service.ts` | 日报发布幂等、内容哈希、账号隔离、邮件状态和安全渲染视图 |
+| `server/markdown-renderer.ts` | 网站和邮件共用的受限 Markdown 渲染器，转义 HTML 并过滤危险链接 |
 | `server/notification-service.ts` | 持久化通知调度、免打扰、幂等去重、失败重试和发送状态 |
 | `server/notification-scheduler.ts` | 每日摘要和高优先级固定邮件的时区扫描、筛选与幂等入队 |
 | `server/email-service.ts` | 固定 163 官方发件邮箱、邮件模板、SMTP 校验和错误转换 |
@@ -361,6 +367,7 @@ cp .env.example .env
 | `server/weather-service.ts` | Open-Meteo 地点搜索、天气读取、缓存、超时和天气代码转换 |
 | `server/export-service.ts` | 当前账号的可读 JSON/CSV 数据导出与表格公式注入防护 |
 | `server/daily-report-token-service.ts` | 只读日报令牌生成、哈希保存、轮换、吊销和鉴权 |
+| `server/daily-report*.test.ts` | 日报服务、HTTP API 和 V2 假 SMTP 隔离端到端测试 |
 | `server/http-security.ts` | 安全响应头、请求体限制和分接口频率限制 |
 | `server/email-import-service.ts` | 可选 IMAP 邮箱轮询、令牌匹配和 Message-ID 去重 |
 | `server/attachment-service.ts` | 附件类型/大小校验、哈希存储、配额和鉴权读取辅助 |
@@ -384,7 +391,7 @@ cp .env.example .env
 | `data/chat.db-wal` / `data/chat.db-shm` | SQLite 正在运行时的 WAL 临时文件，不要单独复制或删除 |
 | `data/schedule.db` | 日历、分类和日程数据 |
 | `data/reminder.db` | 周期事务、周期实例和完成历史兼容数据 |
-| `data/activity.db` | 统一完成记录、附件元数据、通知、偏好和 AI 导入草稿 |
+| `data/activity.db` | 统一完成记录、附件元数据、日报记录、通知、偏好和 AI 导入草稿 |
 | `data/application.log` | 最近的脱敏结构化运行日志；达到大小上限后轮转为 `application.1.log` 等文件 |
 | `data/attachments/` | 按用户隔离并以哈希名称保存的附件实体 |
 | `data/migration-backups/` | 数据迁移前自动生成的数据库快照 |
@@ -464,9 +471,13 @@ npm run build
 
 在“设置”中搜索并确认常驻城市/区县后，AI 助手可回答今天、明天及未来天气；地点和天气来自 Open-Meteo，网络失败时会明确提示不可用，不会编造数据。非日程问题走普通问答，日程写入仍必须经过用户确认。
 
-### 9.7 导出与日报联动
+### 9.7 日报、导出与邮件联动
 
-“设置”提供可读 JSON 和 CSV 导出，均只包含当前账号的非敏感业务数据。日报联动令牌只在生成/轮换时展示一次，可随时吊销；日报接口只读、限定当前账号，并要求显式日期。
+登录后从顶部“日报”进入 `/reports`，可以查看当前账号按日期保存的日报，并打开 `/reports/:date` 详情。列表按日期倒序排列；日报正文只使用受限 Markdown 渲染，原始 HTML 会被转义，危险链接不会成为可点击链接。
+
+“设置”提供独立的“日报邮件”开关。它不等同于每日摘要、普通提醒渠道或免打扰设置；开启后，V2 发布某个新日期的第一份日报时才会入队，之后更新同一天内容不会再次发信。邮件失败不会自动重试，详情页必须显式确认后才能手动重试。日报邮件使用当前账号的提醒收件邮箱，未配置时回退到注册邮箱。
+
+“设置”同时提供可读 JSON 和 CSV 导出，均只包含当前账号的非敏感业务数据。日报联动令牌只在生成/轮换时展示一次，可随时吊销；旧的 `/api/integrations/daily-report/agenda` 仍是只读、限定当前账号并要求显式日期的日程接口。
 
 ## 10. API 模块概览
 
@@ -480,7 +491,9 @@ npm run build
 - `/api/weather/locations`、`/api/weather`：常驻地搜索和天气读取。
 - `/api/completions`、`/api/history`、`/api/attachments`：完成证明和附件。
 - `/api/exports/user-data.json`、`/api/exports/schedules.csv`：当前账号可读导出。
+- `/api/daily-reports`、`/api/daily-reports/:date`：当前账号日报列表和详情。
 - `/api/integrations/daily-report-token`、`/api/integrations/daily-report/agenda`：令牌管理和只读日报日程。
+- `/api/integrations/daily-report/reports/:date`：V2 使用日报令牌发布或幂等更新日报；发布正文不写入日志，邮件状态由账号设置和通知队列决定。
 - `/api/backups`、`/api/admin/backups`：用户备份和全站灾备。
 - `/api/ai-chat`：普通问答、天气问答和待确认日程建议。
 - `/api/ai/imports`：AI 导入草稿、确认和删除。
@@ -491,7 +504,7 @@ npm run build
 
 ## 11. 备份与恢复
 
-用户备份文件扩展名为 `.aicalendar-backup`，使用口令派生密钥并加密。导出内容包含个人日历、周期事务、完成记录、附件、通知偏好和确认后的 AI 导入记录，不包含密码、角色、JWT、SMTP 凭据和 AI API Key。
+用户备份文件扩展名为 `.aicalendar-backup`，使用口令派生密钥并加密。导出内容包含个人日历、周期事务、完成记录、附件、日报、通知偏好和确认后的 AI 导入记录，不包含密码、角色、JWT、SMTP 凭据和 AI API Key。
 
 恢复前先使用“检查备份”查看版本、数量和冲突，再选择：
 
@@ -551,6 +564,12 @@ pm2 restart smart-schedule --update-env
 5. `SMTP_PASS` 是否为有效客户端授权码。
 6. 通知记录中是否显示重试或最终失败原因。
 7. 收件箱垃圾邮件规则是否拦截。
+
+日报邮件还需检查：
+
+1. 日报详情是否显示 `邮件已入队`、`邮件已发送` 或 `邮件失败`。
+2. “设置”中的“日报邮件”是否已开启；它只影响之后首次发布的新日期，不会补发旧日报。
+3. 邮件失败后是否在详情页显式确认重试；系统不会对日报邮件自动重试。
 
 本地开发还必须显式设置 `BACKGROUND_JOBS_ENABLED=true` 并重启后端；设置页的“自动提醒”只保存账号级开关，不会替代服务进程的后台任务开关。生产环境只允许唯一一个 worker 开启该配置，避免重复发送。
 

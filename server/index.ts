@@ -31,6 +31,7 @@ import { parseAiJson } from "./ai-json.js";
 import { extractWeatherLocationQuery, getDailyWeather, isWeatherQuestion, searchLocations, type WeatherLocation } from './weather-service.js';
 import { createReadableUserExport, createSchedulesCsv } from './export-service.js';
 import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
+import { getDailyReportView, listDailyReportViews, publishDailyReport } from './daily-report-service.js';
 import { createApiRateLimiter, securityHeaders } from './http-security.js';
 import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
 import { shiftScheduleDateValue } from './schedule-actions.js';
@@ -112,7 +113,7 @@ if (!process.env.CODEBUDDY_INTERNET_ENVIRONMENT) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
+export const app = express();
 const PORT = process.env.PORT || 3000;
 const isProduction = process.env.APP_ENV === 'production' || process.env.NODE_ENV === 'production';
 const staticPath = path.resolve(__dirname, '../dist');
@@ -650,7 +651,7 @@ interface JwtPayload {
   authVersion: number;
 }
 
-function signUserToken(user: Pick<dbModule.DbUser, 'id' | 'email' | 'role' | 'auth_version'>): string {
+export function signUserToken(user: Pick<dbModule.DbUser, 'id' | 'email' | 'role' | 'auth_version'>): string {
   return jwt.sign(
     { userId: user.id, email: user.email, role: user.role, authVersion: user.auth_version ?? 0 },
     JWT_SECRET,
@@ -1102,6 +1103,7 @@ app.get("/api/notification-preferences", authenticate, (req, res) => {
       minute: preference?.minute ?? 0,
       reminderEmail: preference?.reminder_email || payload.email,
       emailEnabled: preference?.email_enabled !== 0,
+      reportEmailEnabled: preference?.report_email_enabled === 1,
       inAppEnabled: preference?.in_app_enabled !== 0,
       browserEnabled: preference?.browser_enabled !== 0,
       timezone: preference?.timezone || 'Asia/Shanghai',
@@ -1182,6 +1184,7 @@ app.put("/api/notification-preferences", authenticate, (req, res) => {
       minute,
       reminder_email: reminderEmail,
       email_enabled: req.body.emailEnabled === undefined ? (current?.email_enabled ?? 1) : (req.body.emailEnabled ? 1 : 0),
+      report_email_enabled: req.body.reportEmailEnabled === undefined ? (current?.report_email_enabled ?? 0) : (req.body.reportEmailEnabled ? 1 : 0),
       in_app_enabled: req.body.inAppEnabled === undefined ? (current?.in_app_enabled ?? 1) : (req.body.inAppEnabled ? 1 : 0),
       browser_enabled: req.body.browserEnabled === undefined ? (current?.browser_enabled ?? 1) : (req.body.browserEnabled ? 1 : 0),
       timezone,
@@ -1201,6 +1204,7 @@ app.put("/api/notification-preferences", authenticate, (req, res) => {
         time: `${String(current.hour).padStart(2, '0')}:${String(current.minute).padStart(2, '0')}`,
         reminderEmail: current.reminder_email || null,
         emailEnabled: current.email_enabled !== 0,
+        reportEmailEnabled: current.report_email_enabled === 1,
         inAppEnabled: current.in_app_enabled !== 0,
         browserEnabled: current.browser_enabled !== 0,
         timezone: current.timezone || 'Asia/Shanghai',
@@ -1210,6 +1214,7 @@ app.put("/api/notification-preferences", authenticate, (req, res) => {
         time: `${String(persisted.hour).padStart(2, '0')}:${String(persisted.minute).padStart(2, '0')}`,
         reminderEmail: persisted.reminder_email || null,
         emailEnabled: persisted.email_enabled !== 0,
+        reportEmailEnabled: persisted.report_email_enabled === 1,
         inAppEnabled: persisted.in_app_enabled !== 0,
         browserEnabled: persisted.browser_enabled !== 0,
         timezone: persisted.timezone || 'Asia/Shanghai',
@@ -1255,6 +1260,10 @@ app.post("/api/notifications/:id/read", authenticate, (req, res) => {
 
 app.post("/api/notifications/:id/retry", authenticate, (req, res) => {
   const userId = (req as any).user.userId;
+  const current = activityStore.getNotification(req.params.id, userId);
+  if (current?.kind === 'daily_report' && req.body?.confirm !== true) {
+    return res.status(400).json({ error: '日报邮件重试需要明确确认' });
+  }
   const item = activityStore.retryNotification(req.params.id, userId);
   if (!item) {
     addLog('warn', 'reminder', '手动重试通知失败：通知不存在或状态不可重试', {
@@ -1462,6 +1471,22 @@ app.delete('/api/integrations/daily-report-token', authenticate, (req, res) => {
   res.json({ status: revokeDailyReportToken((req as any).user.userId) });
 });
 
+// 登录后的日报页面只允许读取当前账号的数据。
+app.get('/api/daily-reports', authenticate, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 500);
+  res.json({ reports: listDailyReportViews((req as any).user.userId, limit) });
+});
+
+app.get('/api/daily-reports/:date', authenticate, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const date = String(req.params.date || '');
+  if (!isValidDateKey(date)) return res.status(400).json({ error: 'date 必须是有效的 YYYY-MM-DD 日期' });
+  const report = getDailyReportView((req as any).user.userId, date);
+  if (!report) return res.status(404).json({ error: '该日期的日报不存在' });
+  res.json({ report });
+});
+
 function isValidDateKey(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
@@ -1506,6 +1531,39 @@ app.get('/api/integrations/daily-report/agenda', (req, res) => {
       completed: item.is_completed,
     }));
   res.json({ date, timezone, generatedAt: new Date().toISOString(), schedules });
+});
+
+// 独立日报项目使用只读令牌发布已通过 Validator 的 Markdown；不会接收账号或邮箱字段。
+app.put('/api/integrations/daily-report/reports/:date', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const authorization = String(req.header('authorization') || '');
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  const authenticated = match ? authenticateDailyReportToken(match[1].trim()) : null;
+  if (!authenticated) return res.status(401).json({ error: '日报令牌无效或已经撤销' });
+  const date = String(req.params.date || '');
+  if (!isValidDateKey(date)) return res.status(400).json({ error: 'date 必须是有效的 YYYY-MM-DD 日期' });
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body) || Object.keys(req.body).some(key => key !== 'markdown')) {
+    return res.status(400).json({ error: '请求正文只允许包含 markdown 字段' });
+  }
+  try {
+    const result = publishDailyReport(authenticated.userId, date, req.body.markdown);
+    res.status(result.reportStatus === 'CREATED' ? 201 : 200).json({
+      date,
+      reportStatus: result.reportStatus,
+      emailStatus: result.emailStatus,
+      contentHash: result.report.contentHash,
+    });
+  } catch (error: any) {
+    const message = String(error?.message || '日报发布失败');
+    addLog('error', 'mail', '日报发布失败', describeErrorData(error, {
+      event: 'daily_report_publish_failed',
+      userId: authenticated.userId,
+      date,
+    }));
+    res.status(/日报正文|date 必须|请求正文/.test(message) ? 400 : 503).json({
+      error: /日报正文|date 必须|请求正文/.test(message) ? message : '日报发布暂时不可用，请保留本地日报后稍后重试',
+    });
+  }
 });
 
 // ============= 用户备份与管理员灾备 =============
@@ -3424,41 +3482,48 @@ if (isProduction) {
 
 const backgroundJobsEnabled = process.env.BACKGROUND_JOBS_ENABLED === 'true';
 
+// 初始化业务数据库；测试可以复用同一套路由而不启动固定端口。
+export async function initializeServer(): Promise<void> {
+  const startedAt = Date.now();
+  if (dbInitialized) return;
+  addLog('debug', 'system', '服务启动开始', {
+    event: 'service_starting',
+    pid: process.pid,
+    nodeVersion: process.version,
+  });
+  validateRuntimeConfig();
+  // 初始化数据库
+  console.log('[Startup] 初始化数据库...');
+  await dbModule.initDb();
+  console.log('[Startup] 数据库初始化完成');
+  db = dbModule;  // 赋值给全局 db 变量
+
+  // 初始化日程数据库
+  console.log('[Startup] 初始化日程数据库...');
+  await initScheduleDb();
+  console.log('[Startup] 日程数据库初始化完成');
+
+  // 初始化周期提醒数据库
+  console.log('[Startup] 初始化周期提醒数据库...');
+  await initReminderDb();
+  console.log('[Startup] 周期提醒数据库初始化完成');
+
+  console.log('[Startup] 初始化活动数据库...');
+  await initActivityDb();
+  attachmentService.attachmentsRoot();
+  console.log('[Startup] 活动数据库初始化完成');
+  dbInitialized = true;
+  addLog('info', 'db', '业务数据库初始化完成', {
+    event: 'database_initialization_completed',
+    durationMs: Date.now() - startedAt,
+  });
+}
+
 // 异步启动服务器（等待数据库初始化）
 async function startServer() {
   const startedAt = Date.now();
   try {
-    addLog('debug', 'system', '服务启动开始', {
-      event: 'service_starting',
-      pid: process.pid,
-      nodeVersion: process.version,
-    });
-    validateRuntimeConfig();
-    // 初始化数据库
-    console.log('[Startup] 初始化数据库...');
-    await dbModule.initDb();
-    console.log('[Startup] 数据库初始化完成');
-    db = dbModule;  // 赋值给全局 db 变量
-
-    // 初始化日程数据库
-    console.log('[Startup] 初始化日程数据库...');
-    await initScheduleDb();
-    console.log('[Startup] 日程数据库初始化完成');
-
-    // 初始化周期提醒数据库
-    console.log('[Startup] 初始化周期提醒数据库...');
-    await initReminderDb();
-    console.log('[Startup] 周期提醒数据库初始化完成');
-
-    console.log('[Startup] 初始化活动数据库...');
-    await initActivityDb();
-    attachmentService.attachmentsRoot();
-    console.log('[Startup] 活动数据库初始化完成');
-    dbInitialized = true;
-    addLog('info', 'db', '业务数据库初始化完成', {
-      event: 'database_initialization_completed',
-      durationMs: Date.now() - startedAt,
-    });
+    await initializeServer();
 
     // 启动服务器
     app.listen(PORT, () => {
@@ -3496,7 +3561,7 @@ async function startServer() {
   }
 }
 
-startServer();
+if (process.env.NODE_ENV !== 'test') startServer();
 
 // ============================================================
 // 每日邮件提醒定时任务（每分钟检查一次）

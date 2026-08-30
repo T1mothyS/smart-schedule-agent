@@ -57,6 +57,8 @@ function remapForeignUserPayload(source: UserBackupPayload): UserBackupPayload {
   const categoryIds = createIdMap((payload.schedule.categories || []).map(category => category.id));
   const completionIds = createIdMap((activity.completions || []).map(row => row.id));
   const importIds = createIdMap((activity.aiImports || []).map(row => row.id));
+  const notificationIds = createIdMap((activity.notifications || []).map(row => row.id));
+  const reportIds = createIdMap((activity.dailyReports || []).map(row => row.id));
 
   const scheduleIds = new Map<string, string>();
   for (const schedule of payload.schedule.schedules || []) {
@@ -103,7 +105,7 @@ function remapForeignUserPayload(source: UserBackupPayload): UserBackupPayload {
   }));
   activity.notifications = (activity.notifications || []).map(row => ({
     ...row,
-    id: crypto.randomUUID(),
+    id: notificationIds.get(String(row.id)) || crypto.randomUUID(),
     source_id: row.source_type === 'schedule'
       ? scheduleIds.get(String(row.source_id)) || String(row.source_id || '')
       : row.source_type === 'reminder'
@@ -111,6 +113,13 @@ function remapForeignUserPayload(source: UserBackupPayload): UserBackupPayload {
         : row.source_id,
     instance_id: row.instance_id ? cycleIds.get(String(row.instance_id)) || row.instance_id : null,
     dedupe_key: `${String(row.dedupe_key || 'restored')}:restore:${crypto.randomUUID()}`,
+  }));
+  activity.dailyReports = (activity.dailyReports || []).map(row => ({
+    ...row,
+    id: reportIds.get(String(row.id)) || crypto.randomUUID(),
+    email_notification_id: row.email_notification_id
+      ? notificationIds.get(String(row.email_notification_id)) || null
+      : null,
   }));
   activity.aiImports = (activity.aiImports || []).map(row => ({
     ...row,
@@ -208,6 +217,7 @@ export function inspectUserBackup(buffer: Buffer, password: string): Record<stri
       attachments: payload.files.length,
       notifications: (payload.activity.notifications || []).length,
       aiImports: (payload.activity.aiImports || []).length,
+      dailyReports: (payload.activity.dailyReports || []).length,
     },
   };
 }

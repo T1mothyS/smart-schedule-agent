@@ -2,6 +2,7 @@ import * as activityStore from './activity-store.js';
 import * as db from './db.js';
 import {
   sendDailyReminderEmail,
+  sendDailyReportEmail,
   sendQueuedNotificationEmail,
   summarizeEmailSendResult,
   type EmailSendResult,
@@ -118,6 +119,7 @@ export function enqueueUserEmailNotification(input: {
   body: string;
   scheduledAt?: string;
   dedupeKey: string;
+  maxAttempts?: number;
 }): activityStore.NotificationDelivery {
   return enqueueUserEmailNotificationDetailed(input).notification;
 }
@@ -132,6 +134,7 @@ export function enqueueUserEmailNotificationDetailed(input: {
   body: string;
   scheduledAt?: string;
   dedupeKey: string;
+  maxAttempts?: number;
   log?: NotificationLogger;
 }): activityStore.EnqueueNotificationResult {
   const result = activityStore.enqueueNotificationDetailed({
@@ -145,6 +148,7 @@ export function enqueueUserEmailNotificationDetailed(input: {
     body: input.body,
     scheduledAt: input.scheduledAt || new Date().toISOString(),
     dedupeKey: input.dedupeKey,
+    maxAttempts: input.maxAttempts,
   });
   input.log?.(
     result.created ? '邮件通知已创建并进入通知队列' : '邮件通知入队命中已有记录',
@@ -240,7 +244,9 @@ export async function processNotificationQueue(log?: NotificationLogger): Promis
         const emailStartedAt = Date.now();
         const sendResult = item.kind === 'daily_digest'
           ? await sendDailyReminderEmail(email, item.userId, item.sourceId)
-          : await sendQueuedNotificationEmail(email, item.title, item.body);
+          : item.kind === 'daily_report'
+            ? await sendDailyReportEmail(email, item.sourceId, item.body)
+            : await sendQueuedNotificationEmail(email, item.title, item.body);
         log?.('SMTP 已接受收件人', undefined, notificationLogData(claimedItem, {
           event: 'email_smtp_accepted',
           recipient: email,
@@ -268,12 +274,12 @@ export async function processNotificationQueue(log?: NotificationLogger): Promis
       result.failed += 1;
       const failedItem = activityStore.getNotification(item.id) || claimedItem;
       if (errorEmailResult) {
-        log?.('SMTP 未接受收件人，邮件进入失败重试', error, notificationLogData(failedItem, {
+        log?.('SMTP 未接受收件人，邮件已记录失败状态', error, notificationLogData(failedItem, {
           event: 'email_smtp_rejected',
           ...summarizeEmailSendResult(errorEmailResult),
         }));
       }
-      log?.('通知发送失败，已记录重试状态', error, notificationLogData(failedItem, {
+      log?.('通知发送失败，已记录队列状态', error, notificationLogData(failedItem, {
         event: 'notification_failed',
         lastError: failureMessage,
         ...(failureCode ? { errorCode: failureCode } : {}),

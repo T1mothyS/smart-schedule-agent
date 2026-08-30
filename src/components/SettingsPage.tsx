@@ -268,6 +268,7 @@ export function SettingsPage({ onOpenAdmin }: SettingsPageProps) {
   const [reminderMinute, setReminderMinute] = useState(0);
   const [reminderEmail, setReminderEmail] = useState('');
   const [emailEnabled, setEmailEnabled] = useState(true);
+  const [reportEmailEnabled, setReportEmailEnabled] = useState(false);
   const [inAppEnabled, setInAppEnabled] = useState(true);
   const [browserEnabled, setBrowserEnabled] = useState(true);
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
@@ -294,6 +295,7 @@ export function SettingsPage({ onOpenAdmin }: SettingsPageProps) {
     setReminderMinute(preference.minute ?? 0);
     setReminderEmail(preference.reminderEmail || user?.email || '');
     setEmailEnabled(preference.emailEnabled !== false);
+    setReportEmailEnabled(preference.reportEmailEnabled === true);
     setInAppEnabled(preference.inAppEnabled !== false);
     setBrowserEnabled(preference.browserEnabled !== false);
     setQuietHoursEnabled(!!preference.quietHoursEnabled);
@@ -308,7 +310,7 @@ export function SettingsPage({ onOpenAdmin }: SettingsPageProps) {
   };
 
   const preferenceMatchesPayload = (payload: Record<string, unknown>, preference: any): boolean => {
-    const booleanFields = ['enabled', 'emailEnabled', 'inAppEnabled', 'browserEnabled', 'quietHoursEnabled'] as const;
+    const booleanFields = ['enabled', 'emailEnabled', 'reportEmailEnabled', 'inAppEnabled', 'browserEnabled', 'quietHoursEnabled'] as const;
     for (const field of booleanFields) {
       if (field in payload && Boolean(payload[field]) !== Boolean(preference?.[field])) return false;
     }
@@ -344,6 +346,7 @@ export function SettingsPage({ onOpenAdmin }: SettingsPageProps) {
     minute: reminderMinute,
     reminderEmail: reminderEmail.trim(),
     emailEnabled,
+    reportEmailEnabled,
     inAppEnabled,
     browserEnabled,
     quietHoursEnabled,
@@ -816,6 +819,30 @@ export function SettingsPage({ onOpenAdmin }: SettingsPageProps) {
               />
             </div>
 
+            <div className="flex items-center gap-3 mb-3 flex-wrap">
+              <span style={{ color: 'var(--td-text-color-primary)' }}>日报邮件</span>
+              <Switch
+                value={reportEmailEnabled}
+                onChange={async (v) => {
+                  const newVal = v as boolean;
+                  setReportEmailEnabled(newVal);
+                  setLoadingReminder(true);
+                  try {
+                    await saveAndConfirmNotificationPreferences(notificationPayload({ reportEmailEnabled: newVal }));
+                    MessagePlugin.success(newVal ? '日报邮件已开启' : '日报邮件已关闭');
+                  } catch (error: any) {
+                    MessagePlugin.error(error?.message || '日报邮件设置失败');
+                    await loadReminder();
+                  } finally {
+                    setLoadingReminder(false);
+                  }
+                }}
+              />
+              <span className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+                与每日摘要、提醒渠道和免打扰独立；只对之后首次发布的日报入队
+              </span>
+            </div>
+
             {reminderEnabled && (
               <div className="flex items-center gap-3">
                 <span className="text-sm" style={{ color: 'var(--td-text-color-secondary)' }}>提醒时间：</span>
@@ -909,7 +936,7 @@ export function SettingsPage({ onOpenAdmin }: SettingsPageProps) {
             </div>
 
             <div className="mt-2 text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              每日摘要和周期提醒都会发送到这里；高优先级日程邮件是固定规则，不受邮件开关、免打扰和“开启每日提醒”影响；浏览器前台提醒仍可单独选择。官方发件邮箱：aicalendarofficial@163.com
+              每日摘要、周期提醒和日报邮件都会使用这里的收件邮箱；高优先级日程邮件是固定规则，不受邮件开关、免打扰和“开启每日提醒”影响；浏览器前台提醒仍可单独选择。官方发件邮箱：aicalendarofficial@163.com
             </div>
           </div>
         </div>

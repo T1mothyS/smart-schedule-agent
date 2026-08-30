@@ -13,6 +13,17 @@ export type ActionSource = 'schedule' | 'reminder';
 export type NotificationChannel = 'email' | 'in_app' | 'browser';
 export type NotificationStatus = 'pending' | 'sending' | 'sent' | 'failed';
 
+export interface DailyReportRecord {
+  id: string;
+  userId: string;
+  reportDate: string;
+  markdown: string;
+  contentHash: string;
+  publishedAt: string;
+  updatedAt: string;
+  emailNotificationId: string | null;
+}
+
 export interface CompletionRecord {
   id: string;
   userId: string;
@@ -177,6 +188,19 @@ function rowToNotification(row: any): NotificationDelivery {
   };
 }
 
+function rowToDailyReport(row: any): DailyReportRecord {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    reportDate: row.report_date,
+    markdown: row.markdown,
+    contentHash: row.content_hash,
+    publishedAt: row.published_at,
+    updatedAt: row.updated_at,
+    emailNotificationId: row.email_notification_id || null,
+  };
+}
+
 function rowToAiImport(row: any): AiImportRecord {
   return {
     id: row.id,
@@ -250,6 +274,17 @@ export async function initActivityDb(): Promise<void> {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS daily_reports (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      report_date TEXT NOT NULL,
+      markdown TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      published_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      email_notification_id TEXT,
+      UNIQUE(user_id, report_date)
+    );
     CREATE TABLE IF NOT EXISTS ai_imports (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
@@ -287,9 +322,10 @@ export async function initActivityDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_attachments_user ON attachments(user_id, completion_id);
     CREATE INDEX IF NOT EXISTS idx_notifications_due ON notification_deliveries(status, scheduled_at, next_retry_at);
     CREATE INDEX IF NOT EXISTS idx_notifications_user ON notification_deliveries(user_id, created_at);
+    CREATE INDEX IF NOT EXISTS idx_daily_reports_user_date ON daily_reports(user_id, report_date DESC);
     CREATE INDEX IF NOT EXISTS idx_ai_imports_user ON ai_imports(user_id, created_at);
   `);
-  db.run(`INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', '1')`);
+  db.run(`INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', '2')`);
   db.run(`UPDATE notification_deliveries SET status = 'failed', next_retry_at = ? WHERE status = 'sending'`, [nowIso()]);
   persist();
 }
@@ -453,17 +489,19 @@ export function enqueueNotificationDetailed(input: {
   body: string;
   scheduledAt: string;
   dedupeKey: string;
+  maxAttempts?: number;
 }): EnqueueNotificationResult {
   const existing = queryOne<any>('SELECT * FROM notification_deliveries WHERE dedupe_key = ?', [input.dedupeKey]);
   if (existing) return { notification: rowToNotification(existing), created: false };
   const now = nowIso();
   const id = uuidv4();
+  const maxAttempts = Math.min(Math.max(Math.trunc(input.maxAttempts ?? 4), 1), 10);
   run(
     `INSERT INTO notification_deliveries
       (id, user_id, source_type, source_id, instance_id, channel, kind, title, body, scheduled_at, status, attempts, max_attempts, dedupe_key, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, 4, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, ?, ?, ?)`,
     [id, input.userId, input.sourceType, input.sourceId, input.instanceId || null, input.channel, input.kind,
-      input.title, input.body, input.scheduledAt, input.dedupeKey, now, now],
+      input.title, input.body, input.scheduledAt, maxAttempts, input.dedupeKey, now, now],
   );
   return { notification: getNotification(id)!, created: true };
 }
@@ -488,6 +526,62 @@ export function getNotification(id: string, userId?: string): NotificationDelive
     ? queryOne<any>('SELECT * FROM notification_deliveries WHERE id = ? AND user_id = ?', [id, userId])
     : queryOne<any>('SELECT * FROM notification_deliveries WHERE id = ?', [id]);
   return row ? rowToNotification(row) : null;
+}
+
+export function getDailyReport(userId: string, reportDate: string): DailyReportRecord | null {
+  const row = queryOne<any>('SELECT * FROM daily_reports WHERE user_id = ? AND report_date = ?', [userId, reportDate]);
+  return row ? rowToDailyReport(row) : null;
+}
+
+export function getDailyReportById(id: string, userId?: string): DailyReportRecord | null {
+  const row = userId
+    ? queryOne<any>('SELECT * FROM daily_reports WHERE id = ? AND user_id = ?', [id, userId])
+    : queryOne<any>('SELECT * FROM daily_reports WHERE id = ?', [id]);
+  return row ? rowToDailyReport(row) : null;
+}
+
+export function listDailyReports(userId: string, limit = 100): DailyReportRecord[] {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 500);
+  return queryAll<any>(
+    'SELECT * FROM daily_reports WHERE user_id = ? ORDER BY report_date DESC, updated_at DESC LIMIT ?',
+    [userId, safeLimit],
+  ).map(rowToDailyReport);
+}
+
+export function createDailyReport(input: {
+  userId: string;
+  reportDate: string;
+  markdown: string;
+  contentHash: string;
+  publishedAt?: string;
+}): DailyReportRecord {
+  const now = input.publishedAt || nowIso();
+  const id = uuidv4();
+  run(
+    `INSERT INTO daily_reports
+      (id, user_id, report_date, markdown, content_hash, published_at, updated_at, email_notification_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
+    [id, input.userId, input.reportDate, input.markdown, input.contentHash, now, now],
+  );
+  return getDailyReport(input.userId, input.reportDate)!;
+}
+
+export function updateDailyReport(id: string, userId: string, markdown: string, contentHash: string, updatedAt = nowIso()): DailyReportRecord | null {
+  const changed = run(
+    'UPDATE daily_reports SET markdown = ?, content_hash = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+    [markdown, contentHash, updatedAt, id, userId],
+  );
+  if (!changed) return null;
+  return getDailyReportById(id, userId);
+}
+
+export function attachDailyReportNotification(id: string, userId: string, notificationId: string): DailyReportRecord | null {
+  const changed = run(
+    'UPDATE daily_reports SET email_notification_id = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+    [notificationId, nowIso(), id, userId],
+  );
+  if (!changed) return null;
+  return getDailyReportById(id, userId);
 }
 
 export function listNotifications(userId: string, filters: { status?: string; channel?: string; unreadOnly?: boolean; limit?: number } = {}): NotificationDelivery[] {
@@ -529,7 +623,9 @@ export function markNotificationFailed(id: string, error: string): void {
   if (!item) return;
   const retryDelays = [5, 30, 120];
   const delayMinutes = retryDelays[Math.min(Math.max(item.attempts - 1, 0), retryDelays.length - 1)];
-  const retryAt = new Date(Date.now() + delayMinutes * 60_000).toISOString();
+  const retryAt = item.attempts < item.maxAttempts
+    ? new Date(Date.now() + delayMinutes * 60_000).toISOString()
+    : null;
   run(
     `UPDATE notification_deliveries SET status = 'failed', last_error = ?, next_retry_at = ?, updated_at = ? WHERE id = ?`,
     [error.slice(0, 800), retryAt, nowIso(), id],
@@ -634,6 +730,7 @@ export function exportUserActivity(userId: string): Record<string, unknown[]> {
     completions: queryAll<any>('SELECT * FROM completion_records WHERE user_id = ?', [userId]),
     attachments: queryAll<any>('SELECT * FROM attachments WHERE user_id = ?', [userId]),
     notifications: queryAll<any>('SELECT * FROM notification_deliveries WHERE user_id = ?', [userId]),
+    dailyReports: queryAll<any>('SELECT * FROM daily_reports WHERE user_id = ? ORDER BY report_date ASC', [userId]),
     aiImports: queryAll<any>(`SELECT * FROM ai_imports WHERE user_id = ? AND status = 'confirmed'`, [userId]),
     emailImportSettings: queryAll<any>('SELECT * FROM email_import_settings WHERE user_id = ?', [userId]),
   };
@@ -647,6 +744,7 @@ export function deleteUserActivity(userId: string): {
   attachments: AttachmentRecord[];
   completions: number;
   notifications: number;
+  dailyReports: number;
   aiImports: number;
   processedEmails: number;
 } {
@@ -654,28 +752,31 @@ export function deleteUserActivity(userId: string): {
   db.run('DELETE FROM attachments WHERE user_id = ?', [userId]);
   const completions = run('DELETE FROM completion_records WHERE user_id = ?', [userId]);
   const notifications = run('DELETE FROM notification_deliveries WHERE user_id = ?', [userId]);
+  const dailyReports = run('DELETE FROM daily_reports WHERE user_id = ?', [userId]);
   const aiImports = run('DELETE FROM ai_imports WHERE user_id = ?', [userId]);
   run('DELETE FROM email_import_settings WHERE user_id = ?', [userId]);
   const processedEmails = run('DELETE FROM processed_emails WHERE user_id = ?', [userId]);
   run('DELETE FROM activity_audit_logs WHERE user_id = ?', [userId]);
   persist();
-  return { attachments, completions, notifications, aiImports, processedEmails };
+  return { attachments, completions, notifications, dailyReports, aiImports, processedEmails };
 }
 
 export function restoreUserActivity(
   userId: string,
   data: Record<string, any[]>,
   mode: 'merge' | 'replace',
-): { completions: number; notifications: number; aiImports: number } {
+): { completions: number; notifications: number; dailyReports: number; aiImports: number } {
   if (mode === 'replace') {
     db.run('DELETE FROM attachments WHERE user_id = ?', [userId]);
     db.run('DELETE FROM completion_records WHERE user_id = ?', [userId]);
     db.run('DELETE FROM notification_deliveries WHERE user_id = ?', [userId]);
+    db.run('DELETE FROM daily_reports WHERE user_id = ?', [userId]);
     db.run('DELETE FROM ai_imports WHERE user_id = ?', [userId]);
     db.run('DELETE FROM email_import_settings WHERE user_id = ?', [userId]);
   }
   let completions = 0;
   let notifications = 0;
+  let dailyReports = 0;
   let aiImports = 0;
   for (const row of data.completions || []) {
     if (!row?.id || queryOne('SELECT id FROM completion_records WHERE id = ?', [row.id])) continue;
@@ -700,6 +801,21 @@ export function restoreUserActivity(
     );
     notifications++;
   }
+  for (const row of data.dailyReports || []) {
+    if (!row?.id || !isValidDateOnly(String(row.report_date || '')) || typeof row.markdown !== 'string') continue;
+    if (queryOne('SELECT id FROM daily_reports WHERE id = ? OR (user_id = ? AND report_date = ?)', [row.id, userId, row.report_date])) continue;
+    const notificationId = row.email_notification_id && queryOne(
+      'SELECT id FROM notification_deliveries WHERE id = ? AND user_id = ?',
+      [row.email_notification_id, userId],
+    ) ? row.email_notification_id : null;
+    db.run(
+      `INSERT INTO daily_reports (id, user_id, report_date, markdown, content_hash, published_at, updated_at, email_notification_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [row.id, userId, row.report_date, row.markdown, row.content_hash || '', row.published_at || nowIso(),
+        row.updated_at || nowIso(), notificationId],
+    );
+    dailyReports++;
+  }
   for (const row of data.aiImports || []) {
     if (!row?.id || queryOne('SELECT id FROM ai_imports WHERE id = ?', [row.id])) continue;
     db.run(
@@ -718,5 +834,5 @@ export function restoreUserActivity(
     );
   }
   persist();
-  return { completions, notifications, aiImports };
+  return { completions, notifications, dailyReports, aiImports };
 }

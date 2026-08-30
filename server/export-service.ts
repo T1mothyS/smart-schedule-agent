@@ -18,6 +18,7 @@ export interface ReadableUserExport {
   recurringTasks: reminderStore.ReminderTask[];
   recurringCycles: reminderStore.ReminderCycle[];
   completions: activityStore.CompletionRecord[];
+  dailyReports: activityStore.DailyReportRecord[];
   attachments: Array<{
     id: string;
     completionId: string | null;
@@ -37,6 +38,7 @@ function readablePreferences(reminder: db.DbReminder | null): Record<string, unk
     dailyReminderTime: `${String(reminder.hour).padStart(2, '0')}:${String(reminder.minute).padStart(2, '0')}`,
     reminderEmail: reminder.reminder_email || null,
     emailEnabled: Boolean(reminder.email_enabled),
+    reportEmailEnabled: Boolean(reminder.report_email_enabled),
     inAppEnabled: Boolean(reminder.in_app_enabled),
     browserEnabled: Boolean(reminder.browser_enabled),
     timezone: reminder.timezone || 'Asia/Shanghai',
@@ -76,6 +78,7 @@ export function createReadableUserExport(userId: string, exportedAt = new Date()
     recurringTasks: reminder.tasks,
     recurringCycles: reminder.cycles,
     completions: activityStore.listCompletions(userId),
+    dailyReports: activityStore.listDailyReports(userId),
     attachments: activityStore.listAttachments(userId).map(file => ({
       id: file.id,
       completionId: file.completionId,

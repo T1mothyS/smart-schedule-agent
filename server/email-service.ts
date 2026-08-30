@@ -11,6 +11,7 @@ import { getSchedulesByDate } from './schedule-store.js';
 import { renderDailyReminderEmail } from './daily-email-template.js';
 import { getDailyWeather } from './weather-service.js';
 import { addLog } from './log-service.js';
+import { escapeHtml, renderMarkdown } from './markdown-renderer.js';
 
 const OFFICIAL_SENDER_EMAIL = 'aicalendarofficial@163.com';
 
@@ -34,7 +35,7 @@ export function getEmailConfigurationSummary(): Record<string, unknown> {
 }
 
 // 创建 transporter
-const transporter = nodemailer.createTransport({
+let transporter = nodemailer.createTransport({
   host: SMTP_HOST,
   port: SMTP_PORT,
   secure: SMTP_PORT === 465,
@@ -47,6 +48,11 @@ const transporter = nodemailer.createTransport({
     pass: process.env.SMTP_PASS || '',
   },
 });
+
+/** 仅供隔离测试替换 SMTP 传输，不改变生产配置和发件人约束。 */
+export function setEmailTransportForTests(next: { sendMail: (options: Record<string, unknown>) => Promise<unknown> }): void {
+  transporter = next as typeof transporter;
+}
 
 export interface EmailSendResult {
   accepted: string[];
@@ -325,13 +331,38 @@ export async function sendDailyReminderEmail(to: string, userId: string, dateOve
   });
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+function reportAppUrl(date: string): string {
+  const fallback = 'http://localhost:3000';
+  const configured = (process.env.APP_URL || fallback).trim().replace(/\/+$/, '');
+  try {
+    const base = new URL(configured);
+    if (!['http:', 'https:'].includes(base.protocol)) throw new Error('unsupported app url');
+    return `${base.origin}/reports/${encodeURIComponent(date)}`;
+  } catch {
+    return `${fallback}/reports/${encodeURIComponent(date)}`;
+  }
+}
+
+/** 发送日报邮件。正文与网站共用受限 Markdown 渲染器，原始 HTML 不会执行。 */
+export async function sendDailyReportEmail(to: string, date: string, markdown: string): Promise<EmailSendResult> {
+  const subject = `个人情报日报 · ${date}`;
+  const url = reportAppUrl(date);
+  const html = `
+    <div style="font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif; max-width: 920px; margin: 0 auto; padding: 24px; color: #1f2937;">
+      <h1 style="font-size: 24px; margin: 0 0 20px;">${escapeHtml(subject)}</h1>
+      <article class="daily-report-markdown" style="line-height: 1.75;">${renderMarkdown(markdown)}</article>
+      <p style="margin-top: 28px; font-size: 13px;"><a href="${escapeHtml(url)}">在 AI Calendar 中查看私有日报页面</a></p>
+    </div>
+  `;
+  const text = `${subject}\n\n${markdown}\n\n在 AI Calendar 中查看私有日报页面：${url}`;
+  return sendEmail({
+    from: `"AI Calendar" <${OFFICIAL_SENDER_EMAIL}>`,
+    to,
+    subject,
+    html,
+    text,
+    mailType: 'daily_report',
+  });
 }
 
 function daysBetween(from: string, to: string): number {

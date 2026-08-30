@@ -14,6 +14,7 @@ import { ReminderPage } from './components/ReminderPage';
 import { AppShell } from './components/AppShell';
 import { ActionCenterPage } from './components/ActionCenterPage';
 import { AiImportPage } from './components/AiImportPage';
+import { DailyReportsPage } from './components/DailyReportsPage';
 import { MiniMonthCalendar } from './components/calendar/MiniMonthCalendar';
 import { SCHEDULE_CATEGORIES } from './utils/scheduleCategories';
 import { APP_CONFIG } from './config';
@@ -221,6 +222,8 @@ function App() {
           <Route path="/assistant" element={<AppContent />} />
           <Route path="/reminders" element={<AppContent />} />
           <Route path="/import" element={<AppContent />} />
+          <Route path="/reports" element={<AppContent />} />
+          <Route path="/reports/:date" element={<AppContent />} />
           <Route path="*" element={<Navigate to="/today" replace />} />
         </>
       )}
@@ -235,8 +238,8 @@ function AppContent() {
   const [showAdmin, setShowAdmin] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const activeSection = location.pathname === '/schedule' ? 'schedule' : location.pathname === '/assistant' ? 'assistant' : location.pathname === '/reminders' ? 'reminders' : location.pathname === '/import' ? 'import' : 'today';
-  const changeSection = (section: 'today' | 'schedule' | 'assistant' | 'reminders' | 'import') => navigate(section === 'schedule' ? '/schedule' : section === 'assistant' ? '/assistant' : section === 'reminders' ? '/reminders' : section === 'import' ? '/import' : '/today');
+  const activeSection = location.pathname.startsWith('/reports') ? 'reports' : location.pathname === '/schedule' ? 'schedule' : location.pathname === '/assistant' ? 'assistant' : location.pathname === '/reminders' ? 'reminders' : location.pathname === '/import' ? 'import' : 'today';
+  const changeSection = (section: 'today' | 'schedule' | 'assistant' | 'reminders' | 'import' | 'reports') => navigate(section === 'schedule' ? '/schedule' : section === 'assistant' ? '/assistant' : section === 'reminders' ? '/reminders' : section === 'import' ? '/import' : section === 'reports' ? '/reports' : '/today');
 
   // 设置弹窗打开/关闭时更新 Tab 标题
   useEffect(() => {
@@ -263,7 +266,7 @@ function AppContent() {
           <SchedulePage user={user} />
         ) : activeSection === 'assistant' ? <AiAssistantPage /> : activeSection === 'reminders' ? (
           <ReminderPage />
-        ) : <AiImportPage />}
+        ) : activeSection === 'reports' ? <DailyReportsPage /> : <AiImportPage />}
       </AppShell>
 
       {/* 设置弹层 */}
