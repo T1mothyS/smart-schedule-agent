@@ -75,9 +75,8 @@ test('V2 Publisher → AI Calendar → 假 SMTP 形成一次隔离端到端链�
     '# 二、邮箱与今天要做的事',
     '# 三、市场与我的雷达',
     '# 四、AI 与技术',
-    '# 五、值得看的工具 / GitHub',
-    '# 六、每日一个为什么',
-    '# 七、今日复盘与明日安排',
+    '# 五、每日一个为什么',
+    '# 六、今日行动',
   ];
   const sectionBody = `${'跨项目测试资料。 '.repeat(25)}来源 <script>alert(1)</script> [危险](javascript:alert(1))`;
   const markdown = headings.map(heading => `${heading}\n\n${sectionBody}\n`).join('\n');

@@ -93,6 +93,51 @@ test('日报展示会生成彩色卡片和静态章节跳转', () => {
   assert.doesNotMatch(html, /<script/i);
 });
 
+test('日报市场卡片按指数涨跌着色，并为缺失报价的板块显示状态', () => {
+  const html = renderer.renderMarkdown([
+    '# 三、市场与我的雷达',
+    '',
+    '| 市场 | 点位 | 涨跌 | 数据时间 |',
+    '| --- | --- | --- | --- |',
+    '| 指数A | 100 | +1.2% | 今日 |',
+    '| 指数B | 90 | -2.0% | 今日 |',
+    '',
+    '| 板块 | 状态 | 判断 |',
+    '| --- | --- | --- |',
+    '| AI | 🟡 观察 | 暂无可靠报价，保持观察 |',
+  ].join('\n'));
+  assert.match(html, /color:#dc2626/);
+  assert.match(html, /color:#15803d/);
+  assert.match(html, /今日状态 · 🟡 观察/);
+  assert.doesNotMatch(html, />—<\/div>/);
+});
+
+test('日报隐藏已移除的工具章节，并放大为什么问题标题', () => {
+  const html = renderer.renderMarkdown([
+    '# 一、今日值得搞明白的事',
+    '',
+    '保留。',
+    '',
+    '# 五、值得看的工具 / GitHub',
+    '',
+    '不应展示。',
+    '',
+    '# 六、每日一个为什么',
+    '',
+    '### 金融｜为什么会这样？',
+    '',
+    '机制。',
+    '',
+    '# 七、今日行动',
+    '',
+    '行动。',
+  ].join('\n'));
+  assert.doesNotMatch(html, /值得看的工具|不应展示/);
+  assert.match(html, /daily-report-why-title/);
+  assert.match(html, /金融｜为什么会这样/);
+  assert.equal((html.match(/id="section-/g) || []).length, 3);
+});
+
 test('日报发布按账号和日期幂等，更新正文但不重复发信', () => {
   const firstMarkdown = '# 2026-08-30\n\n第一版日报';
   const first = reports.publishDailyReport(userId, '2026-08-30', firstMarkdown);

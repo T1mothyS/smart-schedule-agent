@@ -31,6 +31,15 @@ interface DailyReportTokenStatus {
   revokedAt: string | null;
 }
 
+interface UserMailAccountStatus {
+  configured: boolean;
+  enabled: boolean;
+  provider: 'qq';
+  username: string | null;
+  updatedAt: string | null;
+  encryptionConfigured: boolean;
+}
+
 // ==================== 工具函数 ====================
 
 // 获取认证 headers
@@ -288,6 +297,11 @@ export function SettingsPage({ onOpenAdmin }: SettingsPageProps) {
   const [dailyReportStatus, setDailyReportStatus] = useState<DailyReportTokenStatus | null>(null);
   const [dailyReportToken, setDailyReportToken] = useState('');
   const [dailyReportBusy, setDailyReportBusy] = useState(false);
+  const [mailAccount, setMailAccount] = useState<UserMailAccountStatus | null>(null);
+  const [mailUsername, setMailUsername] = useState('');
+  const [mailAuthCode, setMailAuthCode] = useState('');
+  const [mailEnabled, setMailEnabled] = useState(true);
+  const [mailAccountBusy, setMailAccountBusy] = useState(false);
 
   const applyNotificationPreference = (preference: any) => {
     setReminderEnabled(preference.enabled ?? false);
@@ -554,12 +568,91 @@ export function SettingsPage({ onOpenAdmin }: SettingsPageProps) {
       setDailyReportBusy(false);
     }
   };
+
+  const loadUserMailAccount = useCallback(async () => {
+    try {
+      const response = await fetch('/api/user-mail-account', { headers: authHeaders() });
+      if (!response.ok) return;
+      const result = await response.json();
+      const account = result.account as UserMailAccountStatus;
+      setMailAccount(account);
+      setMailUsername(account.username || '');
+      setMailEnabled(account.configured ? account.enabled : true);
+    } catch { /* 邮箱配置加载失败不影响其他设置 */ }
+  }, [authHeaders]);
+
+  const saveUserMailAccount = async () => {
+    if (!mailUsername.trim()) return MessagePlugin.warning('请输入 QQ 邮箱账号');
+    setMailAccountBusy(true);
+    try {
+      const body: Record<string, unknown> = {
+        username: mailUsername.trim(),
+        enabled: mailEnabled,
+      };
+      if (mailAuthCode.trim()) body.authCode = mailAuthCode.trim();
+      const response = await fetch('/api/user-mail-account', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '保存 QQ 邮箱配置失败');
+      setMailAccount(result.account);
+      setMailUsername(result.account.username || '');
+      setMailEnabled(!!result.account.enabled);
+      setMailAuthCode('');
+      MessagePlugin.success('QQ 邮箱配置已保存');
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || '保存 QQ 邮箱配置失败');
+    } finally {
+      setMailAccountBusy(false);
+    }
+  };
+
+  const deleteUserMailAccount = async () => {
+    if (!window.confirm('删除后，日报将无法读取 QQ 邮箱未读摘要。是否继续？')) return;
+    setMailAccountBusy(true);
+    try {
+      const response = await fetch('/api/user-mail-account', { method: 'DELETE', headers: authHeaders() });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || '删除 QQ 邮箱配置失败');
+      setMailAccount(result.account);
+      setMailUsername('');
+      setMailAuthCode('');
+      setMailEnabled(true);
+      MessagePlugin.success('QQ 邮箱配置已删除');
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || '删除 QQ 邮箱配置失败');
+    } finally {
+      setMailAccountBusy(false);
+    }
+  };
+
+  const testUserMailAccount = async () => {
+    setMailAccountBusy(true);
+    try {
+      const response = await fetch('/api/user-mail-account/test', { method: 'POST', headers: authHeaders() });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'QQ 邮箱测试失败');
+      const mailResult = result.result;
+      if (mailResult?.status === 'OK') {
+        MessagePlugin.success(`QQ 邮箱读取成功，发现 ${mailResult.unreadCount || 0} 封未读邮件`);
+      } else {
+        MessagePlugin.warning(mailResult?.error || 'QQ 邮箱暂时不可用');
+      }
+    } catch (error: any) {
+      MessagePlugin.error(error?.message || 'QQ 邮箱测试失败');
+    } finally {
+      setMailAccountBusy(false);
+    }
+  };
   useEffect(() => {
     if (isAuthenticated) {
       loadReminder();
       loadDailyReportStatus();
+      loadUserMailAccount();
     }
-  }, [isAuthenticated, loadReminder, loadDailyReportStatus]);
+  }, [isAuthenticated, loadReminder, loadDailyReportStatus, loadUserMailAccount]);
 
   // ---------- 初始化 ----------
   useEffect(() => {
@@ -981,7 +1074,7 @@ export function SettingsPage({ onOpenAdmin }: SettingsPageProps) {
         <div>
           <h2 className="text-lg font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>日报令牌</h2>
           <p className="text-sm mb-4" style={{ color: 'var(--td-text-color-secondary)' }}>
-            专用令牌只能读取当前账号指定日期的日程，不能修改数据，也不会返回附件、密码或 API Key。
+            专用令牌只能读取当前账号指定日期的日程和已配置邮箱的未读摘要，不能修改数据，也不会返回授权码、附件、密码或 API Key。
           </p>
           <div className="space-y-3 px-4 py-4 rounded-lg" style={{ backgroundColor: 'var(--td-bg-color-container)', border: '1px solid var(--td-component-stroke)' }}>
             <div className="settings-token-status">
@@ -1004,6 +1097,55 @@ export function SettingsPage({ onOpenAdmin }: SettingsPageProps) {
             <div className="flex items-center gap-2 flex-wrap">
               <Button loading={dailyReportBusy} onClick={generateReportToken}>{dailyReportStatus?.active ? '轮换令牌' : '生成令牌'}</Button>
               {dailyReportStatus?.active && <Button theme="danger" variant="outline" loading={dailyReportBusy} onClick={revokeReportToken}>撤销令牌</Button>}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ height: '1px', backgroundColor: 'var(--td-component-border)' }} />
+
+        <div>
+          <h2 className="text-lg font-medium mb-2" style={{ color: 'var(--td-text-color-primary)' }}>日报邮箱（QQ）</h2>
+          <p className="text-sm mb-4" style={{ color: 'var(--td-text-color-secondary)' }}>
+            日报会通过服务端只读读取 QQ 收件箱的未读摘要。客户端授权码会加密保存，页面和日报令牌都不会再次显示它；这里不影响 AI Calendar 的 163 发件邮箱。
+          </p>
+          <div className="space-y-3 px-4 py-4 rounded-lg" style={{ backgroundColor: 'var(--td-bg-color-container)', border: '1px solid var(--td-component-stroke)' }}>
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-sm" style={{ color: 'var(--td-text-color-primary)' }}>QQ 邮箱账号</span>
+              <Input
+                value={mailUsername}
+                onChange={value => setMailUsername(value as string)}
+                autocomplete="email"
+                placeholder="例如：name@qq.com"
+                style={{ width: 280 }}
+                disabled={mailAccountBusy}
+              />
+            </div>
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-sm" style={{ color: 'var(--td-text-color-primary)' }}>客户端授权码</span>
+              <Input
+                type="password"
+                value={mailAuthCode}
+                onChange={value => setMailAuthCode(value as string)}
+                autocomplete="new-password"
+                placeholder={mailAccount?.configured ? '留空表示沿用已保存授权码' : '首次保存必须填写'}
+                style={{ width: 280 }}
+                disabled={mailAccountBusy}
+              />
+            </div>
+            <div className="flex items-center gap-4 flex-wrap">
+              <label className="flex items-center gap-2 text-sm">
+                <Switch value={mailEnabled} onChange={value => setMailEnabled(value as boolean)} disabled={mailAccountBusy} />
+                启用日报读取
+              </label>
+              <Button size="small" loading={mailAccountBusy} onClick={saveUserMailAccount}>保存邮箱配置</Button>
+              {mailAccount?.configured && <Button size="small" variant="outline" loading={mailAccountBusy} onClick={testUserMailAccount}>测试读取</Button>}
+              {mailAccount?.configured && <Button size="small" theme="danger" variant="text" loading={mailAccountBusy} onClick={deleteUserMailAccount}>删除配置</Button>}
+            </div>
+            <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
+              {mailAccount?.configured
+                ? `当前账号：${mailAccount.username} · ${mailAccount.enabled ? '已启用' : '已停用'}${mailAccount.updatedAt ? ` · 更新于 ${new Date(mailAccount.updatedAt).toLocaleString('zh-CN')}` : ''}`
+                : '尚未配置 QQ 邮箱。需要先在 QQ 邮箱中开启 IMAP，并使用客户端授权码。'}
+              {!mailAccount?.encryptionConfigured && ' 服务器尚未配置邮箱凭据加密密钥，保存前请先完成服务器配置。'}
             </div>
           </div>
         </div>

@@ -85,6 +85,19 @@ function cell(row: string[], index: number): string {
   return index >= 0 && index < row.length ? row[index] : '';
 }
 
+function isMissingValue(value: string): boolean {
+  return !value.trim() || ['—', '-', '暂无', '未填写', '无数据'].includes(value.trim());
+}
+
+function movementColor(...values: string[]): string {
+  const movement = /([+＋\-−－])\s*(?:\d|[.,])/;
+  for (const value of values) {
+    const match = movement.exec(value);
+    if (match) return match[1] === '+' || match[1] === '＋' ? '#dc2626' : '#15803d';
+  }
+  return '#152238';
+}
+
 function renderBriefingCards(items: string[]): string {
   const cards = items.map((item, index) => {
     const palette = CARD_PALETTES[index % CARD_PALETTES.length];
@@ -143,16 +156,34 @@ function renderMarketCards(headers: string[], rows: string[][]): string {
   const titleIndex = headerIndex(headers, '指标', '市场', '板块', '股票', '资产');
   const mainIndex = headerIndex(headers, '最新 / 变动', '点位', '价格 / 涨跌', '数值与变化');
   const changeIndex = headerIndex(headers, '涨跌', '变化');
+  const statusIndex = headerIndex(headers, '状态');
+  const summaryIndex = headerIndex(headers, '判断', '看点', '结论', '说明');
+  const isIndexTable = headers.some(header => header.includes('点位') || header.includes('最新 / 变动'));
   const cards = rows.map((row, rowIndex) => {
     const palette = CARD_PALETTES[rowIndex % CARD_PALETTES.length];
-    const main = [cell(row, mainIndex), changeIndex === mainIndex ? '' : cell(row, changeIndex)].filter(Boolean).join(' · ') || '—';
+    let mainParts = [cell(row, mainIndex), changeIndex === mainIndex ? '' : cell(row, changeIndex)].filter(value => !isMissingValue(value));
+    let fallbackIndex = -1;
+    if (mainParts.length === 0) {
+      if (!isMissingValue(cell(row, statusIndex))) {
+        mainParts = [`今日状态 · ${cell(row, statusIndex)}`];
+        fallbackIndex = statusIndex;
+      } else if (!isMissingValue(cell(row, summaryIndex))) {
+        mainParts = [`今日判断 · ${cell(row, summaryIndex)}`];
+        fallbackIndex = summaryIndex;
+      } else {
+        mainParts = ['今日状态 · 暂无可靠报价'];
+      }
+    }
+    const main = mainParts.join(' · ') || '—';
+    const used = [titleIndex, mainIndex, changeIndex, fallbackIndex];
     const details = headers.map((header, index) => ({ header, value: cell(row, index), index }))
-      .filter(item => item.value && ![titleIndex, mainIndex, changeIndex].includes(item.index))
+      .filter(item => item.value && !used.includes(item.index))
       .map(item => `<div style="margin-top:8px;color:${palette.text};font-size:11px;font-weight:850;letter-spacing:.04em;">${renderInline(item.header)}</div><div style="color:#334155;font-size:13px;line-height:1.58;">${renderInline(item.value)}</div>`)
       .join('');
+    const color = isIndexTable ? movementColor(cell(row, changeIndex), cell(row, mainIndex)) : '#152238';
     return `<article class="daily-report-data-card" style="padding:13px 14px;background:${palette.background};border:1px solid ${palette.border};border-top:5px solid ${palette.border};border-radius:12px;">` +
       `<div style="color:${palette.text};font-size:12px;font-weight:850;letter-spacing:.05em;">${renderInline(cell(row, titleIndex) || '市场指标')}</div>` +
-      `<div style="margin-top:4px;color:#152238;font-size:20px;font-weight:900;line-height:1.35;">${renderInline(main)}</div>` +
+      `<div style="margin-top:4px;color:${color};font-size:20px;font-weight:900;line-height:1.35;">${renderInline(main)}</div>` +
       details +
       '</article>';
   });
@@ -211,6 +242,14 @@ function renderBlocks(lines: string[], sectionTitle = ''): string {
   const blocks: string[] = [];
   let index = 0;
   let currentHeading = sectionTitle;
+  let whyTitleRendered = false;
+
+  const renderWhyTitle = (value: string): string => {
+    let title = value.trim().replace(/^\*\*(.+?)\*\*$/, '$1');
+    if (!/[｜|:：]/.test(title)) title = `综合｜${title}`;
+    return `<h3 class="daily-report-why-title" style="margin:19px 0 13px;color:#0f766e;font-size:26px;font-weight:900;line-height:1.3;letter-spacing:-.025em;">${renderInline(title)}</h3>`;
+  };
+
   while (index < lines.length) {
     const value = lines[index].trim();
     if (!value) {
@@ -221,7 +260,12 @@ function renderBlocks(lines: string[], sectionTitle = ''): string {
     if (heading) {
       const level = heading[1].length;
       currentHeading = heading[2];
-      blocks.push(`<h${Math.min(6, Math.max(3, level + 1))}>${renderInline(heading[2])}</h${Math.min(6, Math.max(3, level + 1))}>`);
+      if (sectionTitle.includes('为什么') && !whyTitleRendered && heading[2].includes('为什么') && /[？?]/.test(heading[2])) {
+        blocks.push(renderWhyTitle(heading[2]));
+        whyTitleRendered = true;
+      } else {
+        blocks.push(`<h${Math.min(6, Math.max(3, level + 1))}>${renderInline(heading[2])}</h${Math.min(6, Math.max(3, level + 1))}>`);
+      }
       index += 1;
       continue;
     }
@@ -303,7 +347,13 @@ function renderBlocks(lines: string[], sectionTitle = ''): string {
       paragraph.push(next);
       index += 1;
     }
-    blocks.push(`<p>${paragraph.map(renderInline).join('<br>')}</p>`);
+    const paragraphText = paragraph.join(' ').trim();
+    if (sectionTitle.includes('为什么') && !whyTitleRendered && /为什么.*[？?]$/.test(paragraphText)) {
+      blocks.push(renderWhyTitle(paragraphText));
+      whyTitleRendered = true;
+    } else {
+      blocks.push(`<p>${paragraph.map(renderInline).join('<br>')}</p>`);
+    }
   }
   return blocks.join('\n');
 }
@@ -319,7 +369,7 @@ function cleanSectionTitle(value: string): string {
 function navigationLabel(title: string): string {
   const labels: Array<[string, string]> = [
     ['值得搞明白', '要点'], ['今日要点', '要点'], ['邮箱', '邮箱'], ['市场', '市场'], ['雷达', '市场'],
-    ['AI', 'AI'], ['技术', '技术'], ['工具', '工具'], ['GitHub', '工具'], ['为什么', '为什么'], ['复盘', '复盘'], ['风险', '风险'],
+    ['AI', 'AI'], ['技术', '技术'], ['工具', '工具'], ['GitHub', '工具'], ['为什么', '为什么'], ['行动', '行动'], ['复盘', '复盘'], ['风险', '风险'],
   ];
   return labels.find(([marker]) => title.includes(marker))?.[1] ?? cleanSectionTitle(title).slice(0, 8);
 }
@@ -333,15 +383,18 @@ export function renderDailyReportMarkdown(markdown: string): string {
   const normalized = markdown.replace(/\r\n?/g, '\n').trim();
   if (!normalized) return '';
   const lines = normalized.split('\n');
-  const entries = lines.flatMap((line, lineIndex) => {
+  const allEntries = lines.flatMap((line, lineIndex) => {
     const match = line.trim().match(/^#\s+(.+?)\s*#*$/);
     return match && isReportSectionTitle(match[1]) ? [{ line: lineIndex, title: match[1] }] : [];
   });
-  if (entries.length === 0) return renderBlocks(lines);
+  const entries = allEntries.filter(entry => !entry.title.includes('工具') && !entry.title.includes('GitHub'));
+  if (allEntries.length === 0) return renderBlocks(lines);
+  if (entries.length === 0) return renderBlocks(lines.slice(0, allEntries[0].line));
   const blocks: string[] = [renderNavigation(entries)];
+  if (allEntries[0].line > 0) blocks.push(renderBlocks(lines.slice(0, allEntries[0].line)));
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
-    const end = index + 1 < entries.length ? entries[index + 1].line : lines.length;
+    const end = allEntries.find(next => next.line > entry.line)?.line ?? lines.length;
     const accent = SECTION_COLORS[index % SECTION_COLORS.length];
     const content = renderBlocks(lines.slice(entry.line + 1, end), entry.title);
     blocks.push(`<section id="section-${index + 1}" class="daily-report-section" style="scroll-margin-top:16px;margin:24px 0 28px;overflow:hidden;border:1px solid #d9e2e6;border-radius:16px;background:#fff;">` +

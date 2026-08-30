@@ -208,6 +208,20 @@ async function initDb(): Promise<void> {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS user_mail_accounts (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL UNIQUE,
+      provider TEXT NOT NULL DEFAULT 'qq' CHECK (provider = 'qq'),
+      username TEXT NOT NULL,
+      encrypted_auth_code TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
   // 创建索引
   db.run('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
@@ -352,6 +366,17 @@ export interface DbDailyReportToken {
   created_at: string;
   last_used_at: string | null;
   revoked_at: string | null;
+}
+
+export interface DbUserMailAccount {
+  id: string;
+  user_id: string;
+  provider: 'qq';
+  username: string;
+  encrypted_auth_code: string;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
 }
 
 // ============= 会话操作 =============
@@ -834,6 +859,36 @@ export function deleteUserApiKey(userId: string): boolean {
   return result.changes > 0;
 }
 
+// ============= 用户邮箱账号操作 =============
+
+export function getUserMailAccount(userId: string): DbUserMailAccount | undefined {
+  return queryOne<DbUserMailAccount>('SELECT * FROM user_mail_accounts WHERE user_id = ?', [userId]);
+}
+
+export function upsertUserMailAccount(account: DbUserMailAccount): DbUserMailAccount {
+  const existing = getUserMailAccount(account.user_id);
+  const now = account.updated_at || new Date().toISOString();
+  if (existing) {
+    run(
+      `UPDATE user_mail_accounts SET provider = ?, username = ?, encrypted_auth_code = ?, enabled = ?, updated_at = ?
+       WHERE user_id = ?`,
+      [account.provider, account.username, account.encrypted_auth_code, account.enabled, now, account.user_id],
+    );
+  } else {
+    run(
+      `INSERT INTO user_mail_accounts
+       (id, user_id, provider, username, encrypted_auth_code, enabled, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [account.id, account.user_id, account.provider, account.username, account.encrypted_auth_code, account.enabled, account.created_at, now],
+    );
+  }
+  return { ...account, updated_at: now };
+}
+
+export function deleteUserMailAccount(userId: string): boolean {
+  return run('DELETE FROM user_mail_accounts WHERE user_id = ?', [userId]).changes > 0;
+}
+
 export function getDailyReportToken(userId: string): DbDailyReportToken | undefined {
   return queryOne<DbDailyReportToken>('SELECT * FROM daily_report_tokens WHERE user_id = ?', [userId]);
 }
@@ -873,6 +928,7 @@ export function deleteUser(userId: string): boolean {
   try {
     run('DELETE FROM daily_report_tokens WHERE user_id = ?', [userId]);
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
+    run('DELETE FROM user_mail_accounts WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
     run('DELETE FROM ai_schedule_messages WHERE user_id = ?', [userId]);
     const sessions = queryAll<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', [userId]);
@@ -891,6 +947,7 @@ export function deleteUser(userId: string): boolean {
 export function clearUserData(userId: string): { schedules: number; sessions: number } {
   try {
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
+    run('DELETE FROM user_mail_accounts WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
     run('DELETE FROM ai_schedule_messages WHERE user_id = ?', [userId]);
     const sessions = queryAll<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', [userId]);

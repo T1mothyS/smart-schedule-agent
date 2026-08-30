@@ -22,6 +22,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - 每日摘要按账号保存的时、分和时区入队；同一配置时间的重复扫描保持幂等，修改当天提醒时间后允许再次触发，不与单项提醒混用。
 - 高优先级、未完成且有明确开始时间的事件/待办，在开始前 15 分钟内发送固定邮件提醒；它不受邮件开关、免打扰和日报开关影响。
 - 可生成仅展示一次的只读日报令牌，供独立日报程序按日期读取当前账号日程；服务端只保存令牌哈希。
+- 用户可以在网页设置中保存 QQ 邮箱账号和客户端授权码；授权码使用独立密钥加密保存，日报令牌只读取未读邮件摘要，不返回授权码，也不修改邮件已读状态。
 - 可选通过 163 邮箱 IMAP 接收转发邮件并生成待确认草稿。
 - 支持 Web 页面和 Electron 桌面壳。
 
@@ -36,7 +37,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 ### 1.1 版本与邮件链路
 
-- 当前版本：`0.2.0-260827.2216`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
+- 当前版本：`0.3.0-260830.1850`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
 - 每日摘要邮件链路：账号提醒设置 → 每日摘要调度器 → 持久化通知队列 → 固定发件邮箱；按账号、时区、日期和配置时间组成触发键幂等。
 - 高优先级邮件链路：高优先级事件/待办 → 开始前 1–15 分钟调度器 → 持久化通知队列 → 固定发件邮箱；不依赖每日提醒或邮件开关。
 - V2 日报链路：Validator 通过 → `PUT /api/integrations/daily-report/reports/:date` → 账号日报记录 → 可选日报邮件通知队列 → 固定发件邮箱；每个账号和日期最多自动尝试一次，失败后只能显式确认重试。
@@ -251,7 +252,15 @@ cp .env.example .env
 | `SMTP_USER` | 是 | 固定使用 `aicalendarofficial@163.com` |
 | `SMTP_PASS` | 是 | 163 客户端授权码，不是登录密码 |
 
-### 6.3 AI 与服务地址
+### 6.3 用户 QQ 邮箱摘要（可选）
+
+| 变量 | 必需 | 说明 |
+| --- | --- | --- |
+| `MAIL_CREDENTIALS_ENCRYPTION_KEY` | 使用网页 QQ 邮箱配置时必需 | 独立随机长密钥；不能与 `JWT_SECRET` 或 `BACKUP_ENCRYPTION_KEY` 共用 |
+
+网页设置中的 QQ 邮箱固定使用 `imap.qq.com:993` TLS 连接。服务端只读取未读邮件摘要，不保存邮件正文，不标记已读；V2 通过日报只读令牌调用 `/api/integrations/daily-report/mail`。未配置该变量时，其他登录、日历、提醒和日报功能仍可运行，但不能保存用户 QQ 邮箱配置。
+
+### 6.4 AI 与服务地址
 
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
@@ -264,7 +273,7 @@ cp .env.example .env
 | `ELECTRON_APP_URL` | Electron 打包必需 | 写入安装包的公开 HTTPS 页面地址，不包含任何密钥 |
 | `VITE_DEV_HOST` / `VITE_ALLOWED_HOST` | 局域网调试可选 | 默认只允许本机访问；确需局域网调试时同时显式配置监听地址和允许主机 |
 
-### 6.4 备份与 OSS
+### 6.5 备份与 OSS
 
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
@@ -275,7 +284,7 @@ cp .env.example .env
 | `OSS_ACCESS_KEY_SECRET` | OSS 可选 | 专用 RAM 用户 AccessKey Secret |
 | `MAINTENANCE_MODE` | 是 | 正常运行保持 `false`；全站恢复时才临时设为 `true` |
 
-### 6.5 邮箱自动导入（可选）
+### 6.6 邮箱自动导入（可选）
 
 | 变量 | 必需 | 说明 |
 | --- | --- | --- |
@@ -359,6 +368,7 @@ cp .env.example .env
 | `server/activity-store.ts` | `activity.db` 的完成记录、附件元数据、通知队列、偏好和 AI 草稿访问层 |
 | `server/daily-report-service.ts` | 日报发布幂等、内容哈希、账号隔离、邮件状态和安全渲染视图 |
 | `server/markdown-renderer.ts` | 网站和邮件共用的受限 Markdown 渲染器，转义 HTML 并过滤危险链接 |
+| `server/user-mail-service.ts` | 用户 QQ 邮箱授权码加密保存、只读 IMAP 摘要读取和脱敏状态 |
 | `server/notification-service.ts` | 持久化通知调度、免打扰、幂等去重、失败重试和发送状态 |
 | `server/notification-scheduler.ts` | 每日摘要和高优先级固定邮件的时区扫描、筛选与幂等入队 |
 | `server/email-service.ts` | 固定 163 官方发件邮箱、邮件模板、SMTP 校验和错误转换 |
@@ -479,6 +489,8 @@ npm run build
 
 “设置”同时提供可读 JSON 和 CSV 导出，均只包含当前账号的非敏感业务数据。日报联动令牌只在生成/轮换时展示一次，可随时吊销；旧的 `/api/integrations/daily-report/agenda` 仍是只读、限定当前账号并要求显式日期的日程接口。
 
+“设置”中的“日报邮箱（QQ）”用于按个人账号保存 QQ 邮箱账号和客户端授权码。授权码在服务端以独立密钥加密保存，测试读取和日报接口只返回未读邮件摘要，不返回授权码，也不影响 AI Calendar 固定的 163 发件邮箱。
+
 ## 10. API 模块概览
 
 后端 API 统一以 `/api` 开头，主要模块为：
@@ -493,6 +505,8 @@ npm run build
 - `/api/exports/user-data.json`、`/api/exports/schedules.csv`：当前账号可读导出。
 - `/api/daily-reports`、`/api/daily-reports/:date`：当前账号日报列表和详情。
 - `/api/integrations/daily-report-token`、`/api/integrations/daily-report/agenda`：令牌管理和只读日报日程。
+- `/api/user-mail-account`、`/api/user-mail-account/test`：当前账号 QQ 邮箱配置、删除和只读连接测试。
+- `/api/integrations/daily-report/mail`：日报令牌读取当前账号的 QQ 未读摘要，不返回授权码。
 - `/api/integrations/daily-report/reports/:date`：V2 使用日报令牌发布或幂等更新日报；发布正文不写入日志，邮件状态由账号设置和通知队列决定。
 - `/api/backups`、`/api/admin/backups`：用户备份和全站灾备。
 - `/api/ai-chat`：普通问答、天气问答和待确认日程建议。

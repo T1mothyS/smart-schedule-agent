@@ -32,6 +32,7 @@ import { extractWeatherLocationQuery, getDailyWeather, isWeatherQuestion, search
 import { createReadableUserExport, createSchedulesCsv } from './export-service.js';
 import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
 import { getDailyReportView, listDailyReportViews, publishDailyReport } from './daily-report-service.js';
+import { deleteUserMailAccount, getUserMailAccountStatus, readUserMail, saveUserMailAccount } from './user-mail-service.js';
 import { createApiRateLimiter, securityHeaders } from './http-security.js';
 import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
 import { shiftScheduleDateValue } from './schedule-actions.js';
@@ -1471,6 +1472,50 @@ app.delete('/api/integrations/daily-report-token', authenticate, (req, res) => {
   res.json({ status: revokeDailyReportToken((req as any).user.userId) });
 });
 
+// 用户 QQ 邮箱配置只返回脱敏状态；授权码只在服务端加密保存，从不通过 API 返回。
+app.get('/api/user-mail-account', authenticate, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ account: getUserMailAccountStatus((req as any).user.userId) });
+});
+
+app.put('/api/user-mail-account', authenticate, (req, res) => {
+  const allowed = new Set(['username', 'authCode', 'enabled']);
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body) || Object.keys(req.body).some(key => !allowed.has(key))) {
+    return res.status(400).json({ error: '请求正文只允许包含 username、authCode、enabled 字段' });
+  }
+  try {
+    const userId = (req as any).user.userId;
+    const account = saveUserMailAccount(userId, req.body);
+    addLog('info', 'mail', '用户 QQ 邮箱配置已保存', {
+      event: 'user_mail_account_saved',
+      userId,
+      enabled: account.enabled,
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ account });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '保存 QQ 邮箱配置失败' });
+  }
+});
+
+app.delete('/api/user-mail-account', authenticate, (req, res) => {
+  const userId = (req as any).user.userId;
+  const account = deleteUserMailAccount(userId);
+  addLog('info', 'mail', '用户 QQ 邮箱配置已删除', {
+    event: 'user_mail_account_deleted',
+    userId,
+  });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ account });
+});
+
+app.post('/api/user-mail-account/test', authenticate, async (req, res) => {
+  const userId = (req as any).user.userId;
+  const result = await readUserMail(userId, 1);
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ result });
+});
+
 // 登录后的日报页面只允许读取当前账号的数据。
 app.get('/api/daily-reports', authenticate, (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -1531,6 +1576,21 @@ app.get('/api/integrations/daily-report/agenda', (req, res) => {
       completed: item.is_completed,
     }));
   res.json({ date, timezone, generatedAt: new Date().toISOString(), schedules });
+});
+
+// 独立日报项目使用同一只读令牌读取当前账号的 QQ 未读邮件摘要；不会返回邮箱授权码。
+app.get('/api/integrations/daily-report/mail', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const authorization = String(req.header('authorization') || '');
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  const authenticated = match ? authenticateDailyReportToken(match[1].trim()) : null;
+  if (!authenticated) return res.status(401).json({ error: '日报令牌无效或已经撤销' });
+  const parsedLimit = Number(req.query.limit || 20);
+  if (!Number.isInteger(parsedLimit) || parsedLimit < 1 || parsedLimit > 100) {
+    return res.status(400).json({ error: 'limit 必须是 1 到 100 之间的整数' });
+  }
+  const result = await readUserMail(authenticated.userId, parsedLimit);
+  res.json({ ...result, generatedAt: new Date().toISOString() });
 });
 
 // 独立日报项目使用只读令牌发布已通过 Validator 的 Markdown；不会接收账号或邮箱字段。
