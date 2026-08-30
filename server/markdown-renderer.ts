@@ -1,3 +1,5 @@
+import { renderDailyReportMarkdown } from './daily-report-markdown.js';
+
 /**
  * 日报专用的最小 Markdown 渲染器。
  *
@@ -29,7 +31,7 @@ function isSafeLink(value: string): boolean {
 }
 
 function renderInline(value: string): string {
-  const pattern = /\[([^\]]+)\]\(([^)\s]+)\)|\*\*([^*]+)\*\*|__([^_]+)__/g;
+  const pattern = /\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|==([^=\n]+)==|\*\*([^*]+)\*\*|__([^_]+)__/g;
   let output = '';
   let cursor = 0;
   for (const match of value.matchAll(pattern)) {
@@ -41,8 +43,12 @@ function renderInline(value: string): string {
       output += isSafeLink(href)
         ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`
         : `<span class="daily-report-unsafe-link">${label}</span>`;
+    } else if (match[3] !== undefined) {
+      output += `<code>${escapeHtml(match[3])}</code>`;
+    } else if (match[4] !== undefined) {
+      output += `<strong style="color:#b42318;font-weight:850;">${escapeHtml(match[4])}</strong>`;
     } else {
-      output += `<strong>${escapeHtml(match[3] ?? match[4] ?? '')}</strong>`;
+      output += `<strong style="color:#0f766e;font-weight:800;">${escapeHtml(match[5] ?? match[6] ?? '')}</strong>`;
     }
     cursor = index + match[0].length;
   }
@@ -71,6 +77,9 @@ function renderTable(headerLine: string, rows: string[]): string {
 }
 
 export function renderMarkdown(markdown: string): string {
+  if (/(?:^|\n)#\s+(?:[一二三四五六七八九十]+|\d+)[、.．]\s*/.test(markdown)) {
+    return renderDailyReportMarkdown(markdown);
+  }
   const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
   const blocks: string[] = [];
   let index = 0;

@@ -1980,6 +1980,9 @@ t-chat-sender::part(send-btn):disabled,
 .daily-report-markdown th, .daily-report-markdown td { padding: 8px 10px; border: 1px solid var(--td-component-stroke); text-align: left; vertical-align: top; }
 .daily-report-markdown th { background: var(--td-bg-color-component); font-weight: 700; }
 .daily-report-markdown .daily-report-unsafe-link { color: var(--td-text-color-secondary); text-decoration: line-through; }
+.daily-report-markdown .daily-report-card-grid { width: 100%; }
+.daily-report-markdown .daily-report-card-grid > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.daily-report-markdown .daily-report-section { scroll-margin-top: 16px; }
 
 @media (max-width: 760px) {
   .daily-reports-page { padding: 22px 14px 46px; }
@@ -1988,4 +1991,5 @@ t-chat-sender::part(send-btn):disabled,
   .daily-reports-grid { grid-template-columns: 1fr; }
   .daily-report-detail-header { align-items: flex-start; flex-direction: column; }
   .daily-report-detail-actions { align-items: flex-start; flex-direction: column; }
+  .daily-report-markdown .daily-report-card-grid { grid-template-columns: 1fr !important; }
 }

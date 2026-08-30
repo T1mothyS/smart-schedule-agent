@@ -70,6 +70,29 @@ test('日报 Markdown 会转义 HTML，并拒绝危险链接', () => {
   assert.match(html, /<table>/);
 });
 
+test('日报展示会生成彩色卡片和静态章节跳转', () => {
+  const html = renderer.renderMarkdown([
+    '# 一、今日值得搞明白的事',
+    '',
+    '1. **第一条重点。** 这是需要快速扫读的解释，==风险数字==需要特别留意。',
+    '',
+    '# 二、邮箱与今天要做的事',
+    '',
+    '| 优先级 | 事项 | 截止 | 要做什么 |',
+    '| --- | --- | --- | --- |',
+    '| 高 | 核对通知 | 今天 | 查看原邮件 |',
+  ].join('\n'));
+  assert.match(html, /id="report-toc"/);
+  assert.match(html, /href="#section-1"/);
+  assert.match(html, /href="#section-2"/);
+  assert.match(html, /href="#report-toc"/);
+  assert.match(html, /daily-report-brief-card/);
+  assert.match(html, /daily-report-data-card/);
+  assert.match(html, /background:#fff1f2/);
+  assert.match(html, /color:#b42318/);
+  assert.doesNotMatch(html, /<script/i);
+});
+
 test('日报发布按账号和日期幂等，更新正文但不重复发信', () => {
   const firstMarkdown = '# 2026-08-30\n\n第一版日报';
   const first = reports.publishDailyReport(userId, '2026-08-30', firstMarkdown);
