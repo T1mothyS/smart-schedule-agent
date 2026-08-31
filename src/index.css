@@ -1983,6 +1983,8 @@ t-chat-sender::part(send-btn):disabled,
 .daily-report-markdown .daily-report-card-grid { width: 100%; }
 .daily-report-markdown .daily-report-card-grid > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .daily-report-markdown .daily-report-section { scroll-margin-top: 16px; }
+.daily-report-markdown .daily-newsletter { width: 100%; max-width: 680px; margin-inline: auto; }
+.daily-report-markdown .daily-newsletter a { color: inherit; }
 
 @media (max-width: 760px) {
   .daily-reports-page { padding: 22px 14px 46px; }
@@ -1992,4 +1994,7 @@ t-chat-sender::part(send-btn):disabled,
   .daily-report-detail-header { align-items: flex-start; flex-direction: column; }
   .daily-report-detail-actions { align-items: flex-start; flex-direction: column; }
   .daily-report-markdown .daily-report-card-grid { grid-template-columns: 1fr !important; }
+  .daily-report-markdown .daily-newsletter-inner { padding-inline: 22px !important; }
+  .daily-report-markdown .daily-newsletter-header h1 { font-size: 35px !important; }
+  .daily-report-markdown .daily-newsletter-section { padding-top: 31px !important; }
 }

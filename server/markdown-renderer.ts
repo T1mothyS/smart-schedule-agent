@@ -1,4 +1,5 @@
 import { renderDailyReportMarkdown } from './daily-report-markdown.js';
+import { renderDailyDigestMarkdown } from './daily-digest-template.js';
 
 /**
  * 日报专用的最小 Markdown 渲染器。
@@ -77,6 +78,8 @@ function renderTable(headerLine: string, rows: string[]): string {
 }
 
 export function renderMarkdown(markdown: string): string {
+  const dailyDigest = renderDailyDigestMarkdown(markdown);
+  if (dailyDigest !== null) return dailyDigest;
   if (/(?:^|\n)#\s+(?:[一二三四五六七八九十]+|\d+)[、.．]\s*/.test(markdown)) {
     return renderDailyReportMarkdown(markdown);
   }
