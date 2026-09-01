@@ -262,6 +262,23 @@ const SOURCE_MARKS: Record<string, string> = {
   'Google AI': 'G',
 };
 
+const SOURCE_ICON_URLS: Record<string, string> = {
+  BBC: 'https://www.bbc.com/favicon.ico',
+  新华社: 'https://www.xinhuanet.com/favicon.ico',
+  人民网: 'https://www.people.com.cn/favicon.ico',
+  央视新闻: 'https://news.cctv.com/favicon.ico',
+  光明网: 'https://www.gmw.cn/favicon.ico',
+  财新: 'https://www.caixin.com/favicon.ico',
+  新浪新闻: 'https://news.sina.com.cn/favicon.ico',
+  网易新闻: 'https://news.163.com/favicon.ico',
+  'Federal Reserve': 'https://www.federalreserve.gov/favicon.ico',
+  SEC: 'https://www.sec.gov/favicon.ico',
+  OpenAI: 'https://svgl.app/library/openai.svg',
+  'Google AI': 'https://www.google.com/favicon.ico',
+  'Yahoo Finance': 'https://finance.yahoo.com/favicon.ico',
+  'Yahoo Finance chart': 'https://finance.yahoo.com/favicon.ico',
+};
+
 const MARKET_MOVEMENT = /(?:(?:上涨|下跌|上升|下降|涨|跌)\s*(?:[+＋↑↗]|[-−－↓↘])?|[+＋↑↗]|[-−－↓↘])\s*(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)\s*%/g;
 
 function marketText(value: string): string {
@@ -272,39 +289,28 @@ function marketText(value: string): string {
   });
 }
 
-function renderMeta(source: string, publishedAt: string, url = ''): string {
+function sourceIdentity(source: string): string {
+  const mark = escapeHtml(SOURCE_MARKS[source] || source.slice(0, 2));
+  const iconUrl = SOURCE_ICON_URLS[source];
+  const fallbackMark = escapeHtml(source.slice(0, 1));
+  const icon = iconUrl
+    ? `<span class="source-logo-wrap" aria-hidden="true" style="position:relative;display:inline-grid;width:19px;height:19px;place-items:center;flex:0 0 19px;overflow:hidden;border:1px solid #c6d9d2;border-radius:5px;background:#fff"><span class="source-mark source-logo-fallback" style="position:absolute;inset:0;width:auto;height:auto;flex:0 0 auto;border:0;border-radius:0">${fallbackMark}</span><img class="source-logo" src="${escapeHtml(iconUrl)}" alt="" width="19" height="19" style="position:relative;z-index:1;display:block;width:100%;height:100%;object-fit:contain;border-radius:4px;background:#fff"></span>`
+    : `<span class="source-mark" aria-hidden="true" style="width:19px;height:19px;display:inline-grid;place-items:center;flex:0 0 19px;border:1px solid #c6d9d2;border-radius:5px;background:#eef6f2;color:#0d5c4b;font-size:8px;font-weight:850;line-height:1">${mark}</span>`;
+  return `<span class="source-identity" style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle">${icon}<span>${escapeHtml(source)}</span></span>`;
+}
+
+function renderMeta(source: string, publishedAt: string): string {
   const pieces: string[] = [];
   if (source) {
-    const mark = escapeHtml(SOURCE_MARKS[source] || source.slice(0, 2));
-    pieces.push(`<span class="source-identity" style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle"><span class="source-mark" aria-hidden="true" style="width:19px;height:19px;display:inline-grid;place-items:center;flex:0 0 19px;border:1px solid #c6d9d2;border-radius:5px;background:#eef6f2;color:#0d5c4b;font-size:8px;font-weight:850;line-height:1">${mark}</span><span>${escapeHtml(source)}</span></span>`);
+    pieces.push(sourceIdentity(source));
   }
   if (publishedAt) pieces.push(escapeHtml(publishedAt));
-  if (url) pieces.push(`<a class="source-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer" style="color:#0d5c4b;font-weight:750;text-decoration:underline;text-underline-offset:2px">查看来源 <span aria-hidden="true">↗</span></a>`);
   return pieces.length ? pieces.join(' · ') : '来源与时间待核验';
 }
 
 function storyImage(story: LeadStory | DigestItem): string {
   if (!story.imageUrl) return '';
   return `<img class="story-image" src="${escapeHtml(story.imageUrl)}" alt="${escapeHtml(story.headline)}" width="608" style="display:block;width:100%;max-width:100%;height:auto;margin:16px 0 2px;border-radius:8px;object-fit:cover">`;
-}
-
-function digestSources(digest: DailyDigest): string[] {
-  const sources: string[] = [];
-  const add = (source: string) => {
-    if (source && !sources.includes(source)) sources.push(source);
-  };
-  digest.leadStories.forEach(story => add(story.source));
-  digest.categories.forEach(category => category.items.forEach(item => add(item.source)));
-  return sources.slice(0, 8);
-}
-
-function MediaStrip(digest: DailyDigest): string {
-  const chips = digestSources(digest).map(source => {
-    const mark = escapeHtml(SOURCE_MARKS[source] || source.slice(0, 2));
-    return `<span class="media-source-chip" style="display:inline-flex;align-items:center;gap:5px;min-height:25px;padding:3px 8px 3px 4px;border:1px solid #d7e4de;border-radius:999px;background:#f5faf7;color:#315c50;font-size:11px;font-weight:750;line-height:1.1"><span class="media-source-mark" aria-hidden="true" style="display:inline-grid;width:19px;height:19px;place-items:center;border-radius:50%;background:#0d5c4b;color:#fff;font-size:8px;font-weight:850;line-height:1">${mark}</span>${escapeHtml(source)}</span>`;
-  }).join('');
-  if (!chips) return '';
-  return `<div class="media-strip" aria-label="本期新闻来源" style="display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:22px;padding-top:13px;border-top:1px solid #e4e1db"><span class="media-strip-label" style="margin-right:2px;color:#8a8e86;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase">Sources</span>${chips}</div>`;
 }
 
 function storyHeadline(story: LeadStory | DigestItem, className: string): string {
@@ -318,7 +324,6 @@ function Header(digest: DailyDigest): string {
     `<div style="color:#0d5c4b;font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase">Daily Digest · ${escapeHtml(formatDateLabel(digest.date))}</div>` +
     `<h1 style="margin:10px 0 0;color:#171916;font-family:Georgia,'Songti SC','SimSun',serif;font-size:42px;font-weight:700;line-height:1.05;letter-spacing:-.035em">Daily Digest</h1>` +
     `<div style="max-width:560px;margin-top:15px;color:#3d423c;font-family:Georgia,'Songti SC','SimSun',serif;font-size:20px;line-height:1.55;overflow-wrap:anywhere">${marketText(digest.theme)}</div>` +
-    MediaStrip(digest) +
     '</header>';
 }
 
@@ -351,14 +356,14 @@ function LeadStoryComponent(story: LeadStory, index: number): string {
   return `<article class="daily-lead-story" style="padding:${index === 1 ? '6px' : '32px'} 0 38px;${index > 1 ? 'border-top:1px solid #d8d5ce;' : ''}">` +
     `<div style="color:#0d5c4b;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase">Lead ${String(index).padStart(2, '0')}</div>` +
     `<h3 style="margin:8px 0;color:#171916;font-family:Georgia,'Songti SC','SimSun',serif;font-size:29px;line-height:1.28;letter-spacing:-.022em;overflow-wrap:anywhere">${storyHeadline(story, 'lead-link')}</h3>` +
-    `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(story.source, story.publishedAt, story.url)}</div>${storyImage(story)}${body}</article>`;
+    `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(story.source, story.publishedAt)}</div>${storyImage(story)}${body}</article>`;
 }
 
 function DigestItemComponent(item: DigestItem): string {
   const headline = storyHeadline(item, 'digest-link');
   const image = storyImage(item);
   const content = `<div class="digest-item-copy" style="min-width:0"><h4 style="margin:0 0 5px;color:#20231f;font-family:Georgia,'Songti SC','SimSun',serif;font-size:18px;line-height:1.42;overflow-wrap:anywhere">${headline}</h4>` +
-    `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(item.source, item.publishedAt, item.url)}</div>` +
+    `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(item.source, item.publishedAt)}</div>` +
     `<p style="margin:8px 0 0;color:#4b5049;font-size:14.5px;line-height:1.66;overflow-wrap:anywhere">${marketText(item.summary)}</p></div>`;
   return `<article style="padding:18px 0 19px;border-top:1px solid #e4e1db">` +
     `<div class="digest-item-layout${image ? ' with-image' : ''}" style="min-width:0;display:${image ? 'grid' : 'block'};${image ? 'grid-template-columns:minmax(0,1fr) 116px;gap:16px;align-items:start;' : ''}">${content}${image ? image.replace('class="story-image"', 'class="story-image digest-thumb"').replace('width:100%;', 'width:116px;').replace('height:auto;', 'height:78px;').replace('margin:16px 0 2px;', 'margin:0;') : ''}</div></article>`;
@@ -378,7 +383,7 @@ function WorthYourTime(digest: DailyDigest): string {
     ? `<ul style="margin:0;padding:0;list-style:none">${digest.worthYourTime.map(item =>
       `<li style="padding:15px 0;border-top:1px solid #e4e1db">` +
       `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" style="color:#20231f;font-family:Georgia,'Songti SC','SimSun',serif;font-size:17px;font-weight:700;line-height:1.4;text-decoration:underline;text-decoration-color:#87a79e;text-underline-offset:3px;overflow-wrap:anywhere">${marketText(item.title)} <span class="external-link" aria-hidden="true" style="color:#0d5c4b;font-weight:850">↗</span></a>` +
-      `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em">${renderMeta(item.source || '延伸阅读', '', '')}</div>` +
+      `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em">${renderMeta(item.source || '延伸阅读', '')}</div>` +
       `<div style="margin-top:5px;color:#626760;font-size:13px;line-height:1.55;overflow-wrap:anywhere">${marketText(item.note)}</div></li>`,
     ).join('')}</ul>`
     : '<p style="margin:0;color:#626760;font-size:13px;line-height:1.55">今天没有额外延伸阅读。</p>';

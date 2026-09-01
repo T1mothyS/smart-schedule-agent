@@ -80,11 +80,13 @@ test('Newsletter 渲染使用排版层级而不是卡片集合', () => {
   assert.match(html, /Category Digest/);
   assert.match(html, /邮件待办/);
   assert.match(html, /source-mark/);
-  assert.match(html, /media-strip/);
+  assert.match(html, /source-logo/);
+  assert.match(html, /https:\/\/www\.bbc\.com\/favicon\.ico/);
   assert.match(html, /market-movement up/);
   assert.match(html, /market-movement down/);
   assert.match(html, /external-link/);
   assert.match(html, /story-image/);
+  assert.doesNotMatch(html, /media-strip|source-link|查看来源/);
   assert.doesNotMatch(html, /daily-report-card-grid|linear-gradient|box-shadow/);
   assert.ok(html.indexOf('今日速览') < html.indexOf('重点新闻'));
 });
