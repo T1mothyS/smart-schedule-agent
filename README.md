@@ -17,7 +17,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - AI 可从自然语言或截图生成待确认草稿；确认前不会写入正式数据。
 - AI 助手支持普通问答；配置常驻城市/区县后，可查询 Open-Meteo 实时与未来天气。
 - 每日邮件摘要包含天气、进度、分类日程和完整明细，不与单项提醒混用。
-- 日报页面按日期保存当前账号的个人情报日报；新版 `daily-digest.v1` 内容由固定 Newsletter 模板渲染，支持 RSS 图片、媒体来源标识、明确外链和真实邮件待办，旧日报继续使用受限 Markdown 兼容路径，并严格按账号隔离。
+- 日报页面按日期保存当前账号的个人情报日报；新版 `daily-digest.v1` 内容由固定 Newsletter 模板渲染，支持 RSS 图片、来源胶囊条、中文涨跌颜色、明确外链和真实邮件待办，旧日报继续使用受限 Markdown 兼容路径，并严格按账号隔离。
 - 日报由外部 V2 程序在 Validator 通过后通过专用接口发布；“日报邮件”是独立于每日摘要的设置，首次发布时才入队，更新同一天内容不会重复发信。
 - 每日摘要按账号保存的时、分和时区入队；同一配置时间的重复扫描保持幂等，修改当天提醒时间后允许再次触发，不与单项提醒混用。
 - 高优先级、未完成且有明确开始时间的事件/待办，在开始前 15 分钟内发送固定邮件提醒；它不受邮件开关、免打扰和日报开关影响。
@@ -37,7 +37,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 ### 1.1 版本与邮件链路
 
-- 当前版本：`0.5.0-260901.0407`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
+- 当前版本：`0.5.1-260901.1922`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
 - 每日摘要邮件链路：账号提醒设置 → 每日摘要调度器 → 持久化通知队列 → 固定发件邮箱；按账号、时区、日期和配置时间组成触发键幂等。
 - 高优先级邮件链路：高优先级事件/待办 → 开始前 1–15 分钟调度器 → 持久化通知队列 → 固定发件邮箱；不依赖每日提醒或邮件开关。
 - V2 日报链路：Validator 通过 → `PUT /api/integrations/daily-report/reports/:date` → 账号日报记录 → 可选日报邮件通知队列 → 固定发件邮箱；每个账号和日期最多自动尝试一次，失败后只能显式确认重试。
@@ -367,7 +367,7 @@ cp .env.example .env
 | `server/action-center.ts` | 聚合日程、待办和周期事务，计算“下一步”和行动中心分组 |
 | `server/activity-store.ts` | `activity.db` 的完成记录、附件元数据、通知队列、偏好和 AI 草稿访问层 |
 | `server/daily-report-service.ts` | 日报发布幂等、内容哈希、账号隔离、邮件状态和安全渲染视图 |
-| `server/daily-digest-template.ts` | 解析 `daily-digest.v1` 内容并以 Header、AtAGlance、LeadStory、DigestItem、Section、Footer 等稳定组件渲染网页、邮件和纯文本 |
+| `server/daily-digest-template.ts` | 解析 `daily-digest.v1` 内容并以 Header、来源胶囊条、AtAGlance、LeadStory、DigestItem、Section、Footer 等稳定组件渲染网页、邮件和纯文本 |
 | `server/markdown-renderer.ts` | 新版日报路由到固定 Newsletter 模板，旧日报回退到受限 Markdown 渲染器；两条路径都转义 HTML 并过滤危险链接 |
 | `server/user-mail-service.ts` | 用户 QQ 邮箱授权码加密保存、只读 IMAP 摘要读取和脱敏状态 |
 | `server/notification-service.ts` | 持久化通知调度、免打扰、幂等去重、失败重试和发送状态 |

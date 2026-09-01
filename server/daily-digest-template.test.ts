@@ -17,7 +17,7 @@ function digestMarkdown(overrides = ''): string {
     '今日主题：贸易摩擦与 AI 供应连续性同时进入决策视野',
     '',
     '## Today at a Glance',
-    '1. 贸易摩擦正在传导到订单、成本与现金流。',
+    '1. 贸易摩擦正在传导到订单、成本与现金流；指数上涨 1.24%。',
     '2. AI 采购开始同时考察能力、合同关系与供应连续性。',
     '3. 区域市场继续分化，单一指数不足以代表整体风险偏好。',
     '',
@@ -41,7 +41,7 @@ function digestMarkdown(overrides = ''): string {
     '时间：2026-08-31 收盘',
     '链接：—',
     '图片：https://example.com/market.jpg',
-    `摘要：${overrides || '美股科技偏强、A 股走高、韩国市场回落；不同时点数据不能拼成单一风险偏好快照。'}`,
+    `摘要：${overrides || '美股科技偏强、A 股走高、韩国市场回落；收益率下跌 0.86%，不同时点数据不能拼成单一风险偏好快照。'}`,
     '',
     '## Mail Tasks',
     '### 确认合同附件',
@@ -80,6 +80,9 @@ test('Newsletter 渲染使用排版层级而不是卡片集合', () => {
   assert.match(html, /Category Digest/);
   assert.match(html, /邮件待办/);
   assert.match(html, /source-mark/);
+  assert.match(html, /media-strip/);
+  assert.match(html, /market-movement up/);
+  assert.match(html, /market-movement down/);
   assert.match(html, /external-link/);
   assert.match(html, /story-image/);
   assert.doesNotMatch(html, /daily-report-card-grid|linear-gradient|box-shadow/);
