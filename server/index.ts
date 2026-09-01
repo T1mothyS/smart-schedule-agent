@@ -31,7 +31,7 @@ import { parseAiJson } from "./ai-json.js";
 import { extractWeatherLocationQuery, getDailyWeather, isWeatherQuestion, searchLocations, type WeatherLocation } from './weather-service.js';
 import { createReadableUserExport, createSchedulesCsv } from './export-service.js';
 import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
-import { getDailyReportView, listDailyReportViews, publishDailyReport } from './daily-report-service.js';
+import { getDailyReportView, listDailyReportViews, publishDailyReport, queueDailyReportEmail } from './daily-report-service.js';
 import { deleteUserMailAccount, getUserMailAccountStatus, readUserMail, saveUserMailAccount } from './user-mail-service.js';
 import { createApiRateLimiter, securityHeaders } from './http-security.js';
 import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
@@ -1530,6 +1530,38 @@ app.get('/api/daily-reports/:date', authenticate, (req, res) => {
   const report = getDailyReportView((req as any).user.userId, date);
   if (!report) return res.status(404).json({ error: '该日期的日报不存在' });
   res.json({ report });
+});
+
+app.post('/api/daily-reports/:date/send', authenticate, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const userId = (req as any).user.userId;
+  const date = String(req.params.date || '');
+  if (!isValidDateKey(date)) return res.status(400).json({ error: 'date 必须是有效的 YYYY-MM-DD 日期' });
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({ error: '请确认要重新发送这一天的日报邮件' });
+  }
+  try {
+    const report = queueDailyReportEmail(userId, date, { manual: true });
+    if (!report) return res.status(404).json({ error: '该日期的日报不存在' });
+    addLog('info', 'mail', '日报邮件已请求手动重发', {
+      event: 'daily_report_manual_send_requested',
+      userId,
+      date,
+      notificationId: report.emailNotificationId,
+    });
+    res.status(202).json({
+      date,
+      emailStatus: report.emailStatus,
+      notificationId: report.emailNotificationId,
+    });
+  } catch (error: any) {
+    addLog('error', 'mail', '日报邮件手动重发入队失败', describeErrorData(error, {
+      event: 'daily_report_manual_send_failed',
+      userId,
+      date,
+    }));
+    res.status(503).json({ error: '日报邮件暂时无法排队，请稍后重试' });
+  }
 });
 
 function isValidDateKey(value: string): boolean {

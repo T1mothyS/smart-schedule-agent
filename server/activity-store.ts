@@ -568,7 +568,7 @@ export function createDailyReport(input: {
 
 export function updateDailyReport(id: string, userId: string, markdown: string, contentHash: string, updatedAt = nowIso()): DailyReportRecord | null {
   const changed = run(
-    'UPDATE daily_reports SET markdown = ?, content_hash = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+    'UPDATE daily_reports SET markdown = ?, content_hash = ?, updated_at = ?, email_notification_id = NULL WHERE id = ? AND user_id = ?',
     [markdown, contentHash, updatedAt, id, userId],
   );
   if (!changed) return null;
@@ -577,8 +577,8 @@ export function updateDailyReport(id: string, userId: string, markdown: string, 
 
 export function attachDailyReportNotification(id: string, userId: string, notificationId: string): DailyReportRecord | null {
   const changed = run(
-    'UPDATE daily_reports SET email_notification_id = ?, updated_at = ? WHERE id = ? AND user_id = ?',
-    [notificationId, nowIso(), id, userId],
+    'UPDATE daily_reports SET email_notification_id = ? WHERE id = ? AND user_id = ?',
+    [notificationId, id, userId],
   );
   if (!changed) return null;
   return getDailyReportById(id, userId);

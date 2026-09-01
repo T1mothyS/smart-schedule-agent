@@ -58,7 +58,7 @@ function listen(server: http.Server): Promise<number> {
   });
 }
 
-test('日报 HTTP API 使用令牌发布、账号隔离并支持显式邮件重试', async () => {
+test('日报 HTTP API 使用令牌发布、账号隔离并支持更新后重发与详情手动发送', async () => {
   const server = http.createServer(api.app);
   const port = await listen(server);
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -101,6 +101,15 @@ test('日报 HTTP API 使用令牌发布、账号隔离并支持显式邮件重�
     const otherDetail = await request('/api/daily-reports/2026-08-30', { headers: { Authorization: `Bearer ${otherToken}` } });
     assert.equal(otherDetail.status, 404);
 
+    const manualWhileDisabled = await request('/api/daily-reports/2026-08-30/send', {
+      method: 'POST',
+      ...json(userToken, { confirm: true }),
+    });
+    const manualWhileDisabledPayload = await manualWhileDisabled.json();
+    assert.equal(manualWhileDisabled.status, 202);
+    assert.equal(manualWhileDisabledPayload.emailStatus, 'QUEUED');
+    assert.equal(activity.listNotifications(userId).filter(item => item.kind === 'daily_report').length, 1);
+
     const reminder = db.getReminder(userId)!;
     db.upsertReminder({ ...reminder, report_email_enabled: 1, updated_at: new Date().toISOString() });
     const queued = await request('/api/integrations/daily-report/reports/2026-08-31', {
@@ -118,9 +127,20 @@ test('日报 HTTP API 使用令牌发布、账号隔离并支持显式邮件重�
     const duplicatePayload = await duplicate.json();
     assert.equal(duplicatePayload.reportStatus, 'UNCHANGED');
     assert.equal(duplicatePayload.emailStatus, 'ALREADY_QUEUED');
-    assert.equal(activity.listNotifications(userId).filter(item => item.kind === 'daily_report').length, 1);
+    assert.equal(activity.listNotifications(userId).filter(item => item.kind === 'daily_report').length, 2);
 
-    const notification = activity.listNotifications(userId).find(item => item.kind === 'daily_report')!;
+    const updated = await request('/api/integrations/daily-report/reports/2026-08-31', {
+      method: 'PUT',
+      ...json(reportToken, { markdown: '# 第二版日报\n\n后续修订' }),
+    });
+    const updatedPayload = await updated.json();
+    assert.equal(updated.status, 200);
+    assert.equal(updatedPayload.reportStatus, 'UPDATED');
+    assert.equal(updatedPayload.emailStatus, 'QUEUED');
+    assert.equal(activity.listNotifications(userId).filter(item => item.kind === 'daily_report').length, 3);
+
+    const notification = activity.listNotifications(userId).find(item => item.kind === 'daily_report' && item.sourceId === '2026-08-31' && item.body.includes('后续修订'))!;
+    assert.ok(notification);
     assert.equal(activity.claimNotification(notification.id), true);
     activity.markNotificationFailed(notification.id, 'fake SMTP failure');
     const detailAfterFailure = await request('/api/daily-reports/2026-08-31', { headers: { Authorization: `Bearer ${userToken}` } });
@@ -136,6 +156,28 @@ test('日报 HTTP API 使用令牌发布、账号隔离并支持显式邮件重�
       ...json(userToken, { confirm: true }),
     });
     assert.equal(confirmed.status, 200);
+
+    const otherManual = await request('/api/daily-reports/2026-08-31/send', {
+      method: 'POST',
+      ...json(otherToken, { confirm: true }),
+    });
+    assert.equal(otherManual.status, 404);
+
+    const manualWithoutConfirmation = await request('/api/daily-reports/2026-08-31/send', {
+      method: 'POST',
+      ...json(userToken, {}),
+    });
+    assert.equal(manualWithoutConfirmation.status, 400);
+
+    const manual = await request('/api/daily-reports/2026-08-31/send', {
+      method: 'POST',
+      ...json(userToken, { confirm: true }),
+    });
+    const manualPayload = await manual.json();
+    assert.equal(manual.status, 202);
+    assert.equal(manualPayload.emailStatus, 'QUEUED');
+    assert.equal(activity.listNotifications(userId).filter(item => item.kind === 'daily_report').length, 4);
+    assert.equal(activity.listNotifications(userId)[0].id, manualPayload.notificationId);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }

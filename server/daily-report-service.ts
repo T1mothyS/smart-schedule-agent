@@ -66,6 +66,38 @@ function publishEmailStatus(status: DailyReportEmailStatus, created: boolean): D
   return status;
 }
 
+interface QueuedDailyReportEmail {
+  record: activityStore.DailyReportRecord;
+  notification: activityStore.NotificationDelivery;
+  created: boolean;
+}
+
+function enqueueDailyReportEmail(record: activityStore.DailyReportRecord, dedupeKey: string): QueuedDailyReportEmail {
+  const queued = enqueueUserEmailNotificationDetailed({
+    userId: record.userId,
+    sourceType: DAILY_REPORT_SOURCE_TYPE,
+    sourceId: record.reportDate,
+    kind: DAILY_REPORT_KIND,
+    title: `个人情报日报 · ${record.reportDate}`,
+    // 保存正文快照，避免用户随后更新网页版本时改变已经入队的邮件内容。
+    body: record.markdown,
+    dedupeKey,
+    maxAttempts: 1,
+  });
+  const attachedRecord = activityStore.attachDailyReportNotification(record.id, record.userId, queued.notification.id) || record;
+  return { record: attachedRecord, notification: queued.notification, created: queued.created };
+}
+
+export function queueDailyReportEmail(userId: string, reportDate: string, options: { manual?: boolean } = {}): DailyReportView | null {
+  const record = activityStore.getDailyReport(userId, reportDate);
+  if (!record) return null;
+  const dedupeKey = options.manual
+    ? `daily-report:${userId}:${reportDate}:manual:${crypto.randomUUID()}:email`
+    : `daily-report:${userId}:${reportDate}:content:${record.contentHash}:email`;
+  const queued = enqueueDailyReportEmail(record, dedupeKey);
+  return toDailyReportView(queued.record);
+}
+
 function excerpt(markdown: string): string {
   return markdown
     .replace(/```[\s\S]*?```/g, ' ')
@@ -120,25 +152,13 @@ export function publishDailyReport(userId: string, reportDate: string, markdown:
 
   let currentEmailStatus = emailStatus(record);
   let queuedNotificationCreated = false;
-  if (reportStatus === 'CREATED' && db.getReminder(userId)?.report_email_enabled === 1) {
-    const queued = enqueueUserEmailNotificationDetailed({
-      userId,
-      sourceType: DAILY_REPORT_SOURCE_TYPE,
-      sourceId: reportDate,
-      kind: DAILY_REPORT_KIND,
-      title: `个人情报日报 · ${reportDate}`,
-      // 保存正文快照，避免用户随后更新网页版本时改变已经入队的邮件内容。
-      body: markdown,
-      dedupeKey: `daily-report:${userId}:${reportDate}:email`,
-      maxAttempts: 1,
-    });
-    if (!record.emailNotificationId) {
-      record = activityStore.attachDailyReportNotification(record.id, userId, queued.notification.id) || record;
-    }
+  if ((reportStatus === 'CREATED' || reportStatus === 'UPDATED') && db.getReminder(userId)?.report_email_enabled === 1) {
+    const queued = enqueueDailyReportEmail(record, `daily-report:${userId}:${reportDate}:content:${contentHash}:email`);
+    record = queued.record;
     queuedNotificationCreated = queued.created;
     currentEmailStatus = queued.created ? 'QUEUED' : emailStatus(record);
-  } else if (reportStatus === 'CREATED') {
-    currentEmailStatus = 'DISABLED';
+  } else if (reportStatus === 'CREATED' || reportStatus === 'UPDATED') {
+    currentEmailStatus = emailStatus(record);
   }
 
   addLog('info', 'mail', '日报发布状态已记录', {

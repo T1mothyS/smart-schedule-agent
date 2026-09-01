@@ -124,9 +124,28 @@ test('V2 Publisher → AI Calendar → 假 SMTP 形成一次隔离端到端链�
     assert.doesNotMatch(String(sentMessages[0].html), /javascript:/i);
     assert.match(String(sentMessages[0].html), /&lt;script&gt;/);
 
+    const updatedMarkdown = `${markdown}\n\n后续修订版本`;
+    const updatedResponse = await fetch(`http://127.0.0.1:${port}/api/integrations/daily-report/reports/${reportDate}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ markdown: updatedMarkdown }),
+    });
+    const updatedPayload = await updatedResponse.json();
+    assert.equal(updatedResponse.status, 200);
+    assert.equal(updatedPayload.reportStatus, 'UPDATED');
+    assert.equal(updatedPayload.emailStatus, 'QUEUED');
+    const updatedQueue = activity.listNotifications(userId).filter(item => item.kind === 'daily_report');
+    assert.equal(updatedQueue.length, 2);
+    assert.equal(updatedQueue[0].body, updatedMarkdown);
+
+    const updateCycle = await notification.processNotificationQueue();
+    assert.equal(updateCycle.sent, 1);
+    assert.equal(sentMessages.length, 2);
+    assert.match(String(sentMessages[1].html), /后续修订版本/);
+
     const secondCycle = await notification.processNotificationQueue();
     assert.equal(secondCycle.scanned, 0);
-    assert.equal(sentMessages.length, 1);
+    assert.equal(sentMessages.length, 2);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }

@@ -189,6 +189,7 @@ export function DailyReportReaderPage() {
   const [report, setReport] = useState<DailyReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sendingEmail, setSendingEmail] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -211,13 +212,52 @@ export function DailyReportReaderPage() {
 
   const isNewsletter = report?.html.includes('daily-newsletter') === true;
 
+  const sendEmail = async () => {
+    if (!date || !report || sendingEmail) return;
+    if (!window.confirm(`将把 ${formatReportDate(date)} 的当前日报重新发送到已配置的收件邮箱，是否继续？`)) return;
+    setSendingEmail(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/daily-reports/${encodeURIComponent(date)}/send`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: true }),
+      });
+      if (!response.ok) throw await readError(response, '日报邮件发送失败');
+      await load();
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : '日报邮件发送失败');
+    } finally {
+      setSendingEmail(false);
+    }
+  };
+
   return (
     <main className="daily-report-reader-page">
       <div className="daily-report-reader-toolbar">
-        <button type="button" className="daily-report-back" onClick={() => navigate('/reports')} aria-label="返回日报列表">
-          <ArrowLeft size={16} aria-hidden="true" />
-          <span>返回日报</span>
-        </button>
+        <div className="daily-report-reader-toolbar-row">
+          <button type="button" className="daily-report-back" onClick={() => navigate('/reports')} aria-label="返回日报列表">
+            <ArrowLeft size={16} aria-hidden="true" />
+            <span>返回日报</span>
+          </button>
+          {report && (
+            <div className="daily-report-reader-toolbar-actions">
+              <span className={`daily-report-email-status ${report.emailStatus.toLowerCase()}`}>
+                <Mail size={13} /> {emailStatusLabel[report.emailStatus]}
+              </span>
+              <button
+                type="button"
+                className="daily-report-send-button"
+                onClick={() => void sendEmail()}
+                disabled={sendingEmail}
+                aria-label={`手动发送 ${formatReportDate(report.date)} 日报邮件`}
+              >
+                <Mail size={14} />
+                {sendingEmail ? '正在排队…' : report.emailStatus === 'SENT' ? '重新发送邮件' : '发送日报邮件'}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {loading ? (

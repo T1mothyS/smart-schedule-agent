@@ -1916,7 +1916,8 @@ t-chat-sender::part(send-btn):disabled,
 .daily-reports-header p { margin: 0; color: var(--td-text-color-secondary); font-size: 13px; }
 .daily-report-toolbar-button,
 .daily-report-back,
-.daily-report-retry-button {
+.daily-report-retry-button,
+.daily-report-send-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1933,9 +1934,11 @@ t-chat-sender::part(send-btn):disabled,
 }
 .daily-report-toolbar-button:hover,
 .daily-report-back:hover,
-.daily-report-retry-button:hover { color: var(--td-brand-color); border-color: var(--td-brand-color); background: var(--td-brand-color-light); }
+.daily-report-retry-button:hover,
+.daily-report-send-button:hover { color: var(--td-brand-color); border-color: var(--td-brand-color); background: var(--td-brand-color-light); }
 .daily-report-toolbar-button:disabled,
-.daily-report-retry-button:disabled { opacity: .55; cursor: wait; }
+.daily-report-retry-button:disabled,
+.daily-report-send-button:disabled { opacity: .55; cursor: wait; }
 .daily-report-notice {
   max-width: 1180px;
   margin: -6px auto 18px;
@@ -2027,7 +2030,10 @@ t-chat-sender::part(send-btn):disabled,
 .daily-report-state strong { color: var(--td-text-color-primary); font-size: 16px; }
 .daily-report-reader-page { width: 100%; height: 100%; min-width: 0; overflow-x: hidden; overflow-y: auto; background: rgb(var(--color-background)); color: var(--td-text-color-primary); }
 .daily-report-reader-toolbar { position: sticky; top: 0; z-index: 5; width: min(100%, 980px); min-width: 0; margin: 0 auto; padding: 12px clamp(14px, 4vw, 32px); background: color-mix(in srgb, var(--td-bg-color-page) 92%, transparent); border-bottom: 1px solid color-mix(in srgb, var(--td-component-stroke) 76%, transparent); backdrop-filter: blur(12px); }
+.daily-report-reader-toolbar-row { min-width: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; }
+.daily-report-reader-toolbar-actions { min-width: 0; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 12px; }
 .daily-report-back { min-height: 36px; margin: 0; border: 0; background: transparent; padding-inline: 0; }
+.daily-report-send-button { min-height: 34px; color: var(--td-brand-color); border-color: color-mix(in srgb, var(--td-brand-color) 36%, var(--td-component-stroke)); background: var(--td-brand-color-light); }
 .daily-report-reader-content { width: 100%; max-width: 980px; min-width: 0; margin: 0 auto; padding: 0 clamp(14px, 4vw, 32px) 48px; }
 .daily-report-reader-content.is-newsletter { padding-inline: 0; }
 .daily-report-reader-content.is-legacy { padding-inline: clamp(14px, 4vw, 32px); }

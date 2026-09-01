@@ -138,7 +138,7 @@ test('日报隐藏已移除的工具章节，并放大为什么问题标题', ()
   assert.equal((html.match(/id="section-/g) || []).length, 3);
 });
 
-test('日报发布按账号和日期幂等，更新正文但不重复发信', () => {
+test('日报发布按账号和内容版本幂等，更新正文会重新发信', () => {
   const firstMarkdown = '# 2026-08-30\n\n第一版日报';
   const first = reports.publishDailyReport(userId, '2026-08-30', firstMarkdown);
   assert.equal(first.reportStatus, 'CREATED');
@@ -158,11 +158,20 @@ test('日报发布按账号和日期幂等，更新正文但不重复发信', ()
   const updatedMarkdown = '# 2026-08-30\n\n修订版日报';
   const updated = reports.publishDailyReport(userId, '2026-08-30', updatedMarkdown);
   assert.equal(updated.reportStatus, 'UPDATED');
-  assert.equal(updated.emailStatus, 'ALREADY_QUEUED');
-  assert.equal(activity.listNotifications(userId).length, 1);
-  assert.equal(activity.listNotifications(userId)[0].body, firstMarkdown);
+  assert.equal(updated.emailStatus, 'QUEUED');
+  const updatedNotification = activity.listNotifications(userId)[0];
+  assert.ok(updatedNotification);
+  assert.notEqual(updatedNotification.id, firstNotification.id);
+  assert.equal(updatedNotification.body, updatedMarkdown);
+  assert.equal(updated.report.emailNotificationId, updatedNotification.id);
+  assert.equal(activity.listNotifications(userId).length, 2);
   assert.equal(reports.getDailyReportView(userId, '2026-08-30')?.markdown, updatedMarkdown);
   assert.equal(reports.getDailyReportView(otherUserId, '2026-08-30'), null);
+
+  const updatedDuplicate = reports.publishDailyReport(userId, '2026-08-30', updatedMarkdown);
+  assert.equal(updatedDuplicate.reportStatus, 'UNCHANGED');
+  assert.equal(updatedDuplicate.emailStatus, 'ALREADY_QUEUED');
+  assert.equal(activity.listNotifications(userId).length, 2);
 });
 
 test('日报邮件失败后不自动重试，但允许显式手动重试', () => {
@@ -179,6 +188,15 @@ test('日报邮件失败后不自动重试，但允许显式手动重试', () =>
   const retried = activity.retryNotification(notification.id, userId);
   assert.equal(retried?.status, 'pending');
   assert.equal(reports.getDailyReportView(userId, '2026-08-30')?.emailStatus, 'QUEUED');
+});
+
+test('日报支持在详情中手动重新发送当前正文', () => {
+  const manuallyQueued = reports.queueDailyReportEmail(userId, '2026-08-30', { manual: true });
+  assert.ok(manuallyQueued);
+  assert.equal(manuallyQueued.emailStatus, 'QUEUED');
+  assert.equal(manuallyQueued.emailNotificationId, activity.listNotifications(userId)[0].id);
+  assert.equal(activity.listNotifications(userId).length, 3);
+  assert.equal(activity.listNotifications(userId)[0].body, '# 2026-08-30\n\n修订版日报');
 });
 
 test('日报包含在活动导出、删除和恢复链路中', () => {

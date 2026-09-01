@@ -22,6 +22,7 @@ const rules: RateRule[] = [
   { name: 'weather', limit: 60, windowMs: 60_000, matches: req => req.method === 'GET' && req.path.startsWith('/api/weather/') },
   { name: 'daily-report-token', limit: 20, windowMs: 60 * 60_000, matches: req => ['POST', 'DELETE'].includes(req.method) && req.path === '/api/integrations/daily-report-token' },
   { name: 'daily-report', limit: 120, windowMs: 60_000, matches: req => ['/api/integrations/daily-report/agenda', '/api/integrations/daily-report/mail', '/api/integrations/daily-report/reports'].includes(req.path) || req.path.startsWith('/api/integrations/daily-report/reports/') },
+  { name: 'daily-report-manual-send', limit: 5, windowMs: 60 * 60_000, matches: req => req.method === 'POST' && /^\/api\/daily-reports\/\d{4}-\d{2}-\d{2}\/send$/.test(req.path) },
   { name: 'user-mail-account', limit: 20, windowMs: 60 * 60_000, matches: req => req.path.startsWith('/api/user-mail-account') },
 ];
 
@@ -84,7 +85,7 @@ export function securityHeaders(isProduction: boolean): RequestHandler {
         "object-src 'none'",
         "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob:",
+        "img-src 'self' data: blob: https:",
         "font-src 'self' data:",
         "connect-src 'self'",
       ].join('; '));
