@@ -1,6 +1,6 @@
 import { KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CalendarClock, CheckCircle2, ChevronDown, Edit3, Mail, MoreHorizontal, Paperclip, RefreshCw, Trash2, X } from 'lucide-react';
+import { CalendarClock, CheckCircle2, ChevronDown, Edit3, Mail, MoreVertical, Paperclip, RefreshCw, Trash2, X } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { Schedule, ScheduleDetailModal, ScheduleFormModal } from './CalendarView';
 import { useNavigate } from 'react-router-dom';
@@ -82,6 +82,7 @@ function ActionItemMenu({ item, open, onToggle, onAction }: {
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const firstItemRef = useRef<HTMLButtonElement>(null);
+  const wasOpenRef = useRef(false);
   const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
   const [menuReady, setMenuReady] = useState(false);
   const entries: Array<{ action: ActionMenuAction; label: string; icon?: typeof Edit3; danger?: boolean }> = [
@@ -95,56 +96,82 @@ function ActionItemMenu({ item, open, onToggle, onAction }: {
     { action: 'delete', label: '删除', icon: Trash2, danger: true },
   ];
 
-  useLayoutEffect(() => {
-    if (!open) {
-      setMenuReady(false);
-      return;
-    }
+  const positionMenu = useCallback(() => {
     const trigger = triggerRef.current;
     const menu = menuRef.current;
     if (!trigger || !menu) return;
 
     const triggerRect = trigger.getBoundingClientRect();
     const menuRect = menu.getBoundingClientRect();
+    const viewportWidth = window.visualViewport?.width || window.innerWidth;
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+    const margin = 8;
     const gap = 6;
-    const left = Math.max(8, Math.min(
-      triggerRect.right - menuRect.width,
-      window.innerWidth - menuRect.width - 8,
-    ));
+    const maxLeft = Math.max(margin, viewportWidth - menuRect.width - margin);
+    const left = Math.max(margin, Math.min(triggerRect.right - menuRect.width, maxLeft));
     const belowTop = triggerRect.bottom + gap;
-    const top = belowTop + menuRect.height <= window.innerHeight - 8
-      ? belowTop
-      : Math.max(8, triggerRect.top - menuRect.height - gap);
+    const aboveTop = triggerRect.top - menuRect.height - gap;
+    const belowFits = belowTop + menuRect.height <= viewportHeight - margin;
+    const aboveFits = aboveTop >= margin;
+    const preferredTop = belowFits || !aboveFits ? belowTop : aboveTop;
+    const maxTop = Math.max(margin, viewportHeight - menuRect.height - margin);
+    const top = Math.max(margin, Math.min(preferredTop, maxTop));
 
     setMenuPosition({ left, top });
     setMenuReady(true);
-  }, [entries.length, open]);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuReady(false);
+      return;
+    }
+    positionMenu();
+  }, [entries.length, open, positionMenu]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      if (wasOpenRef.current) {
+        wasOpenRef.current = false;
+        triggerRef.current?.focus({ preventScroll: true });
+      }
+      return;
+    }
+    wasOpenRef.current = true;
     firstItemRef.current?.focus({ preventScroll: true });
     const scrollGuardUntil = Date.now() + 250;
     const closeOnOutside = (event: PointerEvent) => {
       const target = event.target as Node;
       if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) onToggle();
     };
-    const closeOnUserScroll = () => {
+    const closeOnUserScroll = (event: Event) => {
+      const target = event.target as Node | null;
+      if (target && menuRef.current?.contains(target)) return;
       if (Date.now() >= scrollGuardUntil) onToggle();
     };
+    const reposition = () => positionMenu();
     const closeOnKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === 'Escape') onToggle();
     };
     document.addEventListener('pointerdown', closeOnOutside);
+    window.addEventListener('scroll', closeOnUserScroll, { capture: true, passive: true });
     window.addEventListener('wheel', closeOnUserScroll, { capture: true, passive: true });
     window.addEventListener('touchmove', closeOnUserScroll, { capture: true, passive: true });
+    window.addEventListener('resize', reposition);
+    window.addEventListener('orientationchange', reposition);
+    window.visualViewport?.addEventListener('resize', reposition);
     document.addEventListener('keydown', closeOnKey);
     return () => {
       document.removeEventListener('pointerdown', closeOnOutside);
+      window.removeEventListener('scroll', closeOnUserScroll, true);
       window.removeEventListener('wheel', closeOnUserScroll, true);
       window.removeEventListener('touchmove', closeOnUserScroll, true);
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('orientationchange', reposition);
+      window.visualViewport?.removeEventListener('resize', reposition);
       document.removeEventListener('keydown', closeOnKey);
     };
-  }, [onToggle, open]);
+  }, [onToggle, open, positionMenu]);
 
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     event.stopPropagation();
@@ -177,16 +204,19 @@ function ActionItemMenu({ item, open, onToggle, onAction }: {
         type="button"
         className="icon-button action-menu-trigger"
         aria-label={`打开 ${item.title} 的更多操作`}
+        title="更多设置"
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={event => { event.stopPropagation(); onToggle(); }}
-      ><MoreHorizontal size={17} /></button>
+      ><MoreVertical size={19} aria-hidden="true" /></button>
     </div>
     {open && typeof document !== 'undefined' && createPortal(
       <div
         ref={menuRef}
         className="action-menu-popover"
         role="menu"
+        aria-label={`${item.title} 的更多设置`}
+        aria-orientation="vertical"
         style={{ left: menuPosition.left, top: menuPosition.top, visibility: menuReady ? 'visible' : 'hidden' }}
         onPointerDown={event => event.stopPropagation()}
         onClick={event => event.stopPropagation()}
@@ -233,6 +263,7 @@ function ActionList({ title, hint, items, tone, menuScope, headerControl, onComp
         className={item.sourceType === 'schedule' ? 'action-row editable' : 'action-row'}
         onClick={() => item.sourceType === 'schedule' && onEdit(item)}
         onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
+          if (event.target !== event.currentTarget) return;
           if (item.sourceType === 'schedule' && (event.key === 'Enter' || event.key === ' ')) {
             event.preventDefault();
             onEdit(item);
@@ -248,9 +279,15 @@ function ActionList({ title, hint, items, tone, menuScope, headerControl, onComp
           <button
             type="button"
             className="complete-button"
+            aria-label={`${completingId === item.id ? '正在完成' : '完成'}：${item.title}`}
+            title={completingId === item.id ? '完成中' : '完成'}
             onClick={event => { event.stopPropagation(); onComplete(item); }}
+            onKeyDown={event => event.stopPropagation()}
             disabled={completingId === item.id}
-          ><CheckCircle2 size={15} /> {completingId === item.id ? '完成中…' : '完成'}</button>
+          >
+            {completingId === item.id ? <RefreshCw size={17} className="spin" aria-hidden="true" /> : <CheckCircle2 size={17} aria-hidden="true" />}
+            <span className="complete-button-label">{completingId === item.id ? '完成中…' : '完成'}</span>
+          </button>
           <ActionItemMenu item={item} open={openMenuId === menuId} onToggle={() => setOpenMenuId(openMenuId === menuId ? null : menuId)} onAction={action => { setOpenMenuId(null); onMenuAction(item, action); }} />
         </div>
       </article>;
@@ -284,6 +321,7 @@ function SuspendedTodoSection({ items, onComplete, onEdit, onMenuAction, openMen
         className="action-row suspended-todo-row editable"
         onClick={() => onEdit(item)}
         onKeyDown={(event: KeyboardEvent<HTMLElement>) => {
+          if (event.target !== event.currentTarget) return;
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
             onEdit(item);
@@ -296,7 +334,18 @@ function SuspendedTodoSection({ items, onComplete, onEdit, onMenuAction, openMen
         <div className={'priority-dot ' + item.priority} />
         <div className="action-row-main"><div className="action-row-title">{item.title}</div><div className="action-row-meta"><span>无固定期限待办</span>{item.nextAction && <span>{item.nextAction}</span>}</div></div>
         <div className="suspended-todo-actions">
-          <button className="complete-button" type="button" onClick={event => { event.stopPropagation(); onComplete(item); }} disabled={completingId === item.id}><CheckCircle2 size={15} /> {completingId === item.id ? '完成中…' : '完成'}</button>
+          <button
+            className="complete-button"
+            type="button"
+            aria-label={`${completingId === item.id ? '正在完成' : '完成'}：${item.title}`}
+            title={completingId === item.id ? '完成中' : '完成'}
+            onClick={event => { event.stopPropagation(); onComplete(item); }}
+            onKeyDown={event => event.stopPropagation()}
+            disabled={completingId === item.id}
+          >
+            {completingId === item.id ? <RefreshCw size={17} className="spin" aria-hidden="true" /> : <CheckCircle2 size={17} aria-hidden="true" />}
+            <span className="complete-button-label">{completingId === item.id ? '完成中…' : '完成'}</span>
+          </button>
           <ActionItemMenu item={item} open={openMenuId === menuId} onToggle={() => setOpenMenuId(openMenuId === menuId ? null : menuId)} onAction={action => { setOpenMenuId(null); onMenuAction(item, action); }} />
         </div>
       </article>;

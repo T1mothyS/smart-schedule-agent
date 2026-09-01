@@ -14,7 +14,7 @@ import { ReminderPage } from './components/ReminderPage';
 import { AppShell } from './components/AppShell';
 import { ActionCenterPage } from './components/ActionCenterPage';
 import { AiImportPage } from './components/AiImportPage';
-import { DailyReportsPage } from './components/DailyReportsPage';
+import { DailyReportReaderPage, DailyReportsPage } from './components/DailyReportsPage';
 import { MiniMonthCalendar } from './components/calendar/MiniMonthCalendar';
 import { SCHEDULE_CATEGORIES } from './utils/scheduleCategories';
 import { APP_CONFIG } from './config';
@@ -223,7 +223,7 @@ function App() {
           <Route path="/reminders" element={<AppContent />} />
           <Route path="/import" element={<AppContent />} />
           <Route path="/reports" element={<AppContent />} />
-          <Route path="/reports/:date" element={<AppContent />} />
+          <Route path="/reports/:date" element={<DailyReportReaderPage />} />
           <Route path="*" element={<Navigate to="/today" replace />} />
         </>
       )}
