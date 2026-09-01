@@ -9,6 +9,7 @@ import * as scheduleStore from './schedule-store.js';
 import * as reminderStore from './reminder-store.js';
 import * as activityStore from './activity-store.js';
 import * as attachmentService from './attachment-service.js';
+import { dailyReportMediaRoot } from './daily-report-media-service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,6 +41,7 @@ interface SystemBackupPayload {
   exportedAt: string;
   databases: Record<string, string>;
   files: Array<{ relativePath: string; base64: string }>;
+  dailyReportMedia?: Array<{ relativePath: string; base64: string }>;
 }
 
 function remapForeignUserPayload(source: UserBackupPayload): UserBackupPayload {
@@ -297,6 +299,7 @@ export function createSystemSnapshot(uploadToOss = true): { filename: string; pa
       'activity.db': activityStore.exportActivityDb().toString('base64'),
     },
     files: collectFiles(attachmentService.attachmentsRoot()),
+    dailyReportMedia: collectFiles(dailyReportMediaRoot()),
   };
   const encrypted = encryptBackup(payload, password);
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -417,8 +420,17 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
   if (!attachmentRoot.startsWith(resolvedDataDir + path.sep)) throw new Error('附件目录不在数据目录内，拒绝恢复');
   const attachmentTemp = path.join(resolvedDataDir, `.attachments.restore-${transactionId}`);
   const attachmentPrevious = path.join(resolvedDataDir, `.attachments.pre-restore-${transactionId}`);
+  const reportMediaRoot = path.resolve(dailyReportMediaRoot());
+  if (!reportMediaRoot.startsWith(resolvedDataDir + path.sep)) throw new Error('日报图片目录不在数据目录内，拒绝恢复');
+  const reportMediaTemp = path.join(resolvedDataDir, `.daily-report-media.restore-${transactionId}`);
+  const reportMediaPrevious = path.join(resolvedDataDir, `.daily-report-media.pre-restore-${transactionId}`);
+  const mediaFiles = payload.dailyReportMedia;
+  if (mediaFiles !== undefined && !Array.isArray(mediaFiles)) throw new Error('系统备份日报图片清单不正确');
+  const shouldRestoreMedia = mediaFiles !== undefined;
   let attachmentBackedUp = false;
   let attachmentActivated = false;
+  let reportMediaBackedUp = false;
+  let reportMediaActivated = false;
   let committed = false;
 
   try {
@@ -438,6 +450,22 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
       fs.mkdirSync(path.dirname(target), { recursive: true });
       fs.writeFileSync(target, Buffer.from(file.base64, 'base64'), { flag: 'wx' });
     }
+    if (shouldRestoreMedia) {
+      fs.mkdirSync(reportMediaTemp, { recursive: false });
+      const mediaPaths = new Set<string>();
+      for (const file of mediaFiles || []) {
+        if (!file || typeof file.relativePath !== 'string' || typeof file.base64 !== 'string') {
+          throw new Error('系统备份日报图片记录不正确');
+        }
+        const target = path.resolve(reportMediaTemp, file.relativePath);
+        if (!target.startsWith(path.resolve(reportMediaTemp) + path.sep) || mediaPaths.has(target)) {
+          throw new Error('系统备份包含不安全或重复的日报图片路径');
+        }
+        mediaPaths.add(target);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, Buffer.from(file.base64, 'base64'), { flag: 'wx' });
+      }
+    }
 
     // 所有输入完整暂存后，先生成当前状态的恢复点，再开始跨库切换。
     createSystemSnapshot(false);
@@ -451,12 +479,20 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
       fs.renameSync(attachmentRoot, attachmentPrevious);
       attachmentBackedUp = true;
     }
+    if (shouldRestoreMedia && fs.existsSync(reportMediaRoot)) {
+      fs.renameSync(reportMediaRoot, reportMediaPrevious);
+      reportMediaBackedUp = true;
+    }
     for (const file of databaseFiles) {
       fs.renameSync(file.temp, file.target);
       file.activated = true;
     }
     fs.renameSync(attachmentTemp, attachmentRoot);
     attachmentActivated = true;
+    if (shouldRestoreMedia) {
+      fs.renameSync(reportMediaTemp, reportMediaRoot);
+      reportMediaActivated = true;
+    }
     committed = true;
   } catch (error) {
     if (!committed) {
@@ -472,6 +508,12 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
       }
       if (attachmentBackedUp && fs.existsSync(attachmentPrevious)) {
         attemptRollback('恢复旧附件目录', () => fs.renameSync(attachmentPrevious, attachmentRoot));
+      }
+      if (reportMediaActivated && fs.existsSync(reportMediaRoot)) {
+        attemptRollback('删除新日报图片目录', () => fs.rmSync(reportMediaRoot, { recursive: true, force: true }));
+      }
+      if (reportMediaBackedUp && fs.existsSync(reportMediaPrevious)) {
+        attemptRollback('恢复旧日报图片目录', () => fs.renameSync(reportMediaPrevious, reportMediaRoot));
       }
       for (const file of [...databaseFiles].reverse()) {
         if (file.activated && fs.existsSync(file.target)) {
@@ -498,6 +540,10 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
       try { fs.rmSync(attachmentTemp, { recursive: true, force: true }); }
       catch (error) { console.warn('[Backup] 无法清理暂存附件目录:', error); }
     }
+    if (fs.existsSync(reportMediaTemp)) {
+      try { fs.rmSync(reportMediaTemp, { recursive: true, force: true }); }
+      catch (error) { console.warn('[Backup] 无法清理日报图片暂存目录:', error); }
+    }
   }
 
   // 切换已经完整提交；旧文件只作为清理对象，清理失败不再反向破坏新的一致状态。
@@ -510,6 +556,10 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
   if (fs.existsSync(attachmentPrevious)) {
     try { fs.rmSync(attachmentPrevious, { recursive: true, force: true }); }
     catch (error) { console.warn('[Backup] 无法清理旧附件目录:', error); }
+  }
+  if (fs.existsSync(reportMediaPrevious)) {
+    try { fs.rmSync(reportMediaPrevious, { recursive: true, force: true }); }
+    catch (error) { console.warn('[Backup] 无法清理旧日报图片目录:', error); }
   }
 }
 

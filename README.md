@@ -17,7 +17,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - AI 可从自然语言或截图生成待确认草稿；确认前不会写入正式数据。
 - AI 助手支持普通问答；配置常驻城市/区县后，可查询 Open-Meteo 实时与未来天气。
 - 每日邮件摘要包含天气、进度、分类日程和完整明细，不与单项提醒混用。
-- 日报页面按日期保存当前账号的个人情报日报；新版 `daily-digest.v1` 内容由固定 Newsletter 模板渲染，支持 RSS 图片、媒体来源图标、中文涨跌颜色、明确外链和真实邮件待办，旧日报继续使用受限 Markdown 兼容路径，并严格按账号隔离。
+- 日报页面按日期保存当前账号的个人情报日报；新版 `daily-digest.v1` 内容由固定 Newsletter 模板渲染，发布时服务端会下载、校验并保存 RSS 新闻图片，网页和邮件只引用本站托管的哈希图片 URL，来源标识使用不依赖外站的文字标记；旧日报继续使用受限 Markdown 兼容路径，并严格按账号隔离。
 - 日报由外部 V2 程序在 Validator 通过后通过专用接口发布；“日报邮件”是独立于每日摘要的设置，首次发布和后续内容更新都会为新的内容版本入队，同一内容版本保持幂等；每一天的日报详情都支持手动重新发送。
 - 每日摘要按账号保存的时、分和时区入队；同一配置时间的重复扫描保持幂等，修改当天提醒时间后允许再次触发，不与单项提醒混用。
 - 高优先级、未完成且有明确开始时间的事件/待办，在开始前 15 分钟内发送固定邮件提醒；它不受邮件开关、免打扰和日报开关影响。
@@ -37,10 +37,10 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 ### 1.1 版本与邮件链路
 
-- 当前版本：`0.7.0-260901.2141`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
+- 当前版本：`0.8.0-260901.2254`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
 - 每日摘要邮件链路：账号提醒设置 → 每日摘要调度器 → 持久化通知队列 → 固定发件邮箱；按账号、时区、日期和配置时间组成触发键幂等。
 - 高优先级邮件链路：高优先级事件/待办 → 开始前 1–15 分钟调度器 → 持久化通知队列 → 固定发件邮箱；不依赖每日提醒或邮件开关。
-- V2 日报链路：Validator 通过 → `PUT /api/integrations/daily-report/reports/:date` → 账号日报记录 → 新内容版本进入日报邮件通知队列 → 固定发件邮箱；同一内容版本只自动入队一次，失败后不会自动重试；详情页可对当前正文手动重新发送。
+- V2 日报链路：Validator 通过 → `PUT /api/integrations/daily-report/reports/:date` → 服务端下载并校验 `daily-digest.v1` 图片 → 账号日报记录 → 新内容版本进入日报邮件通知队列 → 固定发件邮箱；同一内容版本只自动入队一次，失败后不会自动重试；单张上游图片失败时保留文字日报并移除该外链图片，详情页可对当前正文手动重新发送。
 - 每日摘要不再按账号和自然日全局去重；同一配置时间的重复扫描仍按触发键幂等，修改当天提醒时间后可以再次生成邮件。
 - 邮件只有在 Nodemailer 返回至少一个 `accepted` 且没有 `rejected/pending` 时才标记为 `sent`；这表示 SMTP 已接受，不等同于收件箱最终到达。
 - 浏览器提前提醒仍可单独使用，不替代高优先级固定邮件。
@@ -57,7 +57,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 | 部署 | 阿里云服务器、PM2、Nginx、HTTPS |
 | 离机备份 | 本机加密快照，可选阿里云 OSS 私有 Bucket |
 
-开发模式下，Vite 前端运行在 `http://localhost:5173`，后端运行在 `http://localhost:3000`，`/api` 请求由 Vite 代理到后端。
+开发模式下，Vite 前端运行在 `http://localhost:5173`，后端运行在 `http://localhost:3000`，`/api` 和 `/daily-report-media` 请求由 Vite 代理到后端。
 
 ## 3. Windows 本地启动
 
@@ -266,7 +266,7 @@ cp .env.example .env
 | --- | --- | --- |
 | `PORT` | 否 | 后端监听端口，默认 `3000` |
 | `APP_TIMEZONE` | 建议 | 业务时区，当前建议 `Asia/Shanghai` |
-| `APP_URL` | 是 | 邮件按钮跳转地址；生产环境填写 HTTPS 域名，例如 `https://example.com/today` |
+| `APP_URL` | 是 | 邮件按钮跳转地址和邮件图片的公开站点地址；生产环境填写 HTTPS 域名，例如 `https://example.com/today` |
 | `APP_ENV` | 是 | 本地为 `development`，服务器为 `production`；避免 Vite 读取 `NODE_ENV` 产生构建警告 |
 | `TRUST_PROXY_HOPS` | 反向代理时必需 | Nginx 直接代理到 Node 时通常为 `1`；本地直连保持 `0` |
 | `BACKGROUND_JOBS_ENABLED` | 是 | 默认 `false`；本地实际验收提醒时临时设为 `true`，生产环境只允许唯一 worker 开启，额外实例保持 `false` 防止重复发信 |
@@ -366,8 +366,9 @@ cp .env.example .env
 | `server/reminder-calendar-sync.ts` | 将周期任务同步为日历全天待办，并维护完成、下一周期和删除联动 |
 | `server/action-center.ts` | 聚合日程、待办和周期事务，计算“下一步”和行动中心分组 |
 | `server/activity-store.ts` | `activity.db` 的完成记录、附件元数据、通知队列、偏好和 AI 草稿访问层 |
-| `server/daily-report-service.ts` | 日报发布幂等、内容哈希、账号隔离、邮件状态和安全渲染视图 |
-| `server/daily-digest-template.ts` | 解析 `daily-digest.v1` 内容并以 Header、媒体来源图标、AtAGlance、LeadStory、DigestItem、Section、Footer 等稳定组件渲染网页、邮件和纯文本 |
+| `server/daily-report-service.ts` | 日报发布幂等、图片本地化、内容哈希、账号隔离、邮件状态和安全渲染视图 |
+| `server/daily-report-media-service.ts` | 日报图片的公开地址校验、下载超时、大小/类型/文件签名验证、哈希落盘和 Markdown URL 替换 |
+| `server/daily-digest-template.ts` | 解析 `daily-digest.v1` 内容并以 Header、本站媒体、文字来源标记、AtAGlance、LeadStory、DigestItem、Section、Footer 等稳定组件渲染网页、邮件和纯文本 |
 | `server/markdown-renderer.ts` | 新版日报路由到固定 Newsletter 模板，旧日报回退到受限 Markdown 渲染器；两条路径都转义 HTML 并过滤危险链接 |
 | `server/user-mail-service.ts` | 用户 QQ 邮箱授权码加密保存、只读 IMAP 摘要读取和脱敏状态 |
 | `server/notification-service.ts` | 持久化通知调度、免打扰、幂等去重、失败重试和发送状态 |
@@ -405,6 +406,7 @@ cp .env.example .env
 | `data/activity.db` | 统一完成记录、附件元数据、日报记录、通知、偏好和 AI 导入草稿 |
 | `data/application.log` | 最近的脱敏结构化运行日志；达到大小上限后轮转为 `application.1.log` 等文件 |
 | `data/attachments/` | 按用户隔离并以哈希名称保存的附件实体 |
+| `data/daily-report-media/` | 服务端校验后的日报新闻图片，以内容哈希名称保存并由 `/daily-report-media/` 公开读取 |
 | `data/migration-backups/` | 数据迁移前自动生成的数据库快照 |
 | `data/backups/` | 管理员全站加密快照，首次生成后出现 |
 
@@ -485,6 +487,7 @@ npm run build
 ### 9.7 日报、导出与邮件联动
 
 登录后从顶部“日报”进入 `/reports`，可以查看当前账号按日期保存的日报，并打开 `/reports/:date` 全屏阅读页。列表按日期倒序排列；带有 `daily-digest.v1` 标记的正文按固定 Newsletter 信息架构渲染，LLM 不生成 HTML 或决定布局。历史日报继续走受限 Markdown 兼容路径；两条路径都会转义原始 HTML，危险链接不会成为可点击链接。阅读页保持独立的登录后二级页面，只提供返回列表按钮和安全渲染后的正文，不重复显示产品导航、日报元信息或外层卡片。
+新发布或更新的 `daily-digest.v1` 会在入库前完成图片本地化；已有历史记录不会在普通读取时触发外部下载，如需补齐旧日报图片，应重新发布对应日期的日报。
 
 “设置”提供独立的“日报邮件”开关。它不等同于每日摘要、普通提醒渠道或免打扰设置；开启后，V2 发布某个新日期的第一份日报时才会入队，之后更新同一天内容不会再次发信。邮件失败不会自动重试，日报列表会保留显式确认后的手动重试入口。日报邮件使用当前账号的提醒收件邮箱，未配置时回退到注册邮箱。
 
@@ -508,7 +511,8 @@ npm run build
 - `/api/integrations/daily-report-token`、`/api/integrations/daily-report/agenda`：令牌管理和只读日报日程。
 - `/api/user-mail-account`、`/api/user-mail-account/test`：当前账号 QQ 邮箱配置、删除和只读连接测试。
 - `/api/integrations/daily-report/mail`：日报令牌读取当前账号的 QQ 未读摘要，不返回授权码。
-- `/api/integrations/daily-report/reports/:date`：V2 使用日报令牌发布或幂等更新日报；发布正文不写入日志，邮件状态由账号设置和通知队列决定。
+- `/api/integrations/daily-report/reports/:date`：V2 使用日报令牌发布或幂等更新日报；`daily-digest.v1` 中的图片会先由服务端下载校验并替换为本站 `/daily-report-media/` 地址，发布正文不写入日志，邮件状态由账号设置和通知队列决定。
+- `/daily-report-media/:filename`：公开读取服务端已校验的日报图片；文件名为内容哈希，供登录后网页和邮件共同使用。
 - `/api/backups`、`/api/admin/backups`：用户备份和全站灾备。
 - `/api/ai-chat`：普通问答、天气问答和待确认日程建议。
 - `/api/ai/imports`：AI 导入草稿、确认和删除。
@@ -526,7 +530,7 @@ npm run build
 - 合并：仅导入不存在的数据，冲突保留当前数据。
 - 替换：先备份当前用户数据，再替换该用户的个人数据。
 
-全站恢复属于高风险管理操作，必须进入维护模式并先生成恢复前快照。阿里云 OSS 应使用私有 Bucket、阻止公共访问、同地域内网 Endpoint 和最小权限 RAM 用户。
+全站恢复属于高风险管理操作，必须进入维护模式并先生成恢复前快照；管理员全站快照会同时保存用户附件和 `data/daily-report-media/` 日报图片。阿里云 OSS 应使用私有 Bucket、阻止公共访问、同地域内网 Endpoint 和最小权限 RAM 用户。
 
 ## 12. 阿里云部署
 

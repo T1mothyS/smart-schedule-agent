@@ -4,6 +4,7 @@ import * as activityStore from './activity-store.js';
 import { enqueueUserEmailNotificationDetailed } from './notification-service.js';
 import { renderMarkdown } from './markdown-renderer.js';
 import { addLog } from './log-service.js';
+import { localizeDailyDigestImages, type DailyReportMediaOptions } from './daily-report-media-service.js';
 
 export const DAILY_REPORT_SOURCE_TYPE = 'daily_report';
 export const DAILY_REPORT_KIND = 'daily_report';
@@ -132,9 +133,11 @@ export function getDailyReportView(userId: string, reportDate: string): DailyRep
   return record ? toDailyReportView(record) : null;
 }
 
-export function publishDailyReport(userId: string, reportDate: string, markdown: string): PublishDailyReportResult {
+export async function publishDailyReport(userId: string, reportDate: string, markdown: string, mediaOptions: DailyReportMediaOptions = {}): Promise<PublishDailyReportResult> {
   validateDailyReportInput(reportDate, markdown);
-  const contentHash = hashDailyReport(markdown);
+  const localizedMarkdown = await localizeDailyDigestImages(markdown, mediaOptions);
+  validateDailyReportInput(reportDate, localizedMarkdown);
+  const contentHash = hashDailyReport(localizedMarkdown);
   const existing = activityStore.getDailyReport(userId, reportDate);
   let record: activityStore.DailyReportRecord;
   let reportStatus: DailyReportPublishStatus;
@@ -143,10 +146,10 @@ export function publishDailyReport(userId: string, reportDate: string, markdown:
     record = existing;
     reportStatus = 'UNCHANGED';
   } else if (existing) {
-    record = activityStore.updateDailyReport(existing.id, userId, markdown, contentHash) || existing;
+    record = activityStore.updateDailyReport(existing.id, userId, localizedMarkdown, contentHash) || existing;
     reportStatus = 'UPDATED';
   } else {
-    record = activityStore.createDailyReport({ userId, reportDate, markdown, contentHash });
+    record = activityStore.createDailyReport({ userId, reportDate, markdown: localizedMarkdown, contentHash });
     reportStatus = 'CREATED';
   }
 

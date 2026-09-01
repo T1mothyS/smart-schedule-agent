@@ -28,7 +28,7 @@ test('限流键数量异常增长时会淘汰最早的桶', () => {
   assert.equal(store.consume('first', 1, 60_000, 2).allowed, true);
 });
 
-test('生产日报 CSP 允许安全的 HTTPS 图片来源', () => {
+test('生产日报 CSP 只允许本站和内联图片来源', () => {
   const headers = new Map<string, string>();
   let nextCalled = false;
   const response = {
@@ -38,5 +38,7 @@ test('生产日报 CSP 允许安全的 HTTPS 图片来源', () => {
   } as any;
   securityHeaders(true)({} as any, response, () => { nextCalled = true; });
   assert.equal(nextCalled, true);
-  assert.match(headers.get('Content-Security-Policy') || '', /img-src 'self' data: blob: https:/);
+  const policy = headers.get('Content-Security-Policy') || '';
+  assert.match(policy, /img-src 'self' data: blob:/);
+  assert.doesNotMatch(policy, /img-src[^;]*https:/);
 });

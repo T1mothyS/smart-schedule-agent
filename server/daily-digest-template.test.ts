@@ -8,6 +8,8 @@ import {
   renderDailyDigestPlainText,
 } from './daily-digest-template.js';
 
+const hostedLeadImage = `/daily-report-media/${'a'.repeat(64)}.jpg`;
+const hostedMarketImage = `/daily-report-media/${'b'.repeat(64)}.webp`;
 
 function digestMarkdown(overrides = ''): string {
   return [
@@ -26,7 +28,7 @@ function digestMarkdown(overrides = ''): string {
     '来源：BBC',
     '时间：2026-08-31 08:05',
     '链接：https://example.com/trade',
-    '图片：https://example.com/trade.jpg',
+    `图片：${hostedLeadImage}`,
     '#### What happened / 发生了什么',
     '内容：公开资料显示，边境企业活动已经受到贸易摩擦影响，但仍缺少完整行业暴露与谈判细节。',
     '#### Why it matters / 为什么重要',
@@ -40,7 +42,7 @@ function digestMarkdown(overrides = ''): string {
     '来源：Yahoo Finance chart',
     '时间：2026-08-31 收盘',
     '链接：—',
-    '图片：https://example.com/market.jpg',
+    `图片：${hostedMarketImage}`,
     `摘要：${overrides || '美股科技偏强、A 股走高、韩国市场回落；收益率下跌 0.86%，不同时点数据不能拼成单一风险偏好快照。'}`,
     '',
     '## Mail Tasks',
@@ -67,7 +69,7 @@ test('Daily Digest V1 解析为固定编辑结构', () => {
   assert.equal(digest.leadStories.length, 1);
   assert.equal(digest.categories[0].items.length, 1);
   assert.equal(digest.mailTasks.length, 1);
-  assert.equal(digest.leadStories[0].imageUrl, 'https://example.com/trade.jpg');
+  assert.equal(digest.leadStories[0].imageUrl, hostedLeadImage);
   assert.equal(digest.worthYourTime.length, 1);
 });
 
@@ -80,15 +82,22 @@ test('Newsletter 渲染使用排版层级而不是卡片集合', () => {
   assert.match(html, /Category Digest/);
   assert.match(html, /邮件待办/);
   assert.match(html, /source-mark/);
-  assert.match(html, /source-logo/);
-  assert.match(html, /https:\/\/www\.bbc\.com\/favicon\.ico/);
   assert.match(html, /market-movement up/);
   assert.match(html, /market-movement down/);
   assert.match(html, /external-link/);
   assert.match(html, /story-image/);
+  assert.match(html, /src="\/daily-report-media\/[a-f0-9]{64}\.(?:jpg|webp)"/);
+  assert.doesNotMatch(html, /<img[^>]+https?:\/\//i);
+  assert.doesNotMatch(html, /source-logo|favicon\.ico/i);
   assert.doesNotMatch(html, /media-strip|source-link|查看来源/);
   assert.doesNotMatch(html, /daily-report-card-grid|linear-gradient|box-shadow/);
   assert.ok(html.indexOf('今日速览') < html.indexOf('重点新闻'));
+});
+
+test('Newsletter 不会把未本地化的外站图片输出到 HTML', () => {
+  const html = renderDailyDigestMarkdown(digestMarkdown().replace(hostedLeadImage, 'https://images.example/trade.jpg')) || '';
+  assert.doesNotMatch(html, /images\.example\/trade\.jpg/);
+  assert.match(html, /src="\/daily-report-media\/[a-f0-9]{64}\.webp"/);
 });
 
 test('Newsletter 转义正文并拒绝危险链接', () => {
@@ -108,6 +117,8 @@ test('邮件页面和纯文本均由同一结构化内容生成', () => {
   assert.ok(text);
   assert.match(email, /max-width:680px/);
   assert.match(email, /在 AI Calendar 中查看私有日报/);
+  assert.match(email, /src="[^"]*\/daily-report-media\/[a-f0-9]{64}\.(?:jpg|webp)"/);
+  assert.doesNotMatch(email, /example\.com\/trade\.jpg|favicon\.ico/i);
   assert.match(text, /Today at a Glance/);
   assert.match(text, /Mail Tasks/);
   assert.doesNotMatch(text, /daily-digest\.v1|<!--/);

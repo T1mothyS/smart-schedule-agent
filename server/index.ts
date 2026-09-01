@@ -32,6 +32,7 @@ import { extractWeatherLocationQuery, getDailyWeather, isWeatherQuestion, search
 import { createReadableUserExport, createSchedulesCsv } from './export-service.js';
 import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
 import { getDailyReportView, listDailyReportViews, publishDailyReport, queueDailyReportEmail } from './daily-report-service.js';
+import { DAILY_REPORT_MEDIA_ROUTE, dailyReportMediaRoot } from './daily-report-media-service.js';
 import { deleteUserMailAccount, getUserMailAccountStatus, readUserMail, saveUserMailAccount } from './user-mail-service.js';
 import { createApiRateLimiter, securityHeaders } from './http-security.js';
 import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
@@ -147,6 +148,15 @@ app.use('/api', (req, res, next) => {
 });
 
 // 生产环境直接提供 Vite 构建产物；部署时只需先执行 npm run build。
+// 日报图片是服务端校验后生成的公开哈希文件，不能落入 SPA fallback，也不需要登录态。
+app.use(DAILY_REPORT_MEDIA_ROUTE, express.static(dailyReportMediaRoot(), {
+  dotfiles: 'deny',
+  fallthrough: false,
+  index: false,
+  maxAge: '1y',
+  immutable: true,
+  redirect: false,
+}));
 if (isProduction) {
   app.use(express.static(staticPath));
   console.log(`[Static] Serving files from: ${staticPath}`);
@@ -1626,7 +1636,7 @@ app.get('/api/integrations/daily-report/mail', async (req, res) => {
 });
 
 // 独立日报项目使用只读令牌发布已通过 Validator 的 Markdown；不会接收账号或邮箱字段。
-app.put('/api/integrations/daily-report/reports/:date', (req, res) => {
+app.put('/api/integrations/daily-report/reports/:date', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   const authorization = String(req.header('authorization') || '');
   const match = authorization.match(/^Bearer\s+(.+)$/i);
@@ -1638,7 +1648,7 @@ app.put('/api/integrations/daily-report/reports/:date', (req, res) => {
     return res.status(400).json({ error: '请求正文只允许包含 markdown 字段' });
   }
   try {
-    const result = publishDailyReport(authenticated.userId, date, req.body.markdown);
+    const result = await publishDailyReport(authenticated.userId, date, req.body.markdown);
     res.status(result.reportStatus === 'CREATED' ? 201 : 200).json({
       date,
       reportStatus: result.reportStatus,

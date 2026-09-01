@@ -16,6 +16,7 @@ const api = await import('./index.js');
 const db = await import('./db.js');
 const activity = await import('./activity-store.js');
 const dailyReportTokens = await import('./daily-report-token-service.js');
+const dailyReportMedia = await import('./daily-report-media-service.js');
 
 await api.initializeServer();
 
@@ -69,6 +70,13 @@ test('日报 HTTP API 使用令牌发布、账号隔离并支持更新后重发�
   });
 
   try {
+    const mediaFilename = `${'c'.repeat(64)}.png`;
+    fs.writeFileSync(path.join(dailyReportMedia.dailyReportMediaRoot(), mediaFilename), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    const mediaResponse = await request(`/daily-report-media/${mediaFilename}`);
+    assert.equal(mediaResponse.status, 200);
+    assert.match(mediaResponse.headers.get('content-type') || '', /^image\/png/);
+    assert.match(mediaResponse.headers.get('cache-control') || '', /immutable/);
+
     const invalidAuth = await request('/api/integrations/daily-report/reports/2026-08-30', {
       method: 'PUT',
       ...json('invalid-token', { markdown: '# nope' }),

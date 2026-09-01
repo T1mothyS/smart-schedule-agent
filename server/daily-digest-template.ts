@@ -5,6 +5,8 @@
  * 本模块只解析该固定格式并用纯函数组件渲染网页与邮件，不解释自由格式内容。
  */
 
+import { dailyReportMediaPath, getDailyReportMediaPublicOrigin } from './daily-report-media-service.js';
+
 const DIGEST_TITLE = '# Daily Digest';
 const DIGEST_MARKER = '<!-- daily-digest.v1 -->';
 
@@ -72,9 +74,10 @@ function normalizedText(value: string, minimum: number, maximum: number, allowEm
   return normalized;
 }
 
-function safeUrl(value: string, required = false): string | null {
+function safeUrl(value: string, required = false, allowHostedMediaPath = false): string | null {
   const normalized = value.trim();
   if (!normalized) return required ? null : '';
+  if (allowHostedMediaPath && dailyReportMediaPath(normalized)) return normalized;
   try {
     const parsed = new URL(normalized);
     return ['http:', 'https:'].includes(parsed.protocol.toLowerCase()) ? normalized : null;
@@ -120,7 +123,7 @@ function storyMeta(headline: string, body: string[]): StoryMeta | null {
   const cleanSource = source === null ? null : normalizedText(source, 0, 60, true);
   const cleanPublishedAt = publishedAt === null ? null : normalizedText(publishedAt, 0, 40, true);
   const url = rawUrl === null ? null : safeUrl(rawUrl);
-  const imageUrl = rawImageUrl === null ? null : safeUrl(rawImageUrl);
+  const imageUrl = rawImageUrl === null ? null : safeUrl(rawImageUrl, false, true);
   if (cleanHeadline === null || cleanSource === null || cleanPublishedAt === null || url === null || imageUrl === null) return null;
   return { headline: cleanHeadline, source: cleanSource, publishedAt: cleanPublishedAt, url, imageUrl };
 }
@@ -262,23 +265,6 @@ const SOURCE_MARKS: Record<string, string> = {
   'Google AI': 'G',
 };
 
-const SOURCE_ICON_URLS: Record<string, string> = {
-  BBC: 'https://www.bbc.com/favicon.ico',
-  新华社: 'https://www.xinhuanet.com/favicon.ico',
-  人民网: 'https://www.people.com.cn/favicon.ico',
-  央视新闻: 'https://news.cctv.com/favicon.ico',
-  光明网: 'https://www.gmw.cn/favicon.ico',
-  财新: 'https://www.caixin.com/favicon.ico',
-  新浪新闻: 'https://news.sina.com.cn/favicon.ico',
-  网易新闻: 'https://news.163.com/favicon.ico',
-  'Federal Reserve': 'https://www.federalreserve.gov/favicon.ico',
-  SEC: 'https://www.sec.gov/favicon.ico',
-  OpenAI: 'https://svgl.app/library/openai.svg',
-  'Google AI': 'https://www.google.com/favicon.ico',
-  'Yahoo Finance': 'https://finance.yahoo.com/favicon.ico',
-  'Yahoo Finance chart': 'https://finance.yahoo.com/favicon.ico',
-};
-
 const MARKET_MOVEMENT = /(?:(?:上涨|下跌|上升|下降|涨|跌)\s*(?:[+＋↑↗]|[-−－↓↘])?|[+＋↑↗]|[-−－↓↘])\s*(?:\d+(?:,\d{3})*(?:\.\d+)?|\.\d+)\s*%/g;
 
 function marketText(value: string): string {
@@ -291,11 +277,7 @@ function marketText(value: string): string {
 
 function sourceIdentity(source: string): string {
   const mark = escapeHtml(SOURCE_MARKS[source] || source.slice(0, 2));
-  const iconUrl = SOURCE_ICON_URLS[source];
-  const fallbackMark = escapeHtml(source.slice(0, 1));
-  const icon = iconUrl
-    ? `<span class="source-logo-wrap" aria-hidden="true" style="position:relative;display:inline-grid;width:19px;height:19px;place-items:center;flex:0 0 19px;overflow:hidden;border:1px solid #c6d9d2;border-radius:5px;background:#fff"><span class="source-mark source-logo-fallback" style="position:absolute;inset:0;width:auto;height:auto;flex:0 0 auto;border:0;border-radius:0">${fallbackMark}</span><img class="source-logo" src="${escapeHtml(iconUrl)}" alt="" width="19" height="19" style="position:relative;z-index:1;display:block;width:100%;height:100%;object-fit:contain;border-radius:4px;background:#fff"></span>`
-    : `<span class="source-mark" aria-hidden="true" style="width:19px;height:19px;display:inline-grid;place-items:center;flex:0 0 19px;border:1px solid #c6d9d2;border-radius:5px;background:#eef6f2;color:#0d5c4b;font-size:8px;font-weight:850;line-height:1">${mark}</span>`;
+  const icon = `<span class="source-mark" aria-hidden="true" style="width:19px;height:19px;display:inline-grid;place-items:center;flex:0 0 19px;border:1px solid #c6d9d2;border-radius:5px;background:#eef6f2;color:#0d5c4b;font-size:8px;font-weight:850;line-height:1">${mark}</span>`;
   return `<span class="source-identity" style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle">${icon}<span>${escapeHtml(source)}</span></span>`;
 }
 
@@ -308,9 +290,12 @@ function renderMeta(source: string, publishedAt: string): string {
   return pieces.length ? pieces.join(' · ') : '来源与时间待核验';
 }
 
-function storyImage(story: LeadStory | DigestItem): string {
+function storyImage(story: LeadStory | DigestItem, absoluteMediaUrl = false): string {
   if (!story.imageUrl) return '';
-  return `<img class="story-image" src="${escapeHtml(story.imageUrl)}" alt="${escapeHtml(story.headline)}" width="608" style="display:block;width:100%;max-width:100%;height:auto;margin:16px 0 2px;border-radius:8px;object-fit:cover">`;
+  const mediaPath = dailyReportMediaPath(story.imageUrl);
+  if (!mediaPath) return '';
+  const imageUrl = absoluteMediaUrl ? `${getDailyReportMediaPublicOrigin()}${mediaPath}` : mediaPath;
+  return `<img class="story-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(story.headline)}" width="608" style="display:block;width:100%;max-width:100%;height:auto;margin:16px 0 2px;border-radius:8px;object-fit:cover">`;
 }
 
 function storyHeadline(story: LeadStory | DigestItem, className: string): string {
@@ -343,7 +328,7 @@ function AtAGlance(digest: DailyDigest): string {
   return Section('Today at a Glance', '今日速览', 'at-a-glance', `<ol style="margin:0;padding:0;list-style:none">${items}</ol>`, false);
 }
 
-function LeadStoryComponent(story: LeadStory, index: number): string {
+function LeadStoryComponent(story: LeadStory, index: number, absoluteMediaUrl = false): string {
   const fields: Array<[string, string, string]> = [
     ['What happened', '发生了什么', story.whatHappened],
     ['Why it matters', '为什么重要', story.whyItMatters],
@@ -356,12 +341,12 @@ function LeadStoryComponent(story: LeadStory, index: number): string {
   return `<article class="daily-lead-story" style="padding:${index === 1 ? '6px' : '32px'} 0 38px;${index > 1 ? 'border-top:1px solid #d8d5ce;' : ''}">` +
     `<div style="color:#0d5c4b;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase">Lead ${String(index).padStart(2, '0')}</div>` +
     `<h3 style="margin:8px 0;color:#171916;font-family:Georgia,'Songti SC','SimSun',serif;font-size:29px;line-height:1.28;letter-spacing:-.022em;overflow-wrap:anywhere">${storyHeadline(story, 'lead-link')}</h3>` +
-    `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(story.source, story.publishedAt)}</div>${storyImage(story)}${body}</article>`;
+    `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(story.source, story.publishedAt)}</div>${storyImage(story, absoluteMediaUrl)}${body}</article>`;
 }
 
-function DigestItemComponent(item: DigestItem): string {
+function DigestItemComponent(item: DigestItem, absoluteMediaUrl = false): string {
   const headline = storyHeadline(item, 'digest-link');
-  const image = storyImage(item);
+  const image = storyImage(item, absoluteMediaUrl);
   const content = `<div class="digest-item-copy" style="min-width:0"><h4 style="margin:0 0 5px;color:#20231f;font-family:Georgia,'Songti SC','SimSun',serif;font-size:18px;line-height:1.42;overflow-wrap:anywhere">${headline}</h4>` +
     `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(item.source, item.publishedAt)}</div>` +
     `<p style="margin:8px 0 0;color:#4b5049;font-size:14.5px;line-height:1.66;overflow-wrap:anywhere">${marketText(item.summary)}</p></div>`;
@@ -369,11 +354,11 @@ function DigestItemComponent(item: DigestItem): string {
     `<div class="digest-item-layout${image ? ' with-image' : ''}" style="min-width:0;display:${image ? 'grid' : 'block'};${image ? 'grid-template-columns:minmax(0,1fr) 116px;gap:16px;align-items:start;' : ''}">${content}${image ? image.replace('class="story-image"', 'class="story-image digest-thumb"').replace('width:100%;', 'width:116px;').replace('height:auto;', 'height:78px;').replace('margin:16px 0 2px;', 'margin:0;') : ''}</div></article>`;
 }
 
-function CategoryDigest(digest: DailyDigest): string {
+function CategoryDigest(digest: DailyDigest, absoluteMediaUrl = false): string {
   const categories = digest.categories.map((category, index) =>
     `<div style="padding:${index ? '30px' : '0'} 0 30px;${index ? 'border-top:1px solid #d8d5ce;' : ''}">` +
     `<h3 style="margin:0 0 6px;color:#1d201c;font-family:Georgia,'Songti SC','SimSun',serif;font-size:22px;line-height:1.35">${escapeHtml(category.name)}</h3>` +
-    `${category.items.map(DigestItemComponent).join('')}</div>`,
+    `${category.items.map(item => DigestItemComponent(item, absoluteMediaUrl)).join('')}</div>`,
   ).join('');
   return Section('Category Digest', '分类简报', 'category-digest', categories);
 }
@@ -405,11 +390,12 @@ function Footer(detailUrl = ''): string {
     `${link}<div>由日报 V2 自动整理 · 数据仅供参考 · 参考时区 Asia/Shanghai</div></footer>`;
 }
 
-export function renderDailyDigest(digest: DailyDigest, detailUrl = ''): string {
+export function renderDailyDigest(digest: DailyDigest, detailUrl = '', options: { absoluteMediaUrls?: boolean } = {}): string {
+  const absoluteMediaUrls = options.absoluteMediaUrls === true;
   return `<main class="daily-newsletter" style="width:100%;max-width:680px;margin:0 auto;border-top:5px solid #0d5c4b;background:#fff;color:#20221f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif">` +
     `<div class="daily-newsletter-inner" style="padding:0 36px">${Header(digest)}${AtAGlance(digest)}` +
-    `${Section('Lead Story', '重点新闻', 'lead-story', digest.leadStories.map((story, index) => LeadStoryComponent(story, index + 1)).join(''))}` +
-    `${CategoryDigest(digest)}${MailTasks(digest)}${WorthYourTime(digest)}${Footer(detailUrl)}</div></main>`;
+    `${Section('Lead Story', '重点新闻', 'lead-story', digest.leadStories.map((story, index) => LeadStoryComponent(story, index + 1, absoluteMediaUrls)).join(''))}` +
+    `${CategoryDigest(digest, absoluteMediaUrls)}${MailTasks(digest)}${WorthYourTime(digest)}${Footer(detailUrl)}</div></main>`;
 }
 
 export function renderDailyDigestMarkdown(markdown: string): string | null {
@@ -424,7 +410,7 @@ export function renderDailyDigestEmailPage(markdown: string, detailUrl: string):
     `<title>${escapeHtml(`Daily Digest · ${digest.date}`)}</title><style>` +
     `.daily-newsletter{width:100%;max-width:680px}.daily-newsletter-inner{min-width:0}.source-identity{display:inline-flex;align-items:center;gap:5px;vertical-align:middle}.story-image{display:block;width:100%;max-width:100%;height:auto}.digest-item-layout.with-image{display:grid;grid-template-columns:minmax(0,1fr) 116px;gap:16px;align-items:start}.digest-thumb{width:116px!important;height:78px!important;margin:0!important;object-fit:cover}.market-movement{font-weight:800;white-space:nowrap}@media(max-width:520px){.daily-newsletter-inner{padding:0 22px!important}.daily-newsletter-header h1{font-size:35px!important}.daily-newsletter-section{padding-top:31px!important}.story-meta{display:flex;flex-wrap:wrap;align-items:center;gap:3px 7px;letter-spacing:.01em}.digest-item-layout.with-image{grid-template-columns:minmax(0,1fr) 94px;gap:10px}.digest-thumb{width:94px!important;height:68px!important}}` +
     `</style></head><body style="margin:0;padding:0;background:#f3f1ec">` +
-    `<div style="padding:24px 10px">${renderDailyDigest(digest, detailUrl)}</div></body></html>`;
+    `<div style="padding:24px 10px">${renderDailyDigest(digest, detailUrl, { absoluteMediaUrls: true })}</div></body></html>`;
 }
 
 export function renderDailyDigestPlainText(markdown: string, detailUrl = ''): string | null {

@@ -11,6 +11,12 @@ export default defineConfig({
     port: 5173,
     allowedHosts: extraAllowedHost ? ['localhost', '127.0.0.1', extraAllowedHost] : ['localhost', '127.0.0.1'],
     proxy: {
+      '/daily-report-media': {
+        target: process.env.API_PROXY_TARGET || 'http://localhost:3000',
+        changeOrigin: true,
+        timeout: 30_000,
+        proxyTimeout: 30_000,
+      },
       '/api': {
         target: process.env.API_PROXY_TARGET || 'http://localhost:3000',
         changeOrigin: true,

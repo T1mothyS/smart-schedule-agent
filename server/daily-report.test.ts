@@ -138,9 +138,9 @@ test('日报隐藏已移除的工具章节，并放大为什么问题标题', ()
   assert.equal((html.match(/id="section-/g) || []).length, 3);
 });
 
-test('日报发布按账号和内容版本幂等，更新正文会重新发信', () => {
+test('日报发布按账号和内容版本幂等，更新正文会重新发信', async () => {
   const firstMarkdown = '# 2026-08-30\n\n第一版日报';
-  const first = reports.publishDailyReport(userId, '2026-08-30', firstMarkdown);
+  const first = await reports.publishDailyReport(userId, '2026-08-30', firstMarkdown);
   assert.equal(first.reportStatus, 'CREATED');
   assert.equal(first.emailStatus, 'QUEUED');
   const firstNotification = activity.listNotifications(userId)[0];
@@ -149,14 +149,14 @@ test('日报发布按账号和内容版本幂等，更新正文会重新发信',
   assert.equal(firstNotification.maxAttempts, 1);
   assert.equal(firstNotification.body, firstMarkdown);
 
-  const unchanged = reports.publishDailyReport(userId, '2026-08-30', firstMarkdown);
+  const unchanged = await reports.publishDailyReport(userId, '2026-08-30', firstMarkdown);
   assert.equal(unchanged.reportStatus, 'UNCHANGED');
   assert.equal(unchanged.emailStatus, 'ALREADY_QUEUED');
   assert.equal(unchanged.report.emailNotificationId, firstNotification.id);
   assert.equal(activity.listNotifications(userId).length, 1);
 
   const updatedMarkdown = '# 2026-08-30\n\n修订版日报';
-  const updated = reports.publishDailyReport(userId, '2026-08-30', updatedMarkdown);
+  const updated = await reports.publishDailyReport(userId, '2026-08-30', updatedMarkdown);
   assert.equal(updated.reportStatus, 'UPDATED');
   assert.equal(updated.emailStatus, 'QUEUED');
   const updatedNotification = activity.listNotifications(userId)[0];
@@ -168,10 +168,64 @@ test('日报发布按账号和内容版本幂等，更新正文会重新发信',
   assert.equal(reports.getDailyReportView(userId, '2026-08-30')?.markdown, updatedMarkdown);
   assert.equal(reports.getDailyReportView(otherUserId, '2026-08-30'), null);
 
-  const updatedDuplicate = reports.publishDailyReport(userId, '2026-08-30', updatedMarkdown);
+  const updatedDuplicate = await reports.publishDailyReport(userId, '2026-08-30', updatedMarkdown);
   assert.equal(updatedDuplicate.reportStatus, 'UNCHANGED');
   assert.equal(updatedDuplicate.emailStatus, 'ALREADY_QUEUED');
   assert.equal(activity.listNotifications(userId).length, 2);
+});
+
+test('日报发布在入库和邮件快照前完成图片本地化', async () => {
+  const integrationUserId = 'daily-report-media-integration-user';
+  const mediaRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aicalendar-daily-report-publish-media-'));
+  const nowForMedia = new Date().toISOString();
+  db.createUser({
+    id: integrationUserId,
+    email: 'daily-report-media@example.com',
+    password_hash: 'not-a-real-password',
+    role: 'user',
+    disabled: 0,
+    created_at: nowForMedia,
+    updated_at: nowForMedia,
+  });
+  db.upsertReminder({
+    id: 'daily-report-media-integration-reminder',
+    user_id: integrationUserId,
+    enabled: 0,
+    hour: 8,
+    minute: 0,
+    reminder_email: 'daily-report-media@example.com',
+    report_email_enabled: 1,
+    created_at: nowForMedia,
+    updated_at: nowForMedia,
+  });
+  const sourceUrl = 'https://images.example/publish.png';
+  const image = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+  try {
+    const result = await reports.publishDailyReport(
+      integrationUserId,
+      '2026-09-02',
+      `# Daily Digest\n<!-- daily-digest.v1 -->\n图片：${sourceUrl}`,
+      {
+        mediaRoot,
+        publicOrigin: 'https://gotimothy.online',
+        lookup: async () => [{ address: '93.184.216.34', family: 4 as const }],
+        fetcher: async () => new Response(image, { status: 200, headers: { 'content-type': 'image/png' } }),
+      },
+    );
+    assert.equal(result.reportStatus, 'CREATED');
+    assert.equal(result.emailStatus, 'QUEUED');
+    const notification = activity.listNotifications(integrationUserId)[0];
+    assert.ok(notification);
+    assert.match(notification.body, /https:\/\/gotimothy\.online\/daily-report-media\/[a-f0-9]{64}\.png/);
+    assert.doesNotMatch(notification.body, /images\.example/);
+    const stored = activity.getDailyReport(integrationUserId, '2026-09-02');
+    assert.ok(stored);
+    assert.match(stored.markdown, /https:\/\/gotimothy\.online\/daily-report-media\/[a-f0-9]{64}\.png/);
+    assert.doesNotMatch(stored.markdown, /images\.example/);
+  } finally {
+    activity.deleteUserActivity(integrationUserId);
+    db.deleteUser(integrationUserId);
+  }
 });
 
 test('日报邮件失败后不自动重试，但允许显式手动重试', () => {

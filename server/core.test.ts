@@ -17,6 +17,7 @@ const reminderCalendarSync = await import('./reminder-calendar-sync.js');
 const activity = await import('./activity-store.js');
 const attachments = await import('./attachment-service.js');
 const backups = await import('./backup-service.js');
+const dailyReportMedia = await import('./daily-report-media-service.js');
 const actionCenter = await import('./action-center.js');
 const scheduleCompletion = await import('./schedule-completion-service.js');
 const email = await import('./email-service.js');
@@ -516,6 +517,9 @@ test('全站恢复统一替换四个数据库和附件且不遗留暂存文件',
     const originalAttachment = path.join(attachmentRoot, 'system-restore-test', 'proof.txt');
     fs.mkdirSync(path.dirname(originalAttachment), { recursive: true });
     fs.writeFileSync(originalAttachment, 'original attachment', 'utf8');
+    const mediaRoot = dailyReportMedia.dailyReportMediaRoot();
+    const originalMedia = path.join(mediaRoot, `${'d'.repeat(64)}.png`);
+    fs.writeFileSync(originalMedia, 'original media', 'utf8');
     const snapshot = backups.createSystemSnapshot(false);
     const encrypted = backups.readSystemSnapshot(snapshot.filename);
     const databaseNames = ['chat.db', 'schedule.db', 'reminder.db', 'activity.db'];
@@ -527,6 +531,7 @@ test('全站恢复统一替换四个数据库和附件且不遗留暂存文件',
     for (const name of databaseNames) fs.appendFileSync(path.join(tempDir, name), 'changed-after-snapshot');
     fs.writeFileSync(originalAttachment, 'changed attachment', 'utf8');
     fs.writeFileSync(path.join(attachmentRoot, 'extra.txt'), 'remove me', 'utf8');
+    fs.writeFileSync(originalMedia, 'changed media', 'utf8');
 
     backups.restoreSystemSnapshot(encrypted, 'RESTORE AI CALENDAR');
 
@@ -536,6 +541,7 @@ test('全站恢复统一替换四个数据库和附件且不遗留暂存文件',
     }
     assert.equal(fs.readFileSync(originalAttachment, 'utf8'), 'original attachment');
     assert.equal(fs.existsSync(path.join(attachmentRoot, 'extra.txt')), false);
+    assert.equal(fs.readFileSync(originalMedia, 'utf8'), 'original media');
     assert.equal(fs.readdirSync(tempDir).some(name => name.includes('.restore-') || name.includes('.pre-restore-')), false);
   } finally {
     if (previousKey === undefined) delete process.env.BACKUP_ENCRYPTION_KEY;
