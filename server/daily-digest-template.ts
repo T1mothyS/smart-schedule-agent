@@ -13,6 +13,7 @@ const DIGEST_MARKER = '<!-- daily-digest.v1 -->';
 interface StoryMeta {
   headline: string;
   source: string;
+  sourceLogoUrl: string;
   publishedAt: string;
   url: string;
   imageUrl: string;
@@ -36,6 +37,7 @@ interface DigestCategory {
 interface WorthLink {
   title: string;
   source: string;
+  sourceLogoUrl: string;
   url: string;
   note: string;
 }
@@ -45,6 +47,7 @@ interface MailTask {
   detail: string;
   due: string;
   source: string;
+  sourceLogoUrl: string;
 }
 
 export interface DailyDigest {
@@ -116,16 +119,20 @@ function headingBlocks(lines: string[], prefix: string): Array<{ title: string; 
 
 function storyMeta(headline: string, body: string[]): StoryMeta | null {
   const source = field(body[0], '来源：');
-  const publishedAt = field(body[1], '时间：');
-  const rawUrl = field(body[2], '链接：');
-  const rawImageUrl = body[3]?.startsWith('图片：') ? field(body[3], '图片：') : '';
+  const hasSourceLogo = body[1]?.startsWith('来源图标：') || false;
+  const rawSourceLogoUrl = hasSourceLogo ? field(body[1], '来源图标：') : '';
+  const metadataOffset = hasSourceLogo ? 1 : 0;
+  const publishedAt = field(body[1 + metadataOffset], '时间：');
+  const rawUrl = field(body[2 + metadataOffset], '链接：');
+  const rawImageUrl = body[3 + metadataOffset]?.startsWith('图片：') ? field(body[3 + metadataOffset], '图片：') : '';
   const cleanHeadline = normalizedText(headline, 4, 100);
   const cleanSource = source === null ? null : normalizedText(source, 0, 60, true);
   const cleanPublishedAt = publishedAt === null ? null : normalizedText(publishedAt, 0, 40, true);
+  const sourceLogoUrl = rawSourceLogoUrl === null ? null : rawSourceLogoUrl ? dailyReportMediaPath(rawSourceLogoUrl) || null : '';
   const url = rawUrl === null ? null : safeUrl(rawUrl);
   const imageUrl = rawImageUrl === null ? null : safeUrl(rawImageUrl, false, true);
-  if (cleanHeadline === null || cleanSource === null || cleanPublishedAt === null || url === null || imageUrl === null) return null;
-  return { headline: cleanHeadline, source: cleanSource, publishedAt: cleanPublishedAt, url, imageUrl };
+  if (cleanHeadline === null || cleanSource === null || cleanPublishedAt === null || sourceLogoUrl === null || url === null || imageUrl === null) return null;
+  return { headline: cleanHeadline, source: cleanSource, sourceLogoUrl, publishedAt: cleanPublishedAt, url, imageUrl };
 }
 
 export function isDailyDigestMarkdown(markdown: string): boolean {
@@ -202,14 +209,18 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
       const body = block.body.filter(Boolean);
       if (!body.length) continue;
       const source = field(body[0], '来源：');
-      const due = field(body[1], '截止：');
-      const detail = field(body[2], '详情：');
+      const hasSourceLogo = body[1]?.startsWith('来源图标：') || false;
+      const rawSourceLogoUrl = hasSourceLogo ? field(body[1], '来源图标：') : '';
+      const metadataOffset = hasSourceLogo ? 1 : 0;
+      const due = field(body[1 + metadataOffset], '截止：');
+      const detail = field(body[2 + metadataOffset], '详情：');
       const title = normalizedText(block.title, 4, 100);
       const cleanSource = source === null ? null : normalizedText(source, 0, 60, true);
+      const sourceLogoUrl = rawSourceLogoUrl === null ? null : rawSourceLogoUrl ? dailyReportMediaPath(rawSourceLogoUrl) || null : '';
       const cleanDue = due === null ? null : normalizedText(due, 0, 40, true);
       const cleanDetail = detail === null ? null : normalizedText(detail, 8, 220);
-      if (!title || cleanSource === null || cleanDue === null || !cleanDetail) return null;
-      mailTasks.push({ title, source: cleanSource, due: cleanDue, detail: cleanDetail });
+      if (!title || cleanSource === null || sourceLogoUrl === null || cleanDue === null || !cleanDetail) return null;
+      mailTasks.push({ title, source: cleanSource, sourceLogoUrl, due: cleanDue, detail: cleanDetail });
     }
     if (mailTasks.length > 6) return null;
   }
@@ -219,13 +230,17 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
     const body = block.body.filter(Boolean);
     const title = normalizedText(block.title, 4, 100);
     const rawSource = field(body[0], '来源：');
-    const rawUrl = field(body[1], '链接：');
-    const rawNote = field(body[2], '推荐理由：');
+    const hasSourceLogo = body[1]?.startsWith('来源图标：') || false;
+    const rawSourceLogoUrl = hasSourceLogo ? field(body[1], '来源图标：') : '';
+    const metadataOffset = hasSourceLogo ? 1 : 0;
+    const rawUrl = field(body[1 + metadataOffset], '链接：');
+    const rawNote = field(body[2 + metadataOffset], '推荐理由：');
     const source = rawSource === null ? null : normalizedText(rawSource, 0, 60, true);
+    const sourceLogoUrl = rawSourceLogoUrl === null ? null : rawSourceLogoUrl ? dailyReportMediaPath(rawSourceLogoUrl) || null : '';
     const url = rawUrl === null ? null : safeUrl(rawUrl, true);
     const note = rawNote === null ? null : normalizedText(rawNote, 4, 90);
-    if (!title || source === null || !url || !note) return null;
-    worthYourTime.push({ title, source, url, note });
+    if (!title || source === null || sourceLogoUrl === null || !url || !note) return null;
+    worthYourTime.push({ title, source, sourceLogoUrl, url, note });
   }
   if (worthYourTime.length > 3) return null;
 
@@ -275,16 +290,20 @@ function marketText(value: string): string {
   });
 }
 
-function sourceIdentity(source: string): string {
+function sourceIdentity(source: string, sourceLogoUrl = '', absoluteMediaUrl = false): string {
   const mark = escapeHtml(SOURCE_MARKS[source] || source.slice(0, 2));
-  const icon = `<span class="source-mark" aria-hidden="true" style="width:19px;height:19px;display:inline-grid;place-items:center;flex:0 0 19px;border:1px solid #c6d9d2;border-radius:5px;background:#eef6f2;color:#0d5c4b;font-size:8px;font-weight:850;line-height:1">${mark}</span>`;
+  const logoPath = dailyReportMediaPath(sourceLogoUrl);
+  const logoUrl = logoPath && absoluteMediaUrl ? `${getDailyReportMediaPublicOrigin()}${logoPath}` : logoPath;
+  const icon = logoUrl
+    ? `<span class="source-logo-wrap" aria-hidden="true" style="position:relative;display:inline-grid;width:19px;height:19px;place-items:center;flex:0 0 19px;overflow:hidden;border:1px solid #c6d9d2;border-radius:5px;background:#fff"><span class="source-mark source-logo-fallback" style="position:absolute;inset:0;width:auto;height:auto;flex:0 0 auto;border:0;border-radius:0">${mark}</span><img class="source-logo" src="${escapeHtml(logoUrl)}" alt="" width="19" height="19" style="position:relative;z-index:1;display:block;width:100%;height:100%;object-fit:contain;border-radius:4px;background:#fff"></span>`
+    : `<span class="source-mark" aria-hidden="true" style="width:19px;height:19px;display:inline-grid;place-items:center;flex:0 0 19px;border:1px solid #c6d9d2;border-radius:5px;background:#eef6f2;color:#0d5c4b;font-size:8px;font-weight:850;line-height:1">${mark}</span>`;
   return `<span class="source-identity" style="display:inline-flex;align-items:center;gap:5px;vertical-align:middle">${icon}<span>${escapeHtml(source)}</span></span>`;
 }
 
-function renderMeta(source: string, publishedAt: string): string {
+function renderMeta(source: string, publishedAt: string, sourceLogoUrl = '', absoluteMediaUrl = false): string {
   const pieces: string[] = [];
   if (source) {
-    pieces.push(sourceIdentity(source));
+    pieces.push(sourceIdentity(source, sourceLogoUrl, absoluteMediaUrl));
   }
   if (publishedAt) pieces.push(escapeHtml(publishedAt));
   return pieces.length ? pieces.join(' · ') : '来源与时间待核验';
@@ -341,14 +360,14 @@ function LeadStoryComponent(story: LeadStory, index: number, absoluteMediaUrl = 
   return `<article class="daily-lead-story" style="padding:${index === 1 ? '6px' : '32px'} 0 38px;${index > 1 ? 'border-top:1px solid #d8d5ce;' : ''}">` +
     `<div style="color:#0d5c4b;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase">Lead ${String(index).padStart(2, '0')}</div>` +
     `<h3 style="margin:8px 0;color:#171916;font-family:Georgia,'Songti SC','SimSun',serif;font-size:29px;line-height:1.28;letter-spacing:-.022em;overflow-wrap:anywhere">${storyHeadline(story, 'lead-link')}</h3>` +
-    `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(story.source, story.publishedAt)}</div>${storyImage(story, absoluteMediaUrl)}${body}</article>`;
+    `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(story.source, story.publishedAt, story.sourceLogoUrl, absoluteMediaUrl)}</div>${storyImage(story, absoluteMediaUrl)}${body}</article>`;
 }
 
 function DigestItemComponent(item: DigestItem, absoluteMediaUrl = false): string {
   const headline = storyHeadline(item, 'digest-link');
   const image = storyImage(item, absoluteMediaUrl);
   const content = `<div class="digest-item-copy" style="min-width:0"><h4 style="margin:0 0 5px;color:#20231f;font-family:Georgia,'Songti SC','SimSun',serif;font-size:18px;line-height:1.42;overflow-wrap:anywhere">${headline}</h4>` +
-    `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(item.source, item.publishedAt)}</div>` +
+    `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(item.source, item.publishedAt, item.sourceLogoUrl, absoluteMediaUrl)}</div>` +
     `<p style="margin:8px 0 0;color:#4b5049;font-size:14.5px;line-height:1.66;overflow-wrap:anywhere">${marketText(item.summary)}</p></div>`;
   return `<article style="padding:18px 0 19px;border-top:1px solid #e4e1db">` +
     `<div class="digest-item-layout${image ? ' with-image' : ''}" style="min-width:0;display:${image ? 'grid' : 'block'};${image ? 'grid-template-columns:minmax(0,1fr) 116px;gap:16px;align-items:start;' : ''}">${content}${image ? image.replace('class="story-image"', 'class="story-image digest-thumb"').replace('width:100%;', 'width:116px;').replace('height:auto;', 'height:78px;').replace('margin:16px 0 2px;', 'margin:0;') : ''}</div></article>`;
@@ -363,21 +382,21 @@ function CategoryDigest(digest: DailyDigest, absoluteMediaUrl = false): string {
   return Section('Category Digest', '分类简报', 'category-digest', categories);
 }
 
-function WorthYourTime(digest: DailyDigest): string {
+function WorthYourTime(digest: DailyDigest, absoluteMediaUrl = false): string {
   const body = digest.worthYourTime.length
     ? `<ul style="margin:0;padding:0;list-style:none">${digest.worthYourTime.map(item =>
       `<li style="padding:15px 0;border-top:1px solid #e4e1db">` +
       `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener noreferrer" style="color:#20231f;font-family:Georgia,'Songti SC','SimSun',serif;font-size:17px;font-weight:700;line-height:1.4;text-decoration:underline;text-decoration-color:#87a79e;text-underline-offset:3px;overflow-wrap:anywhere">${marketText(item.title)} <span class="external-link" aria-hidden="true" style="color:#0d5c4b;font-weight:850">↗</span></a>` +
-      `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em">${renderMeta(item.source || '延伸阅读', '')}</div>` +
+      `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em">${renderMeta(item.source || '延伸阅读', '', item.sourceLogoUrl, absoluteMediaUrl)}</div>` +
       `<div style="margin-top:5px;color:#626760;font-size:13px;line-height:1.55;overflow-wrap:anywhere">${marketText(item.note)}</div></li>`,
     ).join('')}</ul>`
     : '<p style="margin:0;color:#626760;font-size:13px;line-height:1.55">今天没有额外延伸阅读。</p>';
   return Section('Worth Your Time', '值得花时间', 'worth-your-time', body);
 }
 
-function MailTasks(digest: DailyDigest): string {
+function MailTasks(digest: DailyDigest, absoluteMediaUrl = false): string {
   const body = digest.mailTasks.length
-    ? digest.mailTasks.map(task => `<article class="mail-task" style="padding:17px 0 19px;border-top:1px solid #e4e1db"><h3 style="margin:0 0 5px;color:#20231f;font-family:Georgia,'Songti SC','SimSun',serif;font-size:18px;line-height:1.42;overflow-wrap:anywhere">${marketText(task.title)}</h3><div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em">${renderMeta(task.source || '未读邮件', task.due)}</div><p style="margin:8px 0 0;color:#4b5049;font-size:14px;line-height:1.66;overflow-wrap:anywhere">${marketText(task.detail)}</p></article>`).join('')
+    ? digest.mailTasks.map(task => `<article class="mail-task" style="padding:17px 0 19px;border-top:1px solid #e4e1db"><h3 style="margin:0 0 5px;color:#20231f;font-family:Georgia,'Songti SC','SimSun',serif;font-size:18px;line-height:1.42;overflow-wrap:anywhere">${marketText(task.title)}</h3><div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em">${renderMeta(task.source || '未读邮件', task.due, task.sourceLogoUrl, absoluteMediaUrl)}</div><p style="margin:8px 0 0;color:#4b5049;font-size:14px;line-height:1.66;overflow-wrap:anywhere">${marketText(task.detail)}</p></article>`).join('')
     : '<p class="mail-task-empty" style="margin:0;color:#626760;font-size:13px;line-height:1.55">今天暂无邮件待办</p>';
   return Section('Mail Tasks', '邮件待办', 'mail-tasks', body);
 }
@@ -395,7 +414,7 @@ export function renderDailyDigest(digest: DailyDigest, detailUrl = '', options: 
   return `<main class="daily-newsletter" style="width:100%;max-width:680px;margin:0 auto;border-top:5px solid #0d5c4b;background:#fff;color:#20221f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif">` +
     `<div class="daily-newsletter-inner" style="padding:0 36px">${Header(digest)}${AtAGlance(digest)}` +
     `${Section('Lead Story', '重点新闻', 'lead-story', digest.leadStories.map((story, index) => LeadStoryComponent(story, index + 1, absoluteMediaUrls)).join(''))}` +
-    `${CategoryDigest(digest, absoluteMediaUrls)}${MailTasks(digest)}${WorthYourTime(digest)}${Footer(detailUrl)}</div></main>`;
+    `${CategoryDigest(digest, absoluteMediaUrls)}${MailTasks(digest, absoluteMediaUrls)}${WorthYourTime(digest, absoluteMediaUrls)}${Footer(detailUrl)}</div></main>`;
 }
 
 export function renderDailyDigestMarkdown(markdown: string): string | null {

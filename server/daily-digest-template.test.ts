@@ -10,6 +10,7 @@ import {
 
 const hostedLeadImage = `/daily-report-media/${'a'.repeat(64)}.jpg`;
 const hostedMarketImage = `/daily-report-media/${'b'.repeat(64)}.webp`;
+const hostedSourceLogo = `/daily-report-media/${'c'.repeat(64)}.ico`;
 
 function digestMarkdown(overrides = ''): string {
   return [
@@ -98,6 +99,19 @@ test('Newsletter 不会把未本地化的外站图片输出到 HTML', () => {
   const html = renderDailyDigestMarkdown(digestMarkdown().replace(hostedLeadImage, 'https://images.example/trade.jpg')) || '';
   assert.doesNotMatch(html, /images\.example\/trade\.jpg/);
   assert.match(html, /src="\/daily-report-media\/[a-f0-9]{64}\.webp"/);
+});
+
+test('Newsletter 只渲染已经上传的本站来源 logo', () => {
+  const markdown = digestMarkdown().replace('来源：BBC\n', `来源：BBC\n来源图标：${hostedSourceLogo}\n`);
+  const digest = parseDailyDigestMarkdown(markdown);
+  assert.ok(digest);
+  assert.equal(digest.leadStories[0].sourceLogoUrl, hostedSourceLogo);
+  const html = renderDailyDigestMarkdown(markdown) || '';
+  assert.match(html, new RegExp(`class="source-logo"[^>]+src="${hostedSourceLogo.replaceAll('/', '\\/')}"`));
+  assert.doesNotMatch(html, /<img[^>]+https?:\/\//i);
+  const email = renderDailyDigestEmailPage(markdown, 'https://example.com/reports/2026-08-31') || '';
+  assert.match(email, /class="source-logo"[^>]+src="https?:\/\/[^"/]+\/daily-report-media\/c{64}\.ico"/);
+  assert.equal(parseDailyDigestMarkdown(markdown.replace(hostedSourceLogo, 'https://images.example/logo.ico')), null);
 });
 
 test('Newsletter 转义正文并拒绝危险链接', () => {

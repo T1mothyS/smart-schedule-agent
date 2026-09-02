@@ -6,8 +6,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
+  assertHostedDailyReportMedia,
   dailyReportMediaPath,
   localizeDailyDigestImages,
+  storeProvidedDailyReportMedia,
 } from './daily-report-media-service.js';
 
 const publicLookup = async () => [{ address: '93.184.216.34', family: 4 as const }];
@@ -97,4 +99,36 @@ test('没有 Daily Digest 标记的旧日报不触发图片下载', async () => 
   });
   assert.equal(localized, markdown);
   assert.equal(fetchCalls, 0);
+});
+
+test('本地上传的哈希媒体可被发布前检查识别，外站地址和缺失文件会被拒绝', () => {
+  const mediaRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aicalendar-daily-report-media-upload-'));
+  const body = Buffer.concat([onePixelPng, Buffer.from('uploaded')]);
+  const sha256 = crypto.createHash('sha256').update(body).digest('hex');
+  const filename = `${sha256}.png`;
+  const stored = storeProvidedDailyReportMedia(filename, body, 'image/png', mediaRoot);
+  assert.equal(stored.filename, filename);
+  assertHostedDailyReportMedia(`<!-- daily-digest.v1 -->\n图片：/daily-report-media/${filename}`, mediaRoot);
+  assert.throws(
+    () => assertHostedDailyReportMedia('<!-- daily-digest.v1 -->\n图片：https://images.example/news.png', mediaRoot),
+    /必须先在本地上传/,
+  );
+  assert.throws(
+    () => assertHostedDailyReportMedia(`<!-- daily-digest.v1 -->\n来源图标：/daily-report-media/${'f'.repeat(64)}.ico`, mediaRoot),
+    /尚未上传/,
+  );
+});
+
+test('上传接口接受常见 favicon ICO 和受限 SVG logo', () => {
+  const mediaRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aicalendar-daily-report-media-logo-'));
+  const assets = [
+    { body: Buffer.from([0, 0, 1, 0, 1, 0]), mime: 'image/x-icon', extension: '.ico' },
+    { body: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1" fill="#0d5c4b"/></svg>'), mime: 'image/svg+xml', extension: '.svg' },
+  ];
+  for (const asset of assets) {
+    const sha256 = crypto.createHash('sha256').update(asset.body).digest('hex');
+    const stored = storeProvidedDailyReportMedia(`${sha256}${asset.extension}`, asset.body, asset.mime, mediaRoot);
+    assert.equal(stored.mimeType, asset.mime);
+    assertHostedDailyReportMedia(`<!-- daily-digest.v1 -->\n来源图标：/daily-report-media/${stored.filename}`, mediaRoot);
+  }
 });

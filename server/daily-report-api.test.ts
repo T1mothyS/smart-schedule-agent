@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import http from 'node:http';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -76,6 +77,31 @@ test('日报 HTTP API 使用令牌发布、账号隔离并支持更新后重发�
     assert.equal(mediaResponse.status, 200);
     assert.match(mediaResponse.headers.get('content-type') || '', /^image\/png/);
     assert.match(mediaResponse.headers.get('cache-control') || '', /immutable/);
+
+    const uploadBody = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01]);
+    const uploadHash = crypto.createHash('sha256').update(uploadBody).digest('hex');
+    const uploadFilename = `${uploadHash}.png`;
+    const uploaded = await request(`/api/integrations/daily-report/reports/2026-08-30/media/${uploadFilename}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${reportToken}`, 'Content-Type': 'image/png' },
+      body: uploadBody,
+    });
+    assert.equal(uploaded.status, 200);
+    assert.equal((await uploaded.json()).status, 'READY');
+    const uploadedMedia = await request(`/daily-report-media/${uploadFilename}`);
+    assert.equal(uploadedMedia.status, 200);
+
+    const externalMediaReport = await request('/api/integrations/daily-report/reports/2026-09-02', {
+      method: 'PUT',
+      ...json(reportToken, { markdown: '# Daily Digest\n<!-- daily-digest.v1 -->\n图片：https://images.example/news.png' }),
+    });
+    assert.equal(externalMediaReport.status, 400);
+
+    const missingMediaReport = await request('/api/integrations/daily-report/reports/2026-09-03', {
+      method: 'PUT',
+      ...json(reportToken, { markdown: `# Daily Digest\n<!-- daily-digest.v1 -->\n图片：/daily-report-media/${'d'.repeat(64)}.png` }),
+    });
+    assert.equal(missingMediaReport.status, 400);
 
     const invalidAuth = await request('/api/integrations/daily-report/reports/2026-08-30', {
       method: 'PUT',

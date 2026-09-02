@@ -32,7 +32,14 @@ import { extractWeatherLocationQuery, getDailyWeather, isWeatherQuestion, search
 import { createReadableUserExport, createSchedulesCsv } from './export-service.js';
 import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
 import { getDailyReportView, listDailyReportViews, publishDailyReport, queueDailyReportEmail } from './daily-report-service.js';
-import { DAILY_REPORT_MEDIA_ROUTE, dailyReportMediaRoot } from './daily-report-media-service.js';
+import {
+  DAILY_REPORT_MEDIA_MAX_BYTES,
+  DAILY_REPORT_MEDIA_ROUTE,
+  DAILY_REPORT_MEDIA_UPLOAD_ROUTE,
+  dailyReportMediaRoot,
+  storeProvidedDailyReportMedia,
+  summarizeDailyReportMedia,
+} from './daily-report-media-service.js';
 import { deleteUserMailAccount, getUserMailAccountStatus, readUserMail, saveUserMailAccount } from './user-mail-service.js';
 import { createApiRateLimiter, securityHeaders } from './http-security.js';
 import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
@@ -1635,6 +1642,44 @@ app.get('/api/integrations/daily-report/mail', async (req, res) => {
   res.json({ ...result, generatedAt: new Date().toISOString() });
 });
 
+const dailyReportMediaRawBody = express.raw({
+  type: ['image/jpeg', 'image/png', 'image/webp', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/svg+xml', 'application/octet-stream'],
+  limit: `${DAILY_REPORT_MEDIA_MAX_BYTES}b`,
+});
+
+// 独立日报项目先使用只读令牌上传本地校验过的媒体，再发布只引用本站媒体的 Markdown。
+app.put(`${DAILY_REPORT_MEDIA_UPLOAD_ROUTE}/:date/media/:filename`, (req, res, next) => {
+  const authorization = String(req.header('authorization') || '');
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  const authenticated = match ? authenticateDailyReportToken(match[1].trim()) : null;
+  if (!authenticated) return res.status(401).json({ error: '日报令牌无效或已经撤销' });
+  const date = String(req.params.date || '');
+  if (!isValidDateKey(date)) return res.status(400).json({ error: 'date 必须是有效的 YYYY-MM-DD 日期' });
+  (req as any).dailyReportMediaUserId = authenticated.userId;
+  next();
+}, dailyReportMediaRawBody, (req, res) => {
+  const date = String(req.params.date || '');
+  const filename = String(req.params.filename || '');
+  try {
+    const stored = storeProvidedDailyReportMedia(
+      filename,
+      Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
+      String(req.header('content-type') || ''),
+      dailyReportMediaRoot(),
+    );
+    res.status(200).json({
+      status: 'READY',
+      date,
+      filename: stored.filename,
+      sha256: stored.sha256,
+      sizeBytes: stored.sizeBytes,
+    });
+  } catch (error: any) {
+    const message = String(error?.message || '日报媒体上传失败');
+    res.status(400).json({ error: message });
+  }
+});
+
 // 独立日报项目使用只读令牌发布已通过 Validator 的 Markdown；不会接收账号或邮箱字段。
 app.put('/api/integrations/daily-report/reports/:date', async (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -1648,12 +1693,16 @@ app.put('/api/integrations/daily-report/reports/:date', async (req, res) => {
     return res.status(400).json({ error: '请求正文只允许包含 markdown 字段' });
   }
   try {
-    const result = await publishDailyReport(authenticated.userId, date, req.body.markdown);
+    const result = await publishDailyReport(authenticated.userId, date, req.body.markdown, { requireHostedMedia: true });
+    const media = summarizeDailyReportMedia(req.body.markdown);
     res.status(result.reportStatus === 'CREATED' ? 201 : 200).json({
       date,
       reportStatus: result.reportStatus,
       emailStatus: result.emailStatus,
       contentHash: result.report.contentHash,
+      mediaCount: media.mediaCount,
+      imageCount: media.imageCount,
+      logoCount: media.logoCount,
     });
   } catch (error: any) {
     const message = String(error?.message || '日报发布失败');
@@ -1662,8 +1711,9 @@ app.put('/api/integrations/daily-report/reports/:date', async (req, res) => {
       userId: authenticated.userId,
       date,
     }));
-    res.status(/日报正文|date 必须|请求正文/.test(message) ? 400 : 503).json({
-      error: /日报正文|date 必须|请求正文/.test(message) ? message : '日报发布暂时不可用，请保留本地日报后稍后重试',
+    const badInput = /日报正文|日报媒体|图片|来源图标|date 必须|请求正文/.test(message);
+    res.status(badInput ? 400 : 503).json({
+      error: badInput ? message : '日报发布暂时不可用，请保留本地日报后稍后重试',
     });
   }
 });

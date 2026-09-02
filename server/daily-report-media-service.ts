@@ -11,13 +11,14 @@ const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : pat
 const ROOT = path.join(DATA_DIR, 'daily-report-media');
 
 export const DAILY_REPORT_MEDIA_ROUTE = '/daily-report-media';
+export const DAILY_REPORT_MEDIA_UPLOAD_ROUTE = '/api/integrations/daily-report/reports';
 export const DAILY_REPORT_MEDIA_MAX_BYTES = 5 * 1024 * 1024;
 export const DAILY_REPORT_MEDIA_MAX_COUNT = 20;
 const DAILY_REPORT_MEDIA_TIMEOUT_MS = 15_000;
 const DAILY_REPORT_MEDIA_MAX_REDIRECTS = 3;
 const DAILY_REPORT_MEDIA_CONCURRENCY = 4;
-const STORED_MEDIA_FILENAME = /^[a-f0-9]{64}\.(?:jpg|png|webp)$/;
-const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const STORED_MEDIA_FILENAME = /^[a-f0-9]{64}\.(?:jpg|png|webp|ico|svg)$/;
+const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/svg+xml']);
 
 type FetchLike = typeof fetch;
 type LookupAddress = { address: string; family: 4 | 6 };
@@ -29,9 +30,10 @@ export interface DailyReportMediaOptions {
   mediaRoot?: string;
   publicOrigin?: string;
   timeoutMs?: number;
+  requireHostedMedia?: boolean;
 }
 
-interface StoredMedia {
+export interface StoredMedia {
   filename: string;
   mimeType: string;
   sizeBytes: number;
@@ -102,17 +104,42 @@ async function assertPublicUpstreamUrl(value: string, lookup: LookupLike): Promi
   return parsed;
 }
 
+function isSafeSvg(buffer: Buffer): boolean {
+  let source: string;
+  try {
+    source = buffer.toString('utf8');
+  } catch {
+    return false;
+  }
+  if (!/<svg\b/i.test(source)) return false;
+  return !/<\s*(?:script|foreignObject)\b|\bon[a-z][\w-]*\s*=|(?:href|src|xlink:href)\s*=\s*["']\s*(?:https?:|\/\/|data:|javascript:)/i.test(source);
+}
+
 function detectedImageMime(buffer: Buffer): string | null {
   if (buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return 'image/jpeg';
   if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
   if (buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (buffer.length >= 6 && buffer.subarray(0, 4).equals(Buffer.from([0, 0, 1, 0])) && buffer.readUInt16LE(4) > 0) return 'image/x-icon';
+  if (isSafeSvg(buffer)) return 'image/svg+xml';
   return null;
 }
 
 function extensionForMime(mimeType: string): string {
   if (mimeType === 'image/png') return '.png';
   if (mimeType === 'image/webp') return '.webp';
+  if (mimeType === 'image/x-icon' || mimeType === 'image/vnd.microsoft.icon') return '.ico';
+  if (mimeType === 'image/svg+xml') return '.svg';
   return '.jpg';
+}
+
+function normalizedDeclaredMime(value: string): string {
+  return value.split(';', 1)[0].trim().toLowerCase();
+}
+
+function assertDeclaredMime(declaredMime: string, detectedMime: string): void {
+  if (!declaredMime || declaredMime === 'application/octet-stream' || declaredMime === 'binary/octet-stream') return;
+  const normalized = declaredMime === 'image/jpg' ? 'image/jpeg' : declaredMime === 'image/vnd.microsoft.icon' ? 'image/x-icon' : declaredMime;
+  if (normalized !== detectedMime) throw new Error('媒体响应类型与内容不一致');
 }
 
 async function readBoundedBody(response: Response, maxBytes: number): Promise<Buffer> {
@@ -161,6 +188,24 @@ function saveMedia(buffer: Buffer, mimeType: string, mediaRoot: string): StoredM
     }
   }
   return { filename, mimeType, sizeBytes: buffer.length, sha256 };
+}
+
+export function storeProvidedDailyReportMedia(
+  filename: string,
+  buffer: Buffer,
+  declaredMime = '',
+  mediaRoot = ROOT,
+): StoredMedia {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('日报媒体正文不能为空');
+  if (buffer.length > DAILY_REPORT_MEDIA_MAX_BYTES) throw new Error('日报媒体超过大小限制');
+  if (!STORED_MEDIA_FILENAME.test(filename)) throw new Error('日报媒体文件名不安全');
+  const detectedMime = detectedImageMime(buffer);
+  if (!detectedMime || !ALLOWED_IMAGE_MIME.has(detectedMime)) throw new Error('日报媒体内容不是受支持的有效图片或 logo');
+  assertDeclaredMime(normalizedDeclaredMime(declaredMime), detectedMime);
+  const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+  const expectedFilename = `${sha256}${extensionForMime(detectedMime)}`;
+  if (filename !== expectedFilename) throw new Error('日报媒体文件名与内容哈希不一致');
+  return saveMedia(buffer, detectedMime, mediaRoot);
 }
 
 async function downloadAndStoreImage(url: string, options: Required<Pick<DailyReportMediaOptions, 'fetcher' | 'lookup' | 'mediaRoot' | 'timeoutMs'>>): Promise<StoredMedia> {
@@ -241,6 +286,55 @@ export function dailyReportMediaPath(value: string): string | null {
   return STORED_MEDIA_FILENAME.test(filename) ? pathname : null;
 }
 
+interface ReportMediaReference {
+  label: '图片' | '来源图标';
+  value: string;
+}
+
+function reportMediaReferences(markdown: string): ReportMediaReference[] {
+  if (!markdown.includes('<!-- daily-digest.v1 -->')) return [];
+  const references: ReportMediaReference[] = [];
+  const pattern = /^[^\S\r\n]*(图片|来源图标)：([^\s\r\n]+)[^\S\r\n]*$/gm;
+  for (const match of markdown.matchAll(pattern)) {
+    const value = match[2]?.trim() || '';
+    if (value && value !== '—') references.push({ label: match[1] as ReportMediaReference['label'], value });
+  }
+  return references;
+}
+
+function mediaFilePath(mediaPath: string, mediaRoot: string): string {
+  const filename = mediaPath.slice(`${DAILY_REPORT_MEDIA_ROUTE}/`.length);
+  const root = path.resolve(mediaRoot);
+  const target = path.resolve(root, filename);
+  if (!target.startsWith(root + path.sep)) throw new Error('日报媒体路径不安全');
+  return target;
+}
+
+export function assertHostedDailyReportMedia(markdown: string, mediaRoot = ROOT): void {
+  const references = reportMediaReferences(markdown);
+  const unique = new Set(references.map(reference => reference.value));
+  if (unique.size > DAILY_REPORT_MEDIA_MAX_COUNT) throw new Error(`日报媒体数量超过上限 ${DAILY_REPORT_MEDIA_MAX_COUNT}`);
+  for (const reference of references) {
+    const mediaPath = dailyReportMediaPath(reference.value);
+    if (!mediaPath || !reference.value.startsWith(`${DAILY_REPORT_MEDIA_ROUTE}/`)) {
+      throw new Error(`${reference.label}必须先在本地上传并使用本站媒体地址`);
+    }
+    if (!fs.existsSync(mediaFilePath(mediaPath, mediaRoot))) {
+      throw new Error(`${reference.label}对应的本站媒体文件尚未上传`);
+    }
+  }
+}
+
+export function summarizeDailyReportMedia(markdown: string): { mediaCount: number; imageCount: number; logoCount: number } {
+  const unique = new Map<string, ReportMediaReference['label']>();
+  for (const reference of reportMediaReferences(markdown)) unique.set(reference.value, reference.label);
+  return {
+    mediaCount: unique.size,
+    imageCount: [...unique.values()].filter(label => label === '图片').length,
+    logoCount: [...unique.values()].filter(label => label === '来源图标').length,
+  };
+}
+
 function existingMediaUrl(value: string, publicOrigin: string): string | null {
   const mediaPath = dailyReportMediaPath(value);
   if (!mediaPath) return null;
@@ -279,6 +373,10 @@ export async function localizeDailyDigestImages(markdown: string, options: Daily
   if (!markdown.includes('<!-- daily-digest.v1 -->')) return markdown;
   const publicOrigin = options.publicOrigin || configuredPublicOrigin();
   const mediaRoot = options.mediaRoot || ROOT;
+  if (options.requireHostedMedia) {
+    assertHostedDailyReportMedia(markdown, mediaRoot);
+    return markdown;
+  }
   const fetcher = options.fetcher || fetch;
   const lookup = options.lookup || defaultLookup;
   const timeoutMs = options.timeoutMs || DAILY_REPORT_MEDIA_TIMEOUT_MS;
