@@ -4,6 +4,7 @@
 
 # Local-only project guidance and deployment notes
 AGENTS.md
+CONTINUOUS-REQUIREMENTS.md
 DEPLOY.md
 
 node_modules/
