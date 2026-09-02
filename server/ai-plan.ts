@@ -183,6 +183,8 @@ export function buildAiPlanSnapshot(input: {
   reply: string;
   operations: PendingAiOperation[];
   historyMessageId?: string;
+  sourceNoteId?: string;
+  requestedAction?: 'create_todo';
 }): Record<string, unknown> {
   return {
     id: input.id,
@@ -195,6 +197,8 @@ export function buildAiPlanSnapshot(input: {
     operations: input.operations.map(operation => previewAiPlanOperation(operation)),
     rawOperations: input.operations,
     historyMessageId: input.historyMessageId,
+    ...(input.sourceNoteId ? { sourceNoteId: input.sourceNoteId } : {}),
+    ...(input.requestedAction ? { requestedAction: input.requestedAction } : {}),
   };
 }
 

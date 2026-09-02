@@ -37,13 +37,14 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 ### 1.1 版本与邮件链路
 
-- 当前版本：`0.9.0-260902.2050`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
+- 当前版本：`0.10.0-260902.2153`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
 - 每日摘要邮件链路：账号提醒设置 → 每日摘要调度器 → 持久化通知队列 → 固定发件邮箱；按账号、时区、日期和配置时间组成触发键幂等。
 - 高优先级邮件链路：高优先级事件/待办 → 开始前 1–15 分钟调度器 → 持久化通知队列 → 固定发件邮箱；不依赖每日提醒或邮件开关。
 - V2 日报链路：Validator 通过 → 本地下载/校验并上传 `daily-digest.v1` 图片与来源 logo → `PUT /api/integrations/daily-report/reports/:date` → 服务端确认本站媒体存在 → 账号日报记录 → 新内容版本进入日报邮件通知队列 → 固定发件邮箱；同一内容版本只自动入队一次，媒体失败不会进入最后的日报 PUT，详情页可对当前正文手动重新发送。
 - 每日摘要不再按账号和自然日全局去重；同一配置时间的重复扫描仍按触发键幂等，修改当天提醒时间后可以再次生成邮件。
 - 邮件只有在 Nodemailer 返回至少一个 `accepted` 且没有 `rejected/pending` 时才标记为 `sent`；这表示 SMTP 已接受，不等同于收件箱最终到达。
 - 浏览器提前提醒仍可单独使用，不替代高优先级固定邮件。
+- AI 助手提供独立记事模式：每个非空输入行保存为一个账号隔离的记事条目；条目可完成、恢复、编辑、删除，也可送入当前对话或进入待确认的“创建待办”计划。创建待办确认成功且没有部分失败时，来源记事会自动完成并记录关联日程。
 
 ## 2. 技术结构
 
@@ -347,7 +348,8 @@ cp .env.example .env
 | `src/components/DailyReportsPage.tsx` | 当前账号的日报列表、全屏阅读页、状态和显式邮件重试入口 |
 | `src/components/SettingsPage.tsx` | 模型、常驻地、提醒、数据导出、只读日报令牌、备份和邮箱导入设置 |
 | `src/components/AiImportPage.tsx` | 自然语言/截图智能导入、草稿校对与确认 |
-| `src/components/AiSchedulePanel.tsx` | 普通问答、天气查询和待确认日程建议的 AI 助手 |
+| `src/components/AiSchedulePanel.tsx` | 普通问答、天气查询、待确认日程建议和记事模式的 AI 助手 |
+| `src/components/NoteBoard.tsx` | AI 记事板：桌面侧栏、窄屏抽屉和条目操作 |
 | `src/components/AdminModal.tsx` | 管理员用户管理弹窗 |
 | `src/hooks/useAuth.ts` | 登录状态、令牌和当前用户逻辑 |
 | `src/hooks/useTheme.ts` | 明暗主题读取、切换和持久化 |
@@ -378,6 +380,7 @@ cp .env.example .env
 | `server/daily-email-template.ts` | 每日摘要邮件的天气、进度、分类与完整日程模板 |
 | `server/weather-service.ts` | Open-Meteo 地点搜索、天气读取、缓存、超时和天气代码转换 |
 | `server/export-service.ts` | 当前账号的可读 JSON/CSV 数据导出与表格公式注入防护 |
+| `server/note-item-service.ts` | 账号隔离的 AI 记事 CRUD、批量校验和待办关联 |
 | `server/daily-report-token-service.ts` | 只读日报令牌生成、哈希保存、轮换、吊销和鉴权 |
 | `server/daily-report*.test.ts` | 日报服务、HTTP API 和 V2 假 SMTP 隔离端到端测试 |
 | `server/http-security.ts` | 安全响应头、请求体限制和分接口频率限制 |
@@ -501,6 +504,7 @@ npm run build
 
 - `/api/auth/*`：验证码、注册、登录和当前用户。
 - `/api/action-center`：今日行动中心聚合。
+- `/api/note-items`：当前账号的 AI 记事条目 CRUD；批量 POST 会按非空行创建条目。
 - `/api/schedules`、`/api/calendars`、`/api/categories`：日历数据。
 - `/api/cycle-reminders`：周期事务、模板、完成和测试邮件。
 - `/api/notification-preferences`、`/api/notifications`：提醒偏好与发送记录。
@@ -524,7 +528,7 @@ npm run build
 
 ## 11. 备份与恢复
 
-用户备份文件扩展名为 `.aicalendar-backup`，使用口令派生密钥并加密。导出内容包含个人日历、周期事务、完成记录、附件、日报、通知偏好和确认后的 AI 导入记录，不包含密码、角色、JWT、SMTP 凭据和 AI API Key。
+用户备份文件扩展名为 `.aicalendar-backup`，使用口令派生密钥并加密。导出内容包含个人日历、周期事务、AI 记事、完成记录、附件、日报、通知偏好和确认后的 AI 导入记录，不包含密码、角色、JWT、SMTP 凭据和 AI API Key。旧版缺少记事字段的备份仍可恢复；CSV 导出不包含 AI 记事。
 
 恢复前先使用“检查备份”查看版本、数量和冲突，再选择：
 

@@ -1,6 +1,7 @@
 import * as scheduleStore from './schedule-store.js';
 import * as reminderStore from './reminder-store.js';
 import * as activityStore from './activity-store.js';
+import * as db from './db.js';
 
 export type ActionItemStatus = 'upcoming' | 'today' | 'overdue' | 'completed';
 
@@ -87,10 +88,12 @@ function chooseNext(items: ActionItem[], now: Date): ActionItem | null {
   })[0] || null;
 }
 
-export function getActionCenter(userId: string, upcomingDays = 7, now = new Date()): ActionCenterResult {
+export function getActionCenter(userId: string, upcomingDays = 7, now = new Date(), todayOverride?: string): ActionCenterResult {
   const safeDays = [3, 7, 14].includes(upcomingDays) ? upcomingDays : 7;
-  const timezone = process.env.APP_TIMEZONE || 'Asia/Shanghai';
-  const today = reminderStore.todayInTimezone(timezone);
+  const timezone = db.getReminder(userId)?.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai';
+  const today = todayOverride && /^\d{4}-\d{2}-\d{2}$/.test(todayOverride)
+    ? todayOverride
+    : reminderStore.todayInTimezone(timezone);
   const windowEnd = endOfWindow(today, safeDays);
   const completions = activityStore.listCompletions(userId);
   const latestCompletion = new Map<string, activityStore.CompletionRecord>();

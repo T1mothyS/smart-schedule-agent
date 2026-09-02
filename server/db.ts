@@ -222,12 +222,27 @@ async function initDb(): Promise<void> {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS note_items (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      completed INTEGER NOT NULL DEFAULT 0,
+      completed_at TEXT,
+      linked_schedule_ids TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
   // 创建索引
   db.run('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_ai_schedule_messages_user_created ON ai_schedule_messages(user_id, created_at)');
   db.run('CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email)');
   db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_report_token_hash ON daily_report_tokens(token_hash)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_note_items_user_updated ON note_items(user_id, updated_at)');
 
   // 保存到文件
   saveDb();
@@ -375,6 +390,17 @@ export interface DbUserMailAccount {
   username: string;
   encrypted_auth_code: string;
   enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbNoteItem {
+  id: string;
+  user_id: string;
+  content: string;
+  completed: number;
+  completed_at: string | null;
+  linked_schedule_ids: string;
   created_at: string;
   updated_at: string;
 }
@@ -573,6 +599,7 @@ export function clearAllData(): void {
   run('DELETE FROM messages');
   run('DELETE FROM sessions');
   run('DELETE FROM ai_schedule_messages');
+  run('DELETE FROM note_items');
 }
 
 // ============= 用户操作 =============
@@ -816,6 +843,112 @@ export function getReminderEmail(userId: string): string | null {
   );
   return row ? (row.reminder_email?.trim() || row.email) : null;
 }
+
+// ============= AI 记事条目操作 =============
+
+export function getNoteItem(id: string, userId: string): DbNoteItem | undefined {
+  return queryOne<DbNoteItem>('SELECT * FROM note_items WHERE id = ? AND user_id = ?', [id, userId]);
+}
+
+export function listNoteItems(userId: string): DbNoteItem[] {
+  return queryAll<DbNoteItem>(
+    'SELECT * FROM note_items WHERE user_id = ? ORDER BY completed ASC, updated_at DESC, created_at DESC',
+    [userId],
+  );
+}
+
+export function createNoteItem(item: DbNoteItem): DbNoteItem {
+  run(
+    `INSERT INTO note_items
+     (id, user_id, content, completed, completed_at, linked_schedule_ids, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [item.id, item.user_id, item.content, item.completed ? 1 : 0, item.completed_at, item.linked_schedule_ids || '[]', item.created_at, item.updated_at],
+  );
+  return item;
+}
+
+export function updateNoteItem(
+  id: string,
+  userId: string,
+  updates: Partial<Pick<DbNoteItem, 'content' | 'completed' | 'completed_at' | 'linked_schedule_ids' | 'updated_at'>>,
+): DbNoteItem | undefined {
+  const fields: string[] = [];
+  const values: any[] = [];
+  if (updates.content !== undefined) {
+    fields.push('content = ?');
+    values.push(updates.content);
+  }
+  if (updates.completed !== undefined) {
+    fields.push('completed = ?');
+    values.push(updates.completed ? 1 : 0);
+  }
+  if (updates.completed_at !== undefined) {
+    fields.push('completed_at = ?');
+    values.push(updates.completed_at);
+  }
+  if (updates.linked_schedule_ids !== undefined) {
+    fields.push('linked_schedule_ids = ?');
+    values.push(updates.linked_schedule_ids);
+  }
+  if (!fields.length) return getNoteItem(id, userId);
+  fields.push('updated_at = ?');
+  values.push(updates.updated_at || new Date().toISOString(), id, userId);
+  run(`UPDATE note_items SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, values);
+  return getNoteItem(id, userId);
+}
+
+export function deleteNoteItem(id: string, userId: string): boolean {
+  return run('DELETE FROM note_items WHERE id = ? AND user_id = ?', [id, userId]).changes > 0;
+}
+
+function restoreLinkedScheduleIds(value: unknown): string[] {
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    try { parsed = JSON.parse(value); } catch { parsed = []; }
+  }
+  return Array.isArray(parsed)
+    ? [...new Set(parsed.map(item => String(item || '').trim()).filter(Boolean))].slice(0, 100)
+    : [];
+}
+
+export function exportUserNoteItems(userId: string): DbNoteItem[] {
+  return listNoteItems(userId);
+}
+
+export function restoreUserNoteItems(
+  userId: string,
+  rows: Array<Partial<DbNoteItem> & { linkedScheduleIds?: unknown; completedAt?: unknown }>,
+  mode: 'merge' | 'replace',
+): { items: number } {
+  if (mode === 'replace') run('DELETE FROM note_items WHERE user_id = ?', [userId]);
+  let items = 0;
+  for (const row of rows || []) {
+    const content = String(row.content || '').trim().slice(0, 2_000);
+    if (!content) continue;
+    const id = String(row.id || '').trim() || crypto.randomUUID();
+    if (getNoteItem(id, userId)) continue;
+    const now = new Date().toISOString();
+    const rawRow = row as any;
+    const completed = rawRow.completed === true || Number(rawRow.completed) === 1;
+    const updatedAt = String(rawRow.updated_at || rawRow.updatedAt || now);
+    const createdAt = String(rawRow.created_at || rawRow.createdAt || updatedAt);
+    const completedAt = completed
+      ? String(rawRow.completed_at || rawRow.completedAt || updatedAt)
+      : null;
+    createNoteItem({
+      id,
+      user_id: userId,
+      content,
+      completed: completed ? 1 : 0,
+      completed_at: completedAt,
+      linked_schedule_ids: JSON.stringify(restoreLinkedScheduleIds(row.linked_schedule_ids ?? row.linkedScheduleIds)),
+      created_at: createdAt,
+      updated_at: updatedAt,
+    });
+    items++;
+  }
+  return { items };
+}
 // ============= 用户 API Key 操作 =============
 
 export function getUserApiKey(userId: string): DbUserApiKey | undefined {
@@ -931,6 +1064,7 @@ export function deleteUser(userId: string): boolean {
     run('DELETE FROM user_mail_accounts WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
     run('DELETE FROM ai_schedule_messages WHERE user_id = ?', [userId]);
+    run('DELETE FROM note_items WHERE user_id = ?', [userId]);
     const sessions = queryAll<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', [userId]);
     for (const session of sessions) {
       run('DELETE FROM messages WHERE session_id = ?', [session.id]);
@@ -950,6 +1084,7 @@ export function clearUserData(userId: string): { schedules: number; sessions: nu
     run('DELETE FROM user_mail_accounts WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
     run('DELETE FROM ai_schedule_messages WHERE user_id = ?', [userId]);
+    run('DELETE FROM note_items WHERE user_id = ?', [userId]);
     const sessions = queryAll<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', [userId]);
     for (const session of sessions) run('DELETE FROM messages WHERE session_id = ?', [session.id]);
     run('DELETE FROM sessions WHERE user_id = ?', [userId]);

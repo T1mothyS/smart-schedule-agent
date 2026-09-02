@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { renderDailyReminderEmail } from './daily-email-template.js';
 import type { Schedule } from './schedule-store.js';
+import type { ActionItem } from './action-center.js';
 
 function schedule(overrides: Partial<Schedule> = {}): Schedule {
   return {
@@ -22,6 +23,27 @@ function schedule(overrides: Partial<Schedule> = {}): Schedule {
     is_high_risk: false,
     created_at: '2026-08-24T00:00:00Z',
     updated_at: '2026-08-24T00:00:00Z',
+    ...overrides,
+  };
+}
+
+function actionItem(overrides: Partial<ActionItem> = {}): ActionItem {
+  return {
+    id: 'schedule:backlog-1',
+    sourceType: 'schedule',
+    sourceId: 'backlog-1',
+    instanceId: null,
+    title: '逾期事项',
+    dueAt: '2026-08-23T09:00:00',
+    allDay: false,
+    status: 'overdue',
+    priority: 'medium',
+    nextAction: '尽快处理',
+    itemType: 'todo',
+    isUnscheduled: false,
+    completedAt: null,
+    completionId: null,
+    proof: null,
     ...overrides,
   };
 }
@@ -55,4 +77,30 @@ test('天气失败时降级但仍保留日程表', () => {
   });
   assert.match(result.html, /天气暂不可用/);
   assert.match(result.html, /项目会议/);
+});
+
+test('今日没有待处理安排时显示积压摘要，并限制每组最多十项', () => {
+  const result = renderDailyReminderEmail({
+    date: '2026-09-02',
+    hour: 8,
+    schedules: [],
+    overdue: Array.from({ length: 11 }, (_, index) => actionItem({
+      id: `schedule:overdue-${index}`,
+      sourceId: `overdue-${index}`,
+      title: `逾期事项 ${index + 1}`,
+    })),
+    unscheduled: [
+      actionItem({ id: 'schedule:unscheduled-1', sourceId: 'unscheduled-1', title: '无日期待办', status: 'today', isUnscheduled: true }),
+      actionItem({ id: 'schedule:unscheduled-event', sourceId: 'unscheduled-event', title: '不应进入无固定期限组', itemType: 'event', status: 'today', isUnscheduled: true }),
+    ],
+    appUrl: 'https://example.com/action-center',
+  });
+  assert.equal(result.subject, '09-02 今日 0 项，另有 12 项待整理');
+  assert.match(result.html, /已逾期/);
+  assert.match(result.html, /无固定期限/);
+  assert.match(result.html, /还有 1 项/);
+  assert.match(result.html, /打开行动中心查看全部/);
+  assert.match(result.html, /无日期待办/);
+  assert.doesNotMatch(result.html, /不应进入无固定期限组/);
+  assert.doesNotMatch(result.html, /逾期事项 11/);
 });

@@ -1,5 +1,6 @@
 import type { Schedule } from './schedule-store.js';
 import type { DailyWeather } from './weather-service.js';
+import type { ActionItem } from './action-center.js';
 
 const CATEGORY_META: Record<string, { label: string; color: string; background: string }> = {
   work: { label: '工作', color: '#2563eb', background: '#eff6ff' },
@@ -51,28 +52,74 @@ function weatherLine(weather: DailyWeather | null, locationName?: string | null,
   return locationName ? `${escapeEmailHtml(locationName)} · 尚未取得天气信息` : '设置常驻城市或区县后，可在邮件中查看天气';
 }
 
+function actionItemTypeLabel(item: ActionItem): string {
+  return item.itemType === 'recurring' ? '周期事务' : item.itemType === 'todo' ? '待办' : '日程';
+}
+
+function actionItemDueLabel(item: ActionItem, sectionTitle: string): string {
+  if (sectionTitle === '无固定期限') return '无固定期限';
+  const date = item.dueAt?.slice(0, 10) || '日期待定';
+  const time = item.allDay ? '全天' : item.dueAt?.slice(11, 16) || '时间待定';
+  return `逾期 · ${date}${time === '全天' ? ' · 全天' : ` · ${time}`}`;
+}
+
+function renderBacklogSection(title: string, items: ActionItem[], appUrl: string): string {
+  if (!items.length) return '';
+  const visible = items.slice(0, 10);
+  const overflow = Math.max(0, items.length - visible.length);
+  const accent = title === '已逾期' ? '#dc2626' : '#7c3aed';
+  const background = title === '已逾期' ? '#fef2f2' : '#faf5ff';
+  const rows = visible.map(item => `
+    <tr><td style="padding:0 0 8px">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;background:${background};border:1px solid #e2e8f0;border-left:4px solid ${accent};border-radius:9px">
+        <tr><td style="padding:11px 12px;vertical-align:top">
+          <div style="font-size:11px;color:${accent};font-weight:700;margin-bottom:4px">${actionItemTypeLabel(item)} · ${actionItemDueLabel(item, title)}</div>
+          <div style="font-size:14px;line-height:1.45;color:#0f172a;font-weight:700">${escapeEmailHtml(item.title)}</div>
+          ${item.nextAction ? `<div style="margin-top:4px;color:#64748b;font-size:12px;line-height:1.5">下一步：${escapeEmailHtml(item.nextAction)}</div>` : ''}
+        </td></tr>
+      </table>
+    </td></tr>`).join('');
+  const overflowLine = overflow > 0
+    ? `<div style="margin-top:2px;font-size:12px;line-height:1.5;color:#64748b">还有 ${overflow} 项，<a href="${escapeEmailHtml(appUrl)}" style="color:${accent};font-weight:700">打开行动中心查看全部</a>。</div>`
+    : '';
+  return `<tr><td style="padding:0 26px 8px">
+    <div style="margin:8px 0 9px;padding-top:12px;border-top:1px solid #e2e8f0;font-size:15px;color:${accent};font-weight:800">${title} <span style="font-size:12px;font-weight:600;color:#64748b">${items.length} 项</span></div>
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">${rows}</table>
+    ${overflowLine}
+  </td></tr>`;
+}
+
 export function renderDailyReminderEmail(input: {
   date: string;
   hour: number;
   schedules: Schedule[];
   appUrl: string;
+  overdue?: ActionItem[];
+  unscheduled?: ActionItem[];
   locationName?: string | null;
   weather?: DailyWeather | null;
   weatherError?: string | null;
 }): { subject: string; html: string } {
   const schedules = [...input.schedules].sort((left, right) => left.start_time.localeCompare(right.start_time));
   const pending = schedules.filter(schedule => !schedule.is_completed);
+  const overdue = [...(input.overdue || [])];
+  const unscheduled = [...(input.unscheduled || [])].filter(item => item.itemType === 'todo');
+  const backlogCount = overdue.length + unscheduled.length;
   const allCompleted = schedules.length > 0 && pending.length === 0;
-  const subject = schedules.length === 0
-    ? '太好了，今天没有安排日程'
-    : allCompleted
-      ? '今天的安排已全部完成'
-      : `${input.date.slice(5)} 今日还有 ${pending.length} 项安排`;
-  const intro = schedules.length === 0
-    ? '今天没有安排，留一点时间给休息、阅读或临时灵感。'
-    : allCompleted
-      ? '今天安排的事项已经全部完成，辛苦了。'
-      : `今天共有 ${schedules.length} 项安排，其中 ${pending.length} 项尚未完成。`;
+  const subject = pending.length === 0 && backlogCount > 0
+    ? `${input.date.slice(5)} 今日 0 项，另有 ${backlogCount} 项待整理`
+    : schedules.length === 0
+      ? '太好了，今天没有安排日程'
+      : allCompleted
+        ? '今天的安排已全部完成'
+        : `${input.date.slice(5)} 今日还有 ${pending.length} 项安排`;
+  const intro = pending.length === 0 && backlogCount > 0
+    ? `今天没有待处理安排，另有 ${backlogCount} 项待整理。`
+    : schedules.length === 0
+      ? '今天没有安排，留一点时间给休息、阅读或临时灵感。'
+      : allCompleted
+        ? '今天安排的事项已经全部完成，辛苦了。'
+        : `今天共有 ${schedules.length} 项安排，其中 ${pending.length} 项尚未完成。`;
   const rows = schedules.map(schedule => {
     const meta = CATEGORY_META[schedule.category] || CATEGORY_META.other;
     const detailRows = [
@@ -113,6 +160,8 @@ export function renderDailyReminderEmail(input: {
         </td></tr>
         <tr><td style="padding:0 26px 15px;font-size:14px;line-height:1.7;color:#475569">${intro}</td></tr>
         ${schedules.length ? `<tr><td style="padding:0 26px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse">${rows}</table></td></tr>` : ''}
+        ${renderBacklogSection('已逾期', overdue, input.appUrl)}
+        ${renderBacklogSection('无固定期限', unscheduled, input.appUrl)}
         <tr><td style="padding:10px 26px 28px;text-align:center">
           <a href="${escapeEmailHtml(input.appUrl)}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:11px 20px;border-radius:9px">打开今日行动中心</a>
           <div style="margin-top:16px;font-size:11px;line-height:1.5;color:#94a3b8">天气来自 Open-Meteo；提醒内容以 AI Calendar 当前数据为准。</div>

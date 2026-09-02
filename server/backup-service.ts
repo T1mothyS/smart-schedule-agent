@@ -25,6 +25,7 @@ interface UserBackupPayload {
   account: { email: string | null; reminder: unknown };
   schedule: ReturnType<typeof scheduleStore.exportUserScheduleData>;
   reminder: ReturnType<typeof reminderStore.exportUserReminderData>;
+  noteItems?: ReturnType<typeof db.exportUserNoteItems>;
   activity: ReturnType<typeof activityStore.exportUserActivity>;
   files: Array<{
     completionId: string | null;
@@ -61,6 +62,7 @@ function remapForeignUserPayload(source: UserBackupPayload): UserBackupPayload {
   const importIds = createIdMap((activity.aiImports || []).map(row => row.id));
   const notificationIds = createIdMap((activity.notifications || []).map(row => row.id));
   const reportIds = createIdMap((activity.dailyReports || []).map(row => row.id));
+  const noteIds = createIdMap((payload.noteItems || []).map(row => row.id));
 
   const scheduleIds = new Map<string, string>();
   for (const schedule of payload.schedule.schedules || []) {
@@ -85,6 +87,19 @@ function remapForeignUserPayload(source: UserBackupPayload): UserBackupPayload {
     id: scheduleIds.get(String(schedule.id)) || crypto.randomUUID(),
     calendar_id: calendarIds.get(String(schedule.calendar_id)) || String(schedule.calendar_id || ''),
   }));
+  payload.noteItems = (payload.noteItems || []).map(note => {
+    let linkedScheduleIds: unknown = note.linked_schedule_ids;
+    if (typeof linkedScheduleIds === 'string') {
+      try { linkedScheduleIds = JSON.parse(linkedScheduleIds); } catch { linkedScheduleIds = []; }
+    }
+    return {
+      ...note,
+      id: noteIds.get(String(note.id)) || crypto.randomUUID(),
+      linked_schedule_ids: JSON.stringify(Array.isArray(linkedScheduleIds)
+        ? linkedScheduleIds.map(id => scheduleIds.get(String(id)) || String(id || '')).filter(Boolean)
+        : []),
+    };
+  });
   payload.reminder.tasks = (payload.reminder.tasks || []).map(task => ({
     ...task,
     id: taskIds.get(String(task.id)) || crypto.randomUUID(),
@@ -192,6 +207,7 @@ export function createUserBackup(userId: string, password: string): Buffer {
     account: { email: accountData.user?.email || null, reminder: accountData.reminder },
     schedule: scheduleStore.exportUserScheduleData(userId),
     reminder: reminderStore.exportUserReminderData(userId),
+    noteItems: db.exportUserNoteItems(userId),
     activity,
     files,
   };
@@ -201,6 +217,7 @@ export function createUserBackup(userId: string, password: string): Buffer {
 function validateUserPayload(payload: UserBackupPayload): void {
   if (payload?.format !== 'aicalendar-user' || payload.version !== FORMAT_VERSION) throw new Error('不支持的用户备份版本');
   if (!payload.schedule || !payload.reminder || !payload.activity || !Array.isArray(payload.files)) throw new Error('备份内容不完整');
+  if (payload.noteItems !== undefined && !Array.isArray(payload.noteItems)) throw new Error('备份记事内容不完整');
 }
 
 export function inspectUserBackup(buffer: Buffer, password: string): Record<string, unknown> {
@@ -220,6 +237,7 @@ export function inspectUserBackup(buffer: Buffer, password: string): Record<stri
       notifications: (payload.activity.notifications || []).length,
       aiImports: (payload.activity.aiImports || []).length,
       dailyReports: (payload.activity.dailyReports || []).length,
+      noteItems: (payload.noteItems || []).length,
     },
   };
 }
@@ -237,6 +255,7 @@ export function restoreUserBackup(userId: string, buffer: Buffer, password: stri
   const oldAttachments = mode === 'replace' ? activityStore.listAttachments(userId) : [];
   const schedule = scheduleStore.restoreUserScheduleData(userId, payload.schedule, mode);
   const reminder = reminderStore.restoreUserReminderData(userId, payload.reminder, mode);
+  const noteItems = db.restoreUserNoteItems(userId, payload.noteItems || [], mode);
   const activity = activityStore.restoreUserActivity(userId, payload.activity, mode);
   if (mode === 'replace') attachmentService.deleteUserAttachmentFiles(oldAttachments);
   const preference = payload.account.reminder as any;
@@ -268,7 +287,7 @@ export function restoreUserBackup(userId: string, buffer: Buffer, password: stri
       // 单个损坏附件不会使结构化数据恢复失败，结果中会体现数量差异。
     }
   }
-  return { schedule, reminder, activity, attachments, mode, idsRemapped: isForeignAccount };
+  return { schedule, reminder, noteItems, activity, attachments, mode, idsRemapped: isForeignAccount };
 }
 
 function collectFiles(root: string): Array<{ relativePath: string; base64: string }> {

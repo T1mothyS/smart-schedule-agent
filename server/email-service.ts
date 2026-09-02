@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import type { ReminderCycle, ReminderTask, SimConfig, CreditCardConfig, GenericReminderConfig } from './reminder-store.js';
 import * as db from './db.js';
 import { getSchedulesByDate } from './schedule-store.js';
+import { getActionCenter } from './action-center.js';
 import { renderDailyReminderEmail } from './daily-email-template.js';
 import { renderDailyDigestEmailPage, renderDailyDigestPlainText } from './daily-digest-template.js';
 import { getDailyWeather } from './weather-service.js';
@@ -300,6 +301,7 @@ export async function sendDailyReminderEmail(to: string, userId: string, dateOve
   const timezone = preference?.timezone || 'Asia/Shanghai';
   const dateStr = dateOverride || dateInTimezone(new Date(), timezone);
   const schedules = getSchedulesByDate(dateStr, userId);
+  const actionCenter = getActionCenter(userId, 7, new Date(), dateStr);
   let weather = null;
   let weatherError: string | null = null;
   if (preference?.home_latitude != null && preference.home_longitude != null) {
@@ -317,6 +319,8 @@ export async function sendDailyReminderEmail(to: string, userId: string, dateOve
     date: dateStr,
     hour: preference?.hour ?? 8,
     schedules,
+    overdue: actionCenter.overdue,
+    unscheduled: actionCenter.unscheduled,
     appUrl: process.env.APP_URL || 'http://localhost:3000/today',
     locationName: preference?.home_location_name || null,
     weather,
