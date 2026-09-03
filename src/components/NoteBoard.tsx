@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronUp, CircleX, Copy, ListPlus, Pencil, RotateCcw, StickyNote, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, CircleX, Copy, Forward, ListPlus, Pencil, RotateCcw, StickyNote, Trash2, X } from 'lucide-react';
 import { formatNotesAsMarkdown, formatNotesAsText, noteExportFilename } from '../utils/note-export';
+import { formatNoteDateTime, NOTE_TIME_ZONE_LABEL } from '../utils/note-time';
 import { NOTE_COLORS, NOTE_COLOR_LABELS, NOTE_COLOR_STYLES, normaliseNoteColor, type NoteColor } from '../utils/note-colors';
 
 export interface NoteItem {
@@ -28,11 +29,6 @@ interface NoteBoardProps {
   onColorChange: (note: NoteItem, color: NoteColor) => Promise<void>;
   onDelete: (note: NoteItem) => Promise<void>;
   onSendToAi: (note: NoteItem) => void;
-}
-
-function formatNoteTime(value: string | null): string {
-  if (!value) return '暂无';
-  return value.replace('T', ' ').slice(0, 16);
 }
 
 function NoteColorPicker({ note, disabled, open, onToggle, onChange }: {
@@ -136,7 +132,7 @@ function NoteRow({
   const disabled = aiBusy || saving;
   return (
     <article
-      className={`note-board-row${note.completed ? ' is-completed' : ''}`}
+      className={`note-board-row${note.completed ? ' is-completed' : ''}${colorPickerOpen ? ' is-color-picker-open' : ''}`}
       style={{ backgroundColor: colorStyle.surface, borderColor: colorStyle.border }}
     >
       <div className="note-board-row-toolbar">
@@ -164,7 +160,7 @@ function NoteRow({
           {copyFeedback === 'success' ? <Check size={15} /> : copyFeedback === 'error' ? <CircleX size={15} /> : <Copy size={15} />}
         </button>
         <button type="button" className="note-board-action" onClick={onToggleCompleted} disabled={disabled} title={note.completed ? '恢复到进行中' : '移入废纸篓'} aria-label={note.completed ? `恢复记事：${note.content}` : `完成记事并移入废纸篓：${note.content}`}>
-          {note.completed ? <RotateCcw size={15} /> : <Check size={15} />}
+          {note.completed ? <RotateCcw size={15} /> : <Forward size={15} />}
         </button>
         <button type="button" className="note-board-action is-danger" onClick={onDelete} disabled={disabled} title="永久删除记事" aria-label={`永久删除记事：${note.content}`}><Trash2 size={15} /></button>
       </div>
@@ -203,7 +199,7 @@ function NoteRow({
             </button>
           )}
           <div className="note-board-row-meta">
-            <span>更新于 {formatNoteTime(note.updatedAt)}</span>
+            <span>更新于 {formatNoteDateTime(note.updatedAt)}（{NOTE_TIME_ZONE_LABEL}）</span>
             <span className="note-board-color-label">{NOTE_COLOR_LABELS[color]}</span>
           </div>
         </div>

@@ -1,4 +1,5 @@
 import { NOTE_COLOR_LABELS, type NoteColor, normaliseNoteColor } from './note-colors';
+import { formatNoteDateTime, noteDateKey } from './note-time';
 
 export type NoteExportSection = 'active' | 'trash';
 
@@ -21,7 +22,7 @@ function metadata(item: NoteExportItem, section: NoteExportSection): string[] {
   return [
     `颜色：${NOTE_COLOR_LABELS[normaliseNoteColor(item.color)]}`,
     `状态：${sectionLabel(section)}`,
-    `更新时间：${item.updatedAt}`,
+    `更新时间：${formatNoteDateTime(item.updatedAt)}（北京时间）`,
   ];
 }
 
@@ -43,6 +44,5 @@ export function formatNotesAsMarkdown(items: NoteExportItem[], section: NoteExpo
 }
 
 export function noteExportFilename(section: NoteExportSection, date = new Date()): string {
-  const dateKey = [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
-  return `ai-notes-${section}-${dateKey}`;
+  return `ai-notes-${section}-${noteDateKey(date)}`;
 }
