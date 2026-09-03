@@ -46,6 +46,15 @@ function digestMarkdown(overrides = ''): string {
     `图片：${hostedMarketImage}`,
     `摘要：${overrides || '美股科技偏强、A 股走高、韩国市场回落；收益率下跌 0.86%，不同时点数据不能拼成单一风险偏好快照。'}`,
     '',
+    '## Mail Briefing',
+    '### 校友活动邀请',
+    '来源：HKU Business School Alumni',
+    '时间：2026-08-31 09:00',
+    '摘要：香港大学商学院邀请参加九月的羽毛球社交活动和交流活动。',
+    '为什么值得看：这是与你的校友网络相关的活动信息，值得确认时间和报名要求。',
+    '需要采取的措施：查看原邮件，确认是否需要报名或回复。',
+    '截止：—',
+    '',
     '## Mail Tasks',
     '### 确认合同附件',
     '来源：未读邮件',
@@ -69,9 +78,22 @@ test('Daily Digest V1 解析为固定编辑结构', () => {
   assert.equal(digest.atAGlance.length, 3);
   assert.equal(digest.leadStories.length, 1);
   assert.equal(digest.categories[0].items.length, 1);
+  assert.equal(digest.mailBriefings.length, 1);
+  assert.equal(digest.mailBriefings[0].action, '查看原邮件，确认是否需要报名或回复。');
   assert.equal(digest.mailTasks.length, 1);
   assert.equal(digest.leadStories[0].imageUrl, hostedLeadImage);
   assert.equal(digest.worthYourTime.length, 1);
+});
+
+test('旧版结构化 Markdown 没有邮件简报时仍可读取', () => {
+  const markdown = digestMarkdown();
+  const briefingStart = markdown.indexOf('## Mail Briefing');
+  const tasksStart = markdown.indexOf('## Mail Tasks');
+  const legacyMarkdown = `${markdown.slice(0, briefingStart)}${markdown.slice(tasksStart)}`;
+  const digest = parseDailyDigestMarkdown(legacyMarkdown);
+  assert.ok(digest);
+  assert.equal(digest.mailBriefings.length, 0);
+  assert.equal(digest.mailTasks.length, 1);
 });
 
 test('Newsletter 渲染使用排版层级而不是卡片集合', () => {
@@ -81,6 +103,8 @@ test('Newsletter 渲染使用排版层级而不是卡片集合', () => {
   assert.match(html, /Today at a Glance/);
   assert.match(html, /What happened \/ 发生了什么/);
   assert.match(html, /Category Digest/);
+  assert.match(html, /邮件简报/);
+  assert.match(html, /需要采取的措施/);
   assert.match(html, /邮件待办/);
   assert.match(html, /source-mark/);
   assert.match(html, /market-movement up/);
@@ -134,6 +158,7 @@ test('邮件页面和纯文本均由同一结构化内容生成', () => {
   assert.match(email, /src="[^"]*\/daily-report-media\/[a-f0-9]{64}\.(?:jpg|webp)"/);
   assert.doesNotMatch(email, /example\.com\/trade\.jpg|favicon\.ico/i);
   assert.match(text, /Today at a Glance/);
+  assert.match(text, /Mail Briefing/);
   assert.match(text, /Mail Tasks/);
   assert.doesNotMatch(text, /daily-digest\.v1|<!--/);
 });

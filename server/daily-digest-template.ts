@@ -42,6 +42,16 @@ interface WorthLink {
   note: string;
 }
 
+interface MailBriefing {
+  title: string;
+  summary: string;
+  whyItMatters: string;
+  action: string;
+  due: string;
+  source: string;
+  receivedAt: string;
+}
+
 interface MailTask {
   title: string;
   detail: string;
@@ -57,6 +67,7 @@ export interface DailyDigest {
   atAGlance: string[];
   leadStories: LeadStory[];
   categories: DigestCategory[];
+  mailBriefings: MailBriefing[];
   mailTasks: MailTask[];
   worthYourTime: WorthLink[];
 }
@@ -152,8 +163,14 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
 
   const glanceLines = section(lines, '## Today at a Glance', '## Lead Story');
   const leadLines = section(lines, '## Lead Story', '## Category Digest');
+  const hasMailBriefingSection = lines.includes('## Mail Briefing');
   const hasMailTasksSection = lines.includes('## Mail Tasks');
-  const categoryLines = section(lines, '## Category Digest', hasMailTasksSection ? '## Mail Tasks' : '## Worth Your Time');
+  const categoryEndHeading = hasMailBriefingSection
+    ? '## Mail Briefing'
+    : hasMailTasksSection
+      ? '## Mail Tasks'
+      : '## Worth Your Time';
+  const categoryLines = section(lines, '## Category Digest', categoryEndHeading);
   const worthLines = section(lines, '## Worth Your Time', '## Footer');
   if (!glanceLines || !leadLines || !categoryLines || !worthLines) return null;
 
@@ -201,6 +218,32 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
   }
   if (categories.length < 1 || categories.length > 6) return null;
 
+  const mailBriefings: MailBriefing[] = [];
+  if (hasMailBriefingSection) {
+    const mailEndHeading = hasMailTasksSection ? '## Mail Tasks' : '## Worth Your Time';
+    const mailBriefingLines = section(lines, '## Mail Briefing', mailEndHeading);
+    if (!mailBriefingLines) return null;
+    for (const block of headingBlocks(mailBriefingLines, '### ')) {
+      const body = block.body.filter(Boolean);
+      const title = normalizedText(block.title, 4, 100);
+      const source = field(body[0], '来源：');
+      const receivedAt = field(body[1], '时间：');
+      const rawSummary = field(body.find(line => line.startsWith('摘要：')), '摘要：');
+      const rawWhyItMatters = field(body.find(line => line.startsWith('为什么值得看：')), '为什么值得看：');
+      const rawAction = field(body.find(line => line.startsWith('需要采取的措施：')), '需要采取的措施：');
+      const rawDue = field(body.find(line => line.startsWith('截止：')), '截止：');
+      const cleanSource = source === null ? null : normalizedText(source, 0, 60, true);
+      const cleanReceivedAt = receivedAt === null ? null : normalizedText(receivedAt, 0, 60, true);
+      const summary = rawSummary === null ? null : normalizedText(rawSummary, 8, 220);
+      const whyItMatters = rawWhyItMatters === null ? null : normalizedText(rawWhyItMatters, 8, 180);
+      const action = rawAction === null ? null : normalizedText(rawAction, 4, 140);
+      const due = rawDue === null ? null : normalizedText(rawDue, 0, 40, true);
+      if (!title || cleanSource === null || cleanReceivedAt === null || !summary || !whyItMatters || !action || due === null) return null;
+      mailBriefings.push({ title, summary, whyItMatters, action, due, source: cleanSource, receivedAt: cleanReceivedAt });
+    }
+    if (mailBriefings.length > 20) return null;
+  }
+
   const mailTasks: MailTask[] = [];
   if (hasMailTasksSection) {
     const mailLines = section(lines, '## Mail Tasks', '## Worth Your Time');
@@ -222,7 +265,7 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
       if (!title || cleanSource === null || sourceLogoUrl === null || cleanDue === null || !cleanDetail) return null;
       mailTasks.push({ title, source: cleanSource, sourceLogoUrl, due: cleanDue, detail: cleanDetail });
     }
-    if (mailTasks.length > 6) return null;
+    if (mailTasks.length > 20) return null;
   }
 
   const worthYourTime: WorthLink[] = [];
@@ -251,6 +294,7 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
     atAGlance,
     leadStories,
     categories: categories.filter(category => !['工作与行动', '今日行动'].includes(category.name)),
+    mailBriefings,
     mailTasks,
     worthYourTime,
   };
@@ -394,10 +438,28 @@ function WorthYourTime(digest: DailyDigest, absoluteMediaUrl = false): string {
   return Section('Worth Your Time', '值得花时间', 'worth-your-time', body);
 }
 
+function MailBriefings(digest: DailyDigest, absoluteMediaUrl = false): string {
+  const body = digest.mailBriefings.length
+    ? digest.mailBriefings.map(briefing => {
+      const fields = [
+        ['摘要', briefing.summary],
+        ['为什么值得看', briefing.whyItMatters],
+        ['需要采取的措施', briefing.action],
+        ...(briefing.due ? [['截止', briefing.due]] : []),
+      ];
+      const fieldHtml = fields.map(([label, value]) =>
+        `<p style="margin:8px 0 0;color:#4b5049;font-size:14px;line-height:1.66;overflow-wrap:anywhere"><span style="color:#0d5c4b;font-size:11px;font-weight:850;letter-spacing:.04em">${escapeHtml(label)}：</span>${marketText(value)}</p>`,
+      ).join('');
+      return `<article class="mail-briefing" style="padding:17px 0 19px;border-top:1px solid #e4e1db"><h3 style="margin:0 0 5px;color:#20231f;font-family:Georgia,'Songti SC','SimSun',serif;font-size:18px;line-height:1.42;overflow-wrap:anywhere">${marketText(briefing.title)}</h3><div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(briefing.source || '未读邮件', briefing.receivedAt, '', absoluteMediaUrl)}</div>${fieldHtml}</article>`;
+    }).join('')
+    : '<p class="mail-briefing-empty" style="margin:0;color:#626760;font-size:13px;line-height:1.55">今天没有需要简报的未读邮件。</p>';
+  return Section('Mail Briefing', '邮件简报', 'mail-briefing', body);
+}
+
 function MailTasks(digest: DailyDigest, absoluteMediaUrl = false): string {
   const body = digest.mailTasks.length
     ? digest.mailTasks.map(task => `<article class="mail-task" style="padding:17px 0 19px;border-top:1px solid #e4e1db"><h3 style="margin:0 0 5px;color:#20231f;font-family:Georgia,'Songti SC','SimSun',serif;font-size:18px;line-height:1.42;overflow-wrap:anywhere">${marketText(task.title)}</h3><div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em">${renderMeta(task.source || '未读邮件', task.due, task.sourceLogoUrl, absoluteMediaUrl)}</div><p style="margin:8px 0 0;color:#4b5049;font-size:14px;line-height:1.66;overflow-wrap:anywhere">${marketText(task.detail)}</p></article>`).join('')
-    : '<p class="mail-task-empty" style="margin:0;color:#626760;font-size:13px;line-height:1.55">今天暂无邮件待办</p>';
+    : '<p class="mail-task-empty" style="margin:0;color:#626760;font-size:13px;line-height:1.55">邮件简报中没有识别到明确需要执行的动作。</p>';
   return Section('Mail Tasks', '邮件待办', 'mail-tasks', body);
 }
 
@@ -414,7 +476,7 @@ export function renderDailyDigest(digest: DailyDigest, detailUrl = '', options: 
   return `<main class="daily-newsletter" style="width:100%;max-width:680px;margin:0 auto;border-top:5px solid #0d5c4b;background:#fff;color:#20221f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif">` +
     `<div class="daily-newsletter-inner" style="padding:0 36px">${Header(digest)}${AtAGlance(digest)}` +
     `${Section('Lead Story', '重点新闻', 'lead-story', digest.leadStories.map((story, index) => LeadStoryComponent(story, index + 1, absoluteMediaUrls)).join(''))}` +
-    `${CategoryDigest(digest, absoluteMediaUrls)}${MailTasks(digest, absoluteMediaUrls)}${WorthYourTime(digest, absoluteMediaUrls)}${Footer(detailUrl)}</div></main>`;
+    `${CategoryDigest(digest, absoluteMediaUrls)}${MailBriefings(digest, absoluteMediaUrls)}${MailTasks(digest, absoluteMediaUrls)}${WorthYourTime(digest, absoluteMediaUrls)}${Footer(detailUrl)}</div></main>`;
 }
 
 export function renderDailyDigestMarkdown(markdown: string): string | null {
@@ -454,13 +516,29 @@ export function renderDailyDigestPlainText(markdown: string, detailUrl = ''): st
     lines.push(...category.items.map(item => `- ${item.headline}：${item.summary}`));
     lines.push('');
   }
+  lines.push('Mail Briefing');
+  if (digest.mailBriefings.length) {
+    for (const briefing of digest.mailBriefings) {
+      lines.push(
+        briefing.title,
+        [briefing.source, briefing.receivedAt].filter(Boolean).join(' · '),
+        `摘要：${briefing.summary}`,
+        `为什么值得看：${briefing.whyItMatters}`,
+        `需要采取的措施：${briefing.action}`,
+        ...(briefing.due ? [`截止：${briefing.due}`] : []),
+        '',
+      );
+    }
+  } else {
+    lines.push('今天没有需要简报的未读邮件。');
+  }
   lines.push('Mail Tasks');
   if (digest.mailTasks.length) {
     for (const task of digest.mailTasks) {
       lines.push(`- ${task.title}：${task.detail}${task.due ? `（截止：${task.due}）` : ''}`);
     }
   } else {
-    lines.push('今天暂无邮件待办。');
+    lines.push('邮件简报中没有识别到明确需要执行的动作。');
   }
   lines.push('');
   lines.push('Worth Your Time');
