@@ -1065,7 +1065,7 @@ app.post('/api/note-items', authenticate, (req, res) => {
     const userId = (req as any).user.userId;
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
     const input = body.contents !== undefined ? body.contents : body.content;
-    const items = noteItemService.createNoteItems(userId, input);
+    const items = noteItemService.createNoteItems(userId, input, body.color === undefined ? 'neutral' : body.color);
     res.status(201).json({ items });
   } catch (error: any) {
     res.status(400).json({ error: error?.message || '保存记事失败' });
@@ -1076,8 +1076,8 @@ app.patch('/api/note-items/:id', authenticate, (req, res) => {
   try {
     const userId = (req as any).user.userId;
     const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
-    const unknownFields = Object.keys(body).filter(key => !['content', 'completed'].includes(key));
-    if (unknownFields.length) return res.status(400).json({ error: '只允许修改记事内容或完成状态' });
+    const unknownFields = Object.keys(body).filter(key => !['content', 'completed', 'color'].includes(key));
+    if (unknownFields.length) return res.status(400).json({ error: '只允许修改记事内容、完成状态或颜色' });
     const item = noteItemService.updateNoteItem(userId, req.params.id, body);
     if (!item) return res.status(404).json({ error: '记事不存在或无权访问' });
     res.json({ item });
@@ -2933,8 +2933,6 @@ interface PendingAiSchedulePlan {
   operations: PendingAiOperation[];
   expiresAt: number;
   historyMessageId?: string;
-  sourceNoteId?: string;
-  requestedAction?: 'create_todo';
   confirmedResult?: any;
 }
 
@@ -3014,8 +3012,6 @@ function hydratePendingAiSchedulePlans(userId: string, messages: dbModule.DbAiSc
       operations,
       expiresAt: Date.parse(String(snapshot.expiresAt)),
       historyMessageId: message.id,
-      sourceNoteId: snapshot.sourceNoteId ? String(snapshot.sourceNoteId) : undefined,
-      requestedAction: snapshot.requestedAction === 'create_todo' ? 'create_todo' : undefined,
     });
   }
 }
@@ -3048,22 +3044,17 @@ function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
   const failures: Array<{ index: number; type: string; message: string }> = [];
 
   for (const [index, op] of plan.operations.entries()) {
-    if (plan.requestedAction === 'create_todo' && op.type !== 'create') {
-      failures.push({ index, type: op.type, message: '“创建待办”只允许创建待办操作' });
-      continue;
-    }
     if (op.type === 'create' && op.data?.title) {
       try {
-        const requestedTodo = plan.requestedAction === 'create_todo';
         const fields = normaliseScheduleApiFields({
           ...op.data,
           calendar_id: plan.targetCalendarId,
-          type: requestedTodo || op.data.type === 'todo' ? 'todo' : 'event',
+          type: op.data.type === 'todo' ? 'todo' : 'event',
           title: String(op.data.title).slice(0, 160),
           start_time: op.data.start_time || (plan.today + 'T09:00:00'),
-          end_time: requestedTodo ? null : (op.data.end_time || undefined),
-          is_unscheduled: requestedTodo ? !op.data.start_time : op.data.is_unscheduled,
-          all_day: requestedTodo ? false : op.data.all_day,
+          end_time: op.data.end_time || undefined,
+          is_unscheduled: op.data.is_unscheduled,
+          all_day: op.data.all_day,
           category: ['travel', 'work', 'social', 'life', 'health', 'other'].includes(op.data.category) ? op.data.category : 'other',
           priority: ['high', 'medium', 'low'].includes(op.data.priority) ? op.data.priority : 'medium',
           is_completed: false,
@@ -3170,25 +3161,21 @@ function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
 app.post("/api/ai-chat", authenticate, async (req, res) => {
   const body = req.body || {};
   const requestedAction = body.requestedAction == null ? undefined : String(body.requestedAction).trim();
-  const sourceNoteId = body.sourceNoteId == null ? undefined : String(body.sourceNoteId).trim();
   let text = String(body.text || '').trim();
   const targetDate = body.targetDate == null ? undefined : String(body.targetDate);
   const reqModel = body.model == null ? undefined : String(body.model).trim();
   const calendarId = body.calendarId == null ? undefined : String(body.calendarId).trim();
   const requestId = body.requestId == null ? undefined : String(body.requestId);
-  if (requestedAction && requestedAction !== 'create_todo') return res.status(400).json({ error: '不支持的 AI 请求动作' });
-  if ((requestedAction === 'create_todo') !== Boolean(sourceNoteId)) {
-    return res.status(400).json({ error: '创建待办请求必须关联来源记事' });
+  if (Object.prototype.hasOwnProperty.call(body, 'sourceNoteId') || requestedAction === 'create_todo') {
+    return res.status(400).json({ error: '记事专用“创建待办”入口已移除，请直接送入 AI 对话并确认生成的计划。' });
   }
+  if (requestedAction && requestedAction !== 'create_todo') return res.status(400).json({ error: '不支持的 AI 请求动作' });
   if (targetDate && !isValidDateKey(targetDate)) return res.status(400).json({ error: '目标日期格式不正确' });
   if (reqModel && reqModel.length > 200) return res.status(400).json({ error: '模型名称过长' });
   if (calendarId && calendarId.length > 200) return res.status(400).json({ error: '日历编号过长' });
 
   // 路由已通过 authenticate，后续只使用重新读取过账号状态的身份。
   const userId = ((req as any).user as JwtPayload).userId;
-  const sourceNote = sourceNoteId ? noteItemService.getNoteItem(userId, sourceNoteId) : undefined;
-  if (sourceNoteId && !sourceNote) return res.status(404).json({ error: '来源记事不存在或无权访问' });
-  if (sourceNote) text = sourceNote.content;
   if (!text) return res.status(400).json({ error: "请输入内容" });
   if (text.length > 20_000) return res.status(400).json({ error: '输入内容不能超过 20000 个字符' });
 
@@ -3213,7 +3200,7 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
   }
 
   // 只读日程查询直接使用本地数据，不依赖外部 AI 或 API Key。
-  if (authenticatedUser && !requestedAction && isReadOnlyScheduleQuery(text)) {
+  if (authenticatedUser && isReadOnlyScheduleQuery(text)) {
     const today = targetDate || getLocalDateString();
     const queryDates = parseQueryDatesForCards(text, today);
     const scheduleItems: any[] = [];
@@ -3247,7 +3234,7 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
   }
 
   // 天气问题由受控数据源直接回答，不把实时事实交给语言模型猜测。
-  if (!requestedAction && isWeatherQuestion(String(text))) {
+  if (isWeatherQuestion(String(text))) {
     const preference = db.getReminder(userId);
     const explicitLocation = extractWeatherLocationQuery(String(text));
     try {
@@ -3534,9 +3521,7 @@ priority 识别：
 - 对于“周三前”“周内”“周五和下周一”等相对日期，必须以当前日期换算出确切 YYYY-MM-DD；“周三前完成”最晚安排在该周周三，不能向后顺延。
 - 信息有歧义、缺少日期或会影响执行时，不要编造；在顶层 warnings 数组中列出需要用户核对的问题。所有写入都会先展示计划并等待用户确认。`;
 
-  const modelPrompt = requestedAction === 'create_todo'
-    ? `请把下面这条 AI 记事整理为一个或多个正式待办。只允许输出 type 为 create 的待办操作；有明确日期就保留日期，没有明确日期就设置 is_unscheduled=true 且不要编造日期；不要创建事件、周期事项，也不要修改或删除已有日程。\n\nAI 记事原文：\n${text}`
-    : text;
+  const modelPrompt = text;
 
   let jsonText = '';
   try {
@@ -3588,8 +3573,6 @@ priority 识别：
         warnings: buildAiPlanWarnings(text, operations, parsed.warnings),
         operations,
         expiresAt: Date.now() + AI_SCHEDULE_PLAN_TTL_MS,
-        ...(sourceNoteId ? { sourceNoteId } : {}),
-        ...(requestedAction === 'create_todo' ? { requestedAction } : {}),
       };
       aiSchedulePlans.set(plan.id, plan);
       addLog('info', 'ai', `AI 生成待确认计划，操作数: ${operations.length}`, { planId: plan.id, userId });
@@ -3653,12 +3636,6 @@ app.post("/api/ai-chat/confirm", authenticate, (req, res) => {
 
   if (!plan.confirmedResult) {
     const result = executeAiScheduleOperations(plan);
-    const todoIds = result.createdSchedules
-      .filter(item => item.type === 'todo')
-      .map(item => item.id);
-    const completedSourceNote = plan.sourceNoteId && result.failures.length === 0 && todoIds.length > 0
-      ? noteItemService.completeNoteItemWithSchedules(plan.userId, plan.sourceNoteId, todoIds)
-      : undefined;
     const scheduleItems = [...result.createdSchedules, ...result.updatedSchedules];
     const failureSummary = result.failures.length
       ? `另有 ${result.failures.length} 项未执行。\n失败原因：\n${result.failures.map(failure => {
@@ -3680,8 +3657,6 @@ app.post("/api/ai-chat/confirm", authenticate, (req, res) => {
         failures: result.failures,
       },
       partial: result.failures.length > 0,
-      sourceNoteId: plan.sourceNoteId || null,
-      sourceNoteCompleted: Boolean(completedSourceNote),
     };
     addLog('info', 'ai', 'AI 计划已确认执行', {
       planId,

@@ -49,8 +49,6 @@ interface AiSchedulePlan {
   expiresAt: string;
   warnings: string[];
   operations: AiPlanOperation[];
-  sourceNoteId?: string;
-  requestedAction?: 'create_todo';
 }
 
 type MessageRole = 'user' | 'assistant';
@@ -576,8 +574,6 @@ export function AiSchedulePanel({
 
   const submitMessage = useCallback(async (rawText: string, options: {
     clearComposer?: boolean;
-    sourceNoteId?: string;
-    requestedAction?: 'create_todo';
   } = {}) => {
     const text = rawText.trim();
     if (!text || isLoading) return;
@@ -587,7 +583,7 @@ export function AiSchedulePanel({
     const clearedRevision = draftRevision + (clearComposer ? 1 : 0);
     const today = getLocalDateString();
     const targetCalendarId = 'personal';
-    const requestSignature = `${today}|${targetCalendarId}|${options.requestedAction || ''}|${options.sourceNoteId || ''}|${text}`;
+    const requestSignature = `${today}|${targetCalendarId}|${text}`;
     const retryEntry = retryRequestIdsRef.current.get(requestSignature);
     const requestId = retryEntry && retryEntry.expiresAt > Date.now() ? retryEntry.requestId : createRequestId();
     if (clearComposer) {
@@ -616,8 +612,6 @@ export function AiSchedulePanel({
           targetDate: today,
           calendarId: targetCalendarId,
           requestId,
-          ...(options.sourceNoteId ? { sourceNoteId: options.sourceNoteId } : {}),
-          ...(options.requestedAction ? { requestedAction: options.requestedAction } : {}),
         }),
       });
 
@@ -705,6 +699,15 @@ export function AiSchedulePanel({
     }
   }, [updateNoteFromApi]);
 
+  const handleColorChange = useCallback(async (note: NoteItem, color: NoteItem['color']) => {
+    try {
+      await updateNoteFromApi(note.id, { color });
+    } catch (error) {
+      setNotesError(error instanceof Error ? error.message : '更新记事颜色失败');
+      throw error;
+    }
+  }, [updateNoteFromApi]);
+
   const handleDeleteNote = useCallback(async (note: NoteItem) => {
     try {
       const response = await fetch(`/api/note-items/${encodeURIComponent(note.id)}`, {
@@ -752,14 +755,6 @@ export function AiSchedulePanel({
     void submitMessage(note.content, { clearComposer: false });
   }, [submitMessage]);
 
-  const handleCreateTodoFromNote = useCallback((note: NoteItem) => {
-    void submitMessage(note.content, {
-      clearComposer: false,
-      sourceNoteId: note.id,
-      requestedAction: 'create_todo',
-    });
-  }, [submitMessage]);
-
   const handleConfirmPlan = useCallback(async (messageId: string, planId: string) => {
     if (confirmingPlanId) return;
     setConfirmingPlanId(planId);
@@ -791,7 +786,6 @@ export function AiSchedulePanel({
         }),
       }).catch(() => {});
       if (data.changed) onSchedulesCreated?.(data.changedDetails?.created || []);
-      if (data.sourceNoteId || data.sourceNoteCompleted) void loadNoteItems();
     } catch (error: any) {
       setMessages(previous => [...previous, {
         id: (Date.now() + 2).toString(),
@@ -803,7 +797,7 @@ export function AiSchedulePanel({
     } finally {
       setConfirmingPlanId(null);
     }
-  }, [authHeaders, confirmingPlanId, loadNoteItems, onSchedulesCreated]);
+  }, [authHeaders, confirmingPlanId, onSchedulesCreated]);
 
   const handleDiscardPlan = useCallback(async (messageId: string) => {
     const discarded = messages.find(message => message.id === messageId);
@@ -829,13 +823,13 @@ export function AiSchedulePanel({
       return;
     }
     if (noteMode) {
-      if (e.key === 'Enter' && e.ctrlKey) {
+      if (!e.nativeEvent.isComposing && e.key === 'Enter' && e.ctrlKey) {
         e.preventDefault();
         void handleSaveNotes();
       }
       return;
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (!e.nativeEvent.isComposing && e.key === 'Enter' && e.ctrlKey) {
       e.preventDefault();
       handleSubmit();
     }
@@ -860,21 +854,15 @@ export function AiSchedulePanel({
   return (
     <div className="ai-assistant-workspace">
       <div className="flex flex-col h-full schedule-ai-panel" style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
-      {/* 面板头部 */}
-      <div
-        className="px-4 pt-3 pb-2.5 flex-shrink-0 flex items-center justify-between"
-        style={{ borderBottom: '1px solid var(--td-component-stroke)' }}
-      >
-        <div className="flex items-center gap-2">
-          <span className="ai-assistant-heading-icon"><Bot size={23} strokeWidth={2.2} /></span>
-          <div>
-            <div className="text-sm font-semibold" style={{ color: 'var(--td-text-color-primary)' }}>
-              AI 日程助手
-            </div>
-            <div className="text-xs" style={{ color: 'var(--td-text-color-placeholder)' }}>
-              可对话 · 新增 · 修改 · 查询
-            </div>
-          </div>
+      {/* 工具栏：保持简洁，主要内容留给对话和记事板。 */}
+      <div className="schedule-ai-toolbar" style={{ borderBottom: '1px solid var(--td-component-stroke)' }}>
+        <div className="schedule-ai-toolbar-left">
+          {!collapsed && messages.length > 0 && (
+            <button type="button" className="schedule-ai-toolbar-button" onClick={clearHistory} title="重置对话" aria-label="重置对话">
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>重置</span>
+            </button>
+          )}
         </div>
         <div className="schedule-ai-heading-actions">
           <button
@@ -889,21 +877,6 @@ export function AiSchedulePanel({
             <span>记事板</span>
             {noteItems.filter(item => !item.completed).length > 0 && <em>{noteItems.filter(item => !item.completed).length}</em>}
           </button>
-          {!collapsed && messages.length > 0 && (
-            <button
-              onClick={clearHistory}
-              className="p-1.5 rounded-lg hover:opacity-70 transition-opacity"
-              style={{
-                color: 'var(--td-text-color-secondary)',
-                backgroundColor: 'transparent',
-                border: 'none',
-              }}
-              title="清空对话"
-              aria-label="清空对话"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
-          )}
           {onToggleCollapsed && (
             <button
               type="button"
@@ -1006,29 +979,33 @@ export function AiSchedulePanel({
             className="flex-shrink-0 schedule-ai-composer-wrap"
             style={{ borderTop: '1px solid var(--td-component-stroke)' }}
           >
-            <div className="schedule-ai-mode-row">
-              <label>
-                <input type="checkbox" checked={noteMode} onChange={event => setNoteMode(event.target.checked)} disabled={isLoading || savingNotes} />
-                <span>记事模式</span>
-              </label>
-              <span>{noteMode ? 'Enter 换行 · Ctrl+Enter 保存' : 'Enter 发送 · Shift+Enter 换行'}</span>
-            </div>
             <div
-              className="rounded-xl transition-all schedule-ai-composer"
-              style={{ backgroundColor: 'var(--td-bg-color-page)' }}
+              className={`rounded-xl transition-all schedule-ai-composer${noteMode ? ' is-note-mode' : ''}`}
             >
+              <button
+                type="button"
+                className="schedule-ai-note-toggle"
+                onClick={() => setNoteMode(mode => !mode)}
+                disabled={isLoading || savingNotes}
+                aria-pressed={noteMode}
+                aria-label={noteMode ? '关闭记事模式' : '打开记事模式'}
+                title={noteMode ? '关闭记事模式' : '打开记事模式'}
+              >
+                <StickyNote className="w-4 h-4" aria-hidden="true" />
+                {noteMode && <CheckCircle2 className="schedule-ai-note-toggle-check" size={11} aria-hidden="true" />}
+              </button>
               <textarea
                 ref={textareaRef}
                 value={inputText}
                 onChange={e => { inputRevisionRef.current += 1; setInputText(e.target.value); }}
                 onKeyDown={handleKeyDown}
-                placeholder={noteMode ? '每行一条记事，稍后可送入 AI 或创建待办…' : '输入日程、修改要求或随意聊天...'}
+                placeholder={noteMode ? '每行一条，轻松记录' : '输入日程、修改要求或随意聊天...'}
                 rows={1}
                 className="resize-none text-sm outline-none bg-transparent border-0"
                 style={{ color: 'var(--td-text-color-primary)', border: 0, boxShadow: 'none' }}
-                aria-label="AI 日程助手输入框"
+                aria-label={noteMode ? '记事输入框' : 'AI 助手输入框'}
               />
-              <span className="schedule-ai-composer-shortcut">{noteMode ? 'Enter 换行 · Ctrl+Enter 保存' : 'Enter 发送 · Shift+Enter 换行'}</span>
+              <span className="schedule-ai-composer-shortcut">{noteMode ? 'Enter 换行 · Ctrl+Enter 保存' : 'Enter 换行 · Ctrl+Enter 发送'}</span>
               <button
                 type="button"
                 onClick={noteMode ? () => { void handleSaveNotes(); } : handleSubmit}
@@ -1044,7 +1021,7 @@ export function AiSchedulePanel({
                   cursor: (!inputText.trim() || isLoading || savingNotes) ? 'not-allowed' : 'pointer',
                 }}
                 aria-label={isLoading ? '正在处理' : noteMode ? '保存记事' : '发送'}
-                title={noteMode ? 'Ctrl+Enter 保存记事' : 'Enter 发送 · Shift+Enter 换行'}
+                title={noteMode ? 'Ctrl+Enter 保存记事' : 'Ctrl+Enter 发送'}
               >
                 {isLoading || savingNotes
                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1066,9 +1043,9 @@ export function AiSchedulePanel({
         onCloseDrawer={() => setNoteDrawerOpen(false)}
         onToggleCompleted={handleToggleNote}
         onEdit={handleEditNote}
+        onColorChange={handleColorChange}
         onDelete={handleDeleteNote}
         onSendToAi={handleSendNoteToAi}
-        onCreateTodo={handleCreateTodoFromNote}
       />
       {noteDrawerOpen && <button type="button" className="note-board-scrim" onClick={() => setNoteDrawerOpen(false)} aria-label="关闭记事板" />}
     </div>

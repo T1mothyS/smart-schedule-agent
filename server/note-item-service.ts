@@ -4,15 +4,41 @@ import * as db from './db.js';
 export const NOTE_CONTENT_MAX_LENGTH = 2_000;
 export const NOTE_BATCH_MAX = 100;
 export const NOTE_BATCH_TOTAL_MAX_LENGTH = 20_000;
+export const NOTE_COLORS = ['neutral', 'purple', 'blue', 'green', 'amber', 'rose'] as const;
+export type NoteColor = (typeof NOTE_COLORS)[number];
+
+export const NOTE_COLOR_LABELS: Record<NoteColor, string> = {
+  neutral: '中性灰',
+  purple: '紫色',
+  blue: '蓝色',
+  green: '绿色',
+  amber: '琥珀色',
+  rose: '玫瑰色',
+};
 
 export interface NoteItem {
   id: string;
   content: string;
   completed: boolean;
   completedAt: string | null;
+  color: NoteColor;
+  /** @deprecated 仅为历史 API/备份兼容保留，不再用于新的业务行为。 */
   linkedScheduleIds: string[];
   createdAt: string;
   updatedAt: string;
+}
+
+export function isNoteColor(value: unknown): value is NoteColor {
+  return typeof value === 'string' && (NOTE_COLORS as readonly string[]).includes(value);
+}
+
+function validateColor(value: unknown): NoteColor {
+  if (!isNoteColor(value)) throw new Error('记事颜色不正确，只允许 neutral、purple、blue、green、amber 或 rose');
+  return value;
+}
+
+function normaliseColor(value: unknown): NoteColor {
+  return isNoteColor(value) ? value : 'neutral';
 }
 
 function parseLinkedScheduleIds(value: unknown): string[] {
@@ -31,6 +57,7 @@ function toNoteItem(row: db.DbNoteItem): NoteItem {
     content: row.content,
     completed: row.completed === 1,
     completedAt: row.completed_at || null,
+    color: normaliseColor(row.color),
     linkedScheduleIds: parseLinkedScheduleIds(row.linked_schedule_ids),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -64,10 +91,11 @@ function validateContent(content: unknown): string {
   return value;
 }
 
-export function createNoteItems(userId: string, contents: unknown): NoteItem[] {
+export function createNoteItems(userId: string, contents: unknown, color: unknown = 'neutral'): NoteItem[] {
   const values = normaliseNoteContents(contents);
   if (values.length > NOTE_BATCH_MAX) throw new Error(`一次最多保存 ${NOTE_BATCH_MAX} 条记事`);
   const validated = values.map(validateContent);
+  const noteColor = validateColor(color);
   const totalLength = validated.reduce((sum, value) => sum + value.length, 0);
   if (totalLength > NOTE_BATCH_TOTAL_MAX_LENGTH) throw new Error(`一次保存的记事总长度不能超过 ${NOTE_BATCH_TOTAL_MAX_LENGTH} 个字符`);
   const now = new Date().toISOString();
@@ -77,17 +105,19 @@ export function createNoteItems(userId: string, contents: unknown): NoteItem[] {
     content,
     completed: 0,
     completed_at: null,
+    color: noteColor,
     linked_schedule_ids: '[]',
     created_at: now,
     updated_at: now,
   })));
 }
 
-export function updateNoteItem(userId: string, id: string, updates: { content?: unknown; completed?: unknown }): NoteItem | undefined {
+export function updateNoteItem(userId: string, id: string, updates: { content?: unknown; completed?: unknown; color?: unknown }): NoteItem | undefined {
   const existing = db.getNoteItem(id, userId);
   if (!existing) return undefined;
   const patch: Parameters<typeof db.updateNoteItem>[2] = {};
   if (updates.content !== undefined) patch.content = validateContent(updates.content);
+  if (updates.color !== undefined) patch.color = validateColor(updates.color);
   if (updates.completed !== undefined) {
     if (typeof updates.completed !== 'boolean') throw new Error('完成状态不正确');
     patch.completed = updates.completed ? 1 : 0;
@@ -95,19 +125,6 @@ export function updateNoteItem(userId: string, id: string, updates: { content?: 
   }
   if (!Object.keys(patch).length) return toNoteItem(existing);
   const updated = db.updateNoteItem(id, userId, patch);
-  return updated ? toNoteItem(updated) : undefined;
-}
-
-export function completeNoteItemWithSchedules(userId: string, id: string, scheduleIds: string[]): NoteItem | undefined {
-  const existing = db.getNoteItem(id, userId);
-  if (!existing) return undefined;
-  const links = [...new Set(scheduleIds.map(value => String(value || '').trim()).filter(Boolean))].slice(0, 100);
-  const existingLinks = parseLinkedScheduleIds(existing.linked_schedule_ids);
-  const updated = db.updateNoteItem(id, userId, {
-    completed: 1,
-    completed_at: new Date().toISOString(),
-    linked_schedule_ids: JSON.stringify([...new Set([...existingLinks, ...links])]),
-  });
   return updated ? toNoteItem(updated) : undefined;
 }
 

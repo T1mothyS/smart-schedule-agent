@@ -50,7 +50,7 @@ export function AppShell({
           {productNavItems.map(item => (
             <button
               key={item.section}
-              className={`product-nav-item icon-only${item.section === 'assistant' ? ' ai-assistant-nav' : ''}${activeSection === item.section ? ' active' : ''}`}
+              className={`product-nav-item icon-only${activeSection === item.section ? ' active' : ''}`}
               onClick={() => onSectionChange(item.section)}
               title={item.label}
               aria-label={item.label}

@@ -229,12 +229,20 @@ async function initDb(): Promise<void> {
       content TEXT NOT NULL,
       completed INTEGER NOT NULL DEFAULT 0,
       completed_at TEXT,
+      color TEXT NOT NULL DEFAULT 'neutral' CHECK (color IN ('neutral', 'purple', 'blue', 'green', 'amber', 'rose')),
       linked_schedule_ids TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
+
+  const noteColumns = queryAll<{ name: string }>('PRAGMA table_info(note_items)');
+  if (!noteColumns.some(column => column.name === 'color')) {
+    // 旧版本没有颜色列，新增列使用中性灰作为安全默认值；SQLite 旧表无法原地补 CHECK 约束，API 层仍会严格校验写入值。
+    db.run("ALTER TABLE note_items ADD COLUMN color TEXT NOT NULL DEFAULT 'neutral'");
+  }
+  db.run("UPDATE note_items SET color = 'neutral' WHERE color IS NULL OR color NOT IN ('neutral', 'purple', 'blue', 'green', 'amber', 'rose')");
 
   // 创建索引
   db.run('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)');
@@ -400,6 +408,7 @@ export interface DbNoteItem {
   content: string;
   completed: number;
   completed_at: string | null;
+  color: string;
   linked_schedule_ids: string;
   created_at: string;
   updated_at: string;
@@ -860,9 +869,9 @@ export function listNoteItems(userId: string): DbNoteItem[] {
 export function createNoteItem(item: DbNoteItem): DbNoteItem {
   run(
     `INSERT INTO note_items
-     (id, user_id, content, completed, completed_at, linked_schedule_ids, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [item.id, item.user_id, item.content, item.completed ? 1 : 0, item.completed_at, item.linked_schedule_ids || '[]', item.created_at, item.updated_at],
+     (id, user_id, content, completed, completed_at, color, linked_schedule_ids, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [item.id, item.user_id, item.content, item.completed ? 1 : 0, item.completed_at, item.color || 'neutral', item.linked_schedule_ids || '[]', item.created_at, item.updated_at],
   );
   return item;
 }
@@ -870,7 +879,7 @@ export function createNoteItem(item: DbNoteItem): DbNoteItem {
 export function updateNoteItem(
   id: string,
   userId: string,
-  updates: Partial<Pick<DbNoteItem, 'content' | 'completed' | 'completed_at' | 'linked_schedule_ids' | 'updated_at'>>,
+  updates: Partial<Pick<DbNoteItem, 'content' | 'completed' | 'completed_at' | 'color' | 'linked_schedule_ids' | 'updated_at'>>,
 ): DbNoteItem | undefined {
   const fields: string[] = [];
   const values: any[] = [];
@@ -885,6 +894,10 @@ export function updateNoteItem(
   if (updates.completed_at !== undefined) {
     fields.push('completed_at = ?');
     values.push(updates.completed_at);
+  }
+  if (updates.color !== undefined) {
+    fields.push('color = ?');
+    values.push(updates.color);
   }
   if (updates.linked_schedule_ids !== undefined) {
     fields.push('linked_schedule_ids = ?');
@@ -917,7 +930,7 @@ export function exportUserNoteItems(userId: string): DbNoteItem[] {
 
 export function restoreUserNoteItems(
   userId: string,
-  rows: Array<Partial<DbNoteItem> & { linkedScheduleIds?: unknown; completedAt?: unknown }>,
+  rows: Array<Partial<DbNoteItem> & { linkedScheduleIds?: unknown; completedAt?: unknown; color?: unknown }>,
   mode: 'merge' | 'replace',
 ): { items: number } {
   if (mode === 'replace') run('DELETE FROM note_items WHERE user_id = ?', [userId]);
@@ -935,12 +948,16 @@ export function restoreUserNoteItems(
     const completedAt = completed
       ? String(rawRow.completed_at || rawRow.completedAt || updatedAt)
       : null;
+    const colorValues = ['neutral', 'purple', 'blue', 'green', 'amber', 'rose'] as const;
+    const colorValue = String(rawRow.color || 'neutral');
+    const color = (colorValues as readonly string[]).includes(colorValue) ? colorValue : 'neutral';
     createNoteItem({
       id,
       user_id: userId,
       content,
       completed: completed ? 1 : 0,
       completed_at: completedAt,
+      color,
       linked_schedule_ids: JSON.stringify(restoreLinkedScheduleIds(row.linked_schedule_ids ?? row.linkedScheduleIds)),
       created_at: createdAt,
       updated_at: updatedAt,

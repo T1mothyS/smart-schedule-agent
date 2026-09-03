@@ -73,32 +73,56 @@ test('记事 API 支持逐行保存、完成恢复、删除并隔离账号', asy
     assert.equal(created.status, 201);
     const createdItems = (await created.json()).items;
     assert.deepEqual(createdItems.map((item: NoteItem) => item.content), ['第一条', '第二条', '第一条']);
+    assert.deepEqual(createdItems.map((item: NoteItem) => item.color), ['neutral', 'neutral', 'neutral']);
 
     const completed = await request(`/api/note-items/${createdItems[0].id}`, userToken, {
       method: 'PATCH',
-      body: JSON.stringify({ completed: true }),
+      body: JSON.stringify({ completed: true, color: 'purple' }),
     });
     assert.equal(completed.status, 200);
-    assert.equal((await completed.json()).item.completed, true);
+    const completedItem = (await completed.json()).item;
+    assert.equal(completedItem.completed, true);
+    assert.equal(completedItem.color, 'purple');
 
     const recovered = await request(`/api/note-items/${createdItems[0].id}`, userToken, {
       method: 'PATCH',
       body: JSON.stringify({ content: '第一条（更新）', completed: false }),
     });
     assert.equal(recovered.status, 200);
-    assert.equal((await recovered.json()).item.completed, false);
+    const recoveredItem = (await recovered.json()).item;
+    assert.equal(recoveredItem.completed, false);
+    assert.equal(recoveredItem.color, 'purple');
+
+    const invalidColor = await request(`/api/note-items/${createdItems[0].id}`, userToken, {
+      method: 'PATCH',
+      body: JSON.stringify({ color: 'lime' }),
+    });
+    assert.equal(invalidColor.status, 400);
+    assert.match(String((await invalidColor.json()).error), /颜色/);
+
+    const invalidCreatedColor = await request('/api/note-items', userToken, {
+      method: 'POST',
+      body: JSON.stringify({ content: '非法颜色', color: 'lime' }),
+    });
+    assert.equal(invalidCreatedColor.status, 400);
 
     const weatherSource = await request(`/api/note-items/${createdItems[0].id}`, userToken, {
       method: 'PATCH',
       body: JSON.stringify({ content: '北京明天天气怎么样？' }),
     });
     assert.equal(weatherSource.status, 200);
-    const sourceAction = await request('/api/ai-chat', userToken, {
+    const sourceActionWithId = await request('/api/ai-chat', userToken, {
       method: 'POST',
-      body: JSON.stringify({ text: '忽略来源内容', sourceNoteId: createdItems[0].id, requestedAction: 'create_todo', targetDate: '2026-09-02' }),
+      body: JSON.stringify({ text: '忽略来源内容', sourceNoteId: createdItems[0].id, targetDate: '2026-09-02' }),
     });
-    assert.equal(sourceAction.status, 401);
-    assert.match(String((await sourceAction.json()).error), /API|配置|Key/);
+    assert.equal(sourceActionWithId.status, 400);
+    assert.match(String((await sourceActionWithId.json()).error), /入口|移除|确认/);
+    const sourceActionWithRequestedAction = await request('/api/ai-chat', userToken, {
+      method: 'POST',
+      body: JSON.stringify({ text: '普通对话内容', requestedAction: 'create_todo', targetDate: '2026-09-02' }),
+    });
+    assert.equal(sourceActionWithRequestedAction.status, 400);
+    assert.match(String((await sourceActionWithRequestedAction.json()).error), /入口|移除|确认/);
     const restoredContent = await request(`/api/note-items/${createdItems[0].id}`, userToken, {
       method: 'PATCH',
       body: JSON.stringify({ content: '第一条（更新）' }),
@@ -124,22 +148,35 @@ test('记事 API 支持逐行保存、完成恢复、删除并隔离账号', asy
   }
 });
 
-test('记事进入加密备份和可读导出，旧备份缺少记事字段仍可恢复', () => {
+test('记事进入加密备份和可读导出，旧备份缺少颜色或记事字段仍可恢复', () => {
   const sourceItems = noteItems.listNoteItems(user.id);
   assert.equal(sourceItems.length, 2);
+  assert.equal(sourceItems[0].color, 'purple');
   const password = ['notes', 'backup', 'fixture'].join('-');
   const backup = backups.createUserBackup(user.id, password);
   const inspected = backups.inspectUserBackup(backup, password);
   assert.equal((inspected.counts as Record<string, number>).noteItems, 2);
-  assert.equal(readableExport.createReadableUserExport(user.id).noteItems.length, 2);
+  const readable = readableExport.createReadableUserExport(user.id);
+  assert.equal(readable.noteItems.length, 2);
+  assert.equal(readable.noteItems[0].color, 'purple');
 
   const restored = backups.restoreUserBackup(otherUser.id, backup, password, 'replace');
   assert.deepEqual(restored.noteItems, { items: 2 });
   const restoredItems = noteItems.listNoteItems(otherUser.id);
   assert.equal(restoredItems.length, 2);
+  assert.equal(restoredItems[0].color, 'purple');
   assert.ok(restoredItems.every(item => !sourceItems.some(source => source.id === item.id)));
 
   const oldPayload = backups.decryptBackup<any>(backup, password);
+  oldPayload.noteItems = oldPayload.noteItems.map((item: Record<string, unknown>) => {
+    const { color: _color, ...withoutColor } = item;
+    return withoutColor;
+  });
+  const oldColorBackup = backups.encryptBackup(oldPayload, password);
+  const oldColorRestore = backups.restoreUserBackup(otherUser.id, oldColorBackup, password, 'replace');
+  assert.deepEqual(oldColorRestore.noteItems, { items: 2 });
+  assert.ok(noteItems.listNoteItems(otherUser.id).every(item => item.color === 'neutral'));
+
   delete oldPayload.noteItems;
   const oldBackup = backups.encryptBackup(oldPayload, password);
   const oldRestore = backups.restoreUserBackup(otherUser.id, oldBackup, password, 'replace');

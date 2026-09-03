@@ -4,6 +4,8 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 本文档适用于本仓库当前版本，包含本地启动、邮件配置、环境变量、目录说明、部署入口、数据安全和常见故障排查。
 
+跨项目结构、日报 V2 接口边界、任务路由和分层验收见 [`PROJECT-MAP.md`](PROJECT-MAP.md)。
+
 ## 1. 当前能力
 
 - 登录后默认进入 `/today` 今日行动中心。
@@ -44,7 +46,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - 每日摘要不再按账号和自然日全局去重；同一配置时间的重复扫描仍按触发键幂等，修改当天提醒时间后可以再次生成邮件。
 - 邮件只有在 Nodemailer 返回至少一个 `accepted` 且没有 `rejected/pending` 时才标记为 `sent`；这表示 SMTP 已接受，不等同于收件箱最终到达。
 - 浏览器提前提醒仍可单独使用，不替代高优先级固定邮件。
-- AI 助手提供独立记事模式：每个非空输入行保存为一个账号隔离的记事条目；条目可完成、恢复、编辑、删除，也可送入当前对话或进入待确认的“创建待办”计划。创建待办确认成功且没有部分失败时，来源记事会自动完成并记录关联日程。
+- AI 助手提供独立记事模式：每个非空输入行保存为一个账号隔离的记事条目；条目可完成、恢复、编辑、删除、设置预设颜色、送入普通对话或导出 TXT/Markdown。送入对话后生成的计划仍需确认，记事不会被自动完成或建立关联。
 
 ## 2. 技术结构
 
@@ -309,6 +311,7 @@ cp .env.example .env
 | `.env.example` | 可提交的环境变量模板，新机器通过它创建 `.env` |
 | `.gitignore` | 排除密钥、数据库、附件、依赖和构建产物 |
 | `README.md` | 项目主说明，也就是本文档 |
+| `PROJECT-MAP.md` | AI Calendar、日报 V2 和旧日报的逻辑结构、接口边界、任务路由与验证地图 |
 | `DEPLOY.md` | 阿里云服务器、Nginx、HTTPS、PM2 和升级部署的详细步骤 |
 | `package.json` | npm 脚本、依赖版本范围、Electron 打包配置和项目元数据 |
 | `electron-builder.yml` | 只针对 `dist-desktop/` 最小桌面壳的跨平台打包配置 |
@@ -350,6 +353,8 @@ cp .env.example .env
 | `src/components/AiImportPage.tsx` | 自然语言/截图智能导入、草稿校对与确认 |
 | `src/components/AiSchedulePanel.tsx` | 普通问答、天气查询、待确认日程建议和记事模式的 AI 助手 |
 | `src/components/NoteBoard.tsx` | AI 记事板：桌面侧栏、窄屏抽屉和条目操作 |
+| `src/utils/note-colors.ts` | 记事预设颜色枚举、标签和主题样式 |
+| `src/utils/note-export.ts` | 当前分区记事的 TXT/Markdown 确定性导出 |
 | `src/components/AdminModal.tsx` | 管理员用户管理弹窗 |
 | `src/hooks/useAuth.ts` | 登录状态、令牌和当前用户逻辑 |
 | `src/hooks/useTheme.ts` | 明暗主题读取、切换和持久化 |
@@ -380,7 +385,7 @@ cp .env.example .env
 | `server/daily-email-template.ts` | 每日摘要邮件的天气、进度、分类与完整日程模板 |
 | `server/weather-service.ts` | Open-Meteo 地点搜索、天气读取、缓存、超时和天气代码转换 |
 | `server/export-service.ts` | 当前账号的可读 JSON/CSV 数据导出与表格公式注入防护 |
-| `server/note-item-service.ts` | 账号隔离的 AI 记事 CRUD、批量校验和待办关联 |
+| `server/note-item-service.ts` | 账号隔离的 AI 记事 CRUD、批量校验和预设颜色校验 |
 | `server/daily-report-token-service.ts` | 只读日报令牌生成、哈希保存、轮换、吊销和鉴权 |
 | `server/daily-report*.test.ts` | 日报服务、HTTP API 和 V2 假 SMTP 隔离端到端测试 |
 | `server/http-security.ts` | 安全响应头、请求体限制和分接口频率限制 |
@@ -519,7 +524,7 @@ npm run build
 - `/api/integrations/daily-report/reports/:date`：V2 使用日报令牌发布或幂等更新日报；`daily-digest.v1` 必须只引用已经上传的本站 `/daily-report-media/` 地址，发布正文不写入日志，邮件状态由账号设置和通知队列决定。
 - `/daily-report-media/:filename`：公开读取服务端已校验的日报媒体；文件名为内容哈希，供登录后网页和邮件共同使用。
 - `/api/backups`、`/api/admin/backups`：用户备份和全站灾备。
-- `/api/ai-chat`：普通问答、天气问答和待确认日程建议。
+- `/api/ai-chat`：普通问答、天气问答和待确认日程建议；历史专用 `sourceNoteId`/`requestedAction=create_todo` 参数会明确拒绝。
 - `/api/ai/imports`：AI 导入草稿、确认和删除。
 - `/api/email-import/settings`：可选邮箱自动导入设置。
 - `/api/admin/users`：管理员用户管理。
