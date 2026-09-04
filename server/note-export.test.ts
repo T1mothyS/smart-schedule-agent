@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatNotesAsMarkdown, formatNotesAsText, noteExportFilename } from '../src/utils/note-export.js';
+import { formatNotesAsCsv, formatNotesAsText, noteExportFilename } from '../src/utils/note-export.js';
 import { formatNoteDateTime, noteDateKey } from '../src/utils/note-time.js';
 
 const items = [
@@ -18,13 +18,18 @@ test('TXT 导出使用 UTF-8 BOM、Windows 换行、显示编号和基础元数�
   assert.doesNotMatch(output, /legacy|内部 ID/i);
 });
 
-test('Markdown 导出按当前顺序生成标题、元数据和分隔线', () => {
-  const output = formatNotesAsMarkdown(items, 'trash');
-  assert.match(output, /^# AI 记事｜废纸篓/);
-  assert.match(output, /## 1\. 第一条 包含第二行/);
-  assert.match(output, /- 颜色：紫色\n- 状态：废纸篓/);
-  assert.ok(output.includes('\n---\n'));
-  assert.ok(output.indexOf('## 1.') < output.indexOf('## 2.'));
+test('CSV 导出按当前顺序生成 UTF-8 BOM、表头和转义字段', () => {
+  const output = formatNotesAsCsv([
+    ...items,
+    { content: '含,逗号和"引号"', completed: false, color: 'blue' as const, updatedAt: '2026-09-01T00:00:00.000Z' },
+  ], 'trash');
+  assert.ok(output.startsWith('\uFEFF'));
+  assert.match(output, /"编号","内容","颜色","状态","更新时间"\r\n/);
+  assert.match(output, /"1","第一条\n包含第二行","紫色","废纸篓","2026-09-03 20:34（北京时间）"/);
+  assert.match(output, /"3","含,逗号和""引号""","蓝色","废纸篓","2026-09-01 08:00（北京时间）"/);
+  assert.ok(output.indexOf('"1","第一条') < output.indexOf('"2","第二条"'));
+  assert.ok(output.endsWith('\r\n'));
+  assert.doesNotMatch(output, /(^|\r?\n)# |\r?\n---\r?\n/);
 });
 
 test('导出文件名区分分区和日期，不包含内部 ID', () => {

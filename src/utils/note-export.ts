@@ -1,5 +1,5 @@
 import { NOTE_COLOR_LABELS, type NoteColor, normaliseNoteColor } from './note-colors';
-import { formatNoteDateTime, noteDateKey } from './note-time';
+import { formatNoteDateTime, noteDateKey, NOTE_TIME_ZONE_LABEL } from './note-time';
 
 export type NoteExportSection = 'active' | 'trash';
 
@@ -22,7 +22,7 @@ function metadata(item: NoteExportItem, section: NoteExportSection): string[] {
   return [
     `颜色：${NOTE_COLOR_LABELS[normaliseNoteColor(item.color)]}`,
     `状态：${sectionLabel(section)}`,
-    `更新时间：${formatNoteDateTime(item.updatedAt)}（北京时间）`,
+    `更新时间：${formatNoteDateTime(item.updatedAt)}（${NOTE_TIME_ZONE_LABEL}）`,
   ];
 }
 
@@ -34,13 +34,23 @@ export function formatNotesAsText(items: NoteExportItem[], section: NoteExportSe
   return '\uFEFF' + paragraphs.join('\r\n\r\n') + (paragraphs.length ? '\r\n' : '');
 }
 
-export function formatNotesAsMarkdown(items: NoteExportItem[], section: NoteExportSection): string {
-  const title = section === 'trash' ? 'AI 记事｜废纸篓' : 'AI 记事｜进行中';
-  const paragraphs = items.map((item, index) => [
-    `## ${index + 1}. ${item.content.replace(/\r\n|\r|\n/g, ' ')}`,
-    ...metadata(item, section).map(value => `- ${value}`),
-  ].join('\n'));
-  return [`# ${title}`, '', ...paragraphs.flatMap(value => [value, '', '---', ''])].join('\n').replace(/\n{3,}$/g, '\n\n');
+function csvCell(value: string | number): string {
+  const normalised = String(value).replace(/\r\n|\r|\n/g, '\n');
+  return `"${normalised.replace(/"/g, '""')}"`;
+}
+
+export function formatNotesAsCsv(items: NoteExportItem[], section: NoteExportSection): string {
+  const rows = [
+    ['编号', '内容', '颜色', '状态', '更新时间'],
+    ...items.map((item, index) => [
+      index + 1,
+      item.content,
+      NOTE_COLOR_LABELS[normaliseNoteColor(item.color)],
+      sectionLabel(section),
+      `${formatNoteDateTime(item.updatedAt)}（${NOTE_TIME_ZONE_LABEL}）`,
+    ]),
+  ];
+  return '\uFEFF' + rows.map(row => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
 }
 
 export function noteExportFilename(section: NoteExportSection, date = new Date()): string {

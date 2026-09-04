@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, ChevronUp, CircleX, Copy, Forward, ListPlus, Pencil, RotateCcw, StickyNote, Trash2, X } from 'lucide-react';
-import { formatNotesAsMarkdown, formatNotesAsText, noteExportFilename } from '../utils/note-export';
-import { formatNoteDateTime, NOTE_TIME_ZONE_LABEL } from '../utils/note-time';
+import { formatNotesAsCsv, formatNotesAsText, noteExportFilename } from '../utils/note-export';
 import { NOTE_COLORS, NOTE_COLOR_LABELS, NOTE_COLOR_STYLES, normaliseNoteColor, type NoteColor } from '../utils/note-colors';
 
 export interface NoteItem {
@@ -198,10 +197,6 @@ function NoteRow({
               {note.content}
             </button>
           )}
-          <div className="note-board-row-meta">
-            <span>更新于 {formatNoteDateTime(note.updatedAt)}（{NOTE_TIME_ZONE_LABEL}）</span>
-            <span className="note-board-color-label">{NOTE_COLOR_LABELS[color]}</span>
-          </div>
         </div>
       </div>
     </article>
@@ -337,11 +332,11 @@ export function NoteBoard({
     });
   };
 
-  const downloadSection = (section: 'active' | 'trash', sectionNotes: NoteItem[], format: 'txt' | 'md') => {
+  const downloadSection = (section: 'active' | 'trash', sectionNotes: NoteItem[], format: 'txt' | 'csv') => {
     const selected = sectionNotes.filter(note => selectedIds.has(note.id));
     if (!selected.length) return;
-    const content = format === 'txt' ? formatNotesAsText(selected, section) : formatNotesAsMarkdown(selected, section);
-    const blob = new Blob([content], { type: format === 'txt' ? 'text/plain;charset=utf-8' : 'text/markdown;charset=utf-8' });
+    const content = format === 'txt' ? formatNotesAsText(selected, section) : formatNotesAsCsv(selected, section);
+    const blob = new Blob([content], { type: format === 'txt' ? 'text/plain;charset=utf-8' : 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -415,7 +410,7 @@ export function NoteBoard({
         <button type="button" onClick={() => selectSection(sectionNotes)} disabled={!sectionNotes.length}>全选</button>
         <button type="button" onClick={() => clearSection(sectionNotes)} disabled={!selectedCount}>全不选</button>
         <button type="button" onClick={() => downloadSection(section, sectionNotes, 'txt')} disabled={!selectedCount}>导出 TXT</button>
-        <button type="button" onClick={() => downloadSection(section, sectionNotes, 'md')} disabled={!selectedCount}>导出 Markdown</button>
+        <button type="button" onClick={() => downloadSection(section, sectionNotes, 'csv')} disabled={!selectedCount}>导出 CSV</button>
       </div>
     );
   };
