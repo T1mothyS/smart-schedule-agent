@@ -3,7 +3,7 @@
 !.env.example
 
 # Local-only project guidance and deployment notes
-AGENTS.md
+AGENTS.local.md
 CONTINUOUS-REQUIREMENTS.md
 DEPLOY.md
 

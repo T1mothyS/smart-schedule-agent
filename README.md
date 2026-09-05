@@ -304,6 +304,18 @@ cp .env.example .env
 
 ### 7.1 根目录
 
+协作和长期维护入口：
+
+| 文件或目录 | 作用 |
+| --- | --- |
+| AGENTS.md | 可提交的项目通用协作、安全、验证和 Git 规则 |
+| AGENTS.local.md | 当前工作机的本地补充，不提交 Git |
+| docs/ARCHITECTURE.md | 当前运行时、数据和跨项目边界 |
+| docs/UI-GUIDELINES.md | 响应式、控件、主题和 UI 验收原则 |
+| docs/TEST-MATRIX.md | 自动测试、浏览器手工验收和生产验收分层 |
+| docs/ROADMAP.md | Now、Next、Later、Ideas 和 Won't Do 路线图 |
+| .github/workflows/ci.yml | push 和 pull_request 的安装、类型、测试、构建检查；不执行部署 |
+
 | 文件或目录 | 作用 |
 | --- | --- |
 | `.git/` | Git 本地版本历史和分支信息，不要手工修改 |
