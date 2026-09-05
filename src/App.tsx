@@ -15,6 +15,7 @@ import { AppShell } from './components/AppShell';
 import { ActionCenterPage } from './components/ActionCenterPage';
 import { AiImportPage } from './components/AiImportPage';
 import { DailyReportReaderPage, DailyReportsPage } from './components/DailyReportsPage';
+import { LibraryPage } from './components/LibraryPage';
 import { MiniMonthCalendar } from './components/calendar/MiniMonthCalendar';
 import { SCHEDULE_CATEGORIES } from './utils/scheduleCategories';
 
@@ -223,6 +224,8 @@ function App() {
           <Route path="/import" element={<AppContent />} />
           <Route path="/reports" element={<AppContent />} />
           <Route path="/reports/:date" element={<DailyReportReaderPage />} />
+          <Route path="/library" element={<AppContent />} />
+          <Route path="/library/:id" element={<AppContent />} />
           <Route path="*" element={<Navigate to="/today" replace />} />
         </>
       )}
@@ -237,8 +240,8 @@ function AppContent() {
   const [showAdmin, setShowAdmin] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const activeSection = location.pathname.startsWith('/reports') ? 'reports' : location.pathname === '/schedule' ? 'schedule' : location.pathname === '/assistant' ? 'assistant' : location.pathname === '/reminders' ? 'reminders' : location.pathname === '/import' ? 'import' : 'today';
-  const changeSection = (section: 'today' | 'schedule' | 'assistant' | 'reminders' | 'import' | 'reports') => navigate(section === 'schedule' ? '/schedule' : section === 'assistant' ? '/assistant' : section === 'reminders' ? '/reminders' : section === 'import' ? '/import' : section === 'reports' ? '/reports' : '/today');
+  const activeSection = location.pathname.startsWith('/reports') ? 'reports' : location.pathname.startsWith('/library') ? 'library' : location.pathname === '/schedule' ? 'schedule' : location.pathname === '/assistant' ? 'assistant' : location.pathname === '/reminders' ? 'reminders' : location.pathname === '/import' ? 'import' : 'today';
+  const changeSection = (section: 'today' | 'schedule' | 'assistant' | 'reminders' | 'import' | 'reports' | 'library') => navigate(section === 'schedule' ? '/schedule' : section === 'assistant' ? '/assistant' : section === 'reminders' ? '/reminders' : section === 'import' ? '/import' : section === 'reports' ? '/reports' : section === 'library' ? '/library' : '/today');
 
   // 设置弹窗打开/关闭时更新 Tab 标题
   useEffect(() => {
@@ -265,7 +268,7 @@ function AppContent() {
           <SchedulePage user={user} />
         ) : activeSection === 'assistant' ? <AiAssistantPage /> : activeSection === 'reminders' ? (
           <ReminderPage />
-        ) : activeSection === 'reports' ? <DailyReportsPage /> : <AiImportPage />}
+        ) : activeSection === 'reports' ? <DailyReportsPage /> : activeSection === 'library' ? <LibraryPage /> : <AiImportPage />}
       </AppShell>
 
       {showSettings && <SettingsDialog

@@ -7,19 +7,20 @@
 - 保持 Settings V2 稳定，沿用统一的 Section、Row、Dialog 和窄屏验收。
 - 使用可提交的 AGENTS.md、架构/UI/测试文档和 GitHub Actions CI 固化协作基础。
 - 对导航图标完成低风险体积优化；持续使用 npm typecheck、test、build 和浏览器分层验收。
+- Phase Four 知识库 MVP 已完成首版：统一 Fragment/Article、普通搜索、账号隔离、Markdown 安全渲染、版本/评论、独立发布令牌和 dry-run 迁移入口。
 
 # Next
 
+- 进入 Phase Five：先评估 Note Board / Daily Report → Knowledge Fragment 的单向入口，再设计跨 `chat.db` 与 `schedule.db` 的日程关联校验。
 - 在实际修改某个领域时，按增量方式从 server/index.ts 提取对应 router，并保持初始化、认证和测试边界。
 - 先建立不依赖真实账号的 UI fixture，再评估把项目级 smoke test 纳入 CI。
-- 设计并实现知识库 MVP：统一 Knowledge Item，支持 Fragment 与 Article、私有隔离、普通搜索和可回溯版本。
 
 # Later
 
 - Note → Knowledge Fragment。
 - Daily Report → Knowledge Fragment。
 - Ctrl + K 全局搜索日程、记事、日报和知识。
-- 文章评论、收藏、附件和更完整的发布历史。
+- 文章收藏、附件和更完整的版本 diff。
 
 # Ideas
 

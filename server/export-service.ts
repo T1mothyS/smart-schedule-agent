@@ -3,6 +3,7 @@ import * as db from './db.js';
 import * as reminderStore from './reminder-store.js';
 import * as scheduleStore from './schedule-store.js';
 import * as noteItemService from './note-item-service.js';
+import * as libraryService from './library-service.js';
 
 export interface ReadableUserExport {
   format: 'ai-calendar-readable-export';
@@ -19,6 +20,7 @@ export interface ReadableUserExport {
   recurringTasks: reminderStore.ReminderTask[];
   recurringCycles: reminderStore.ReminderCycle[];
   noteItems: noteItemService.NoteItem[];
+  libraryEntries: libraryService.LibraryEntry[];
   completions: activityStore.CompletionRecord[];
   dailyReports: activityStore.DailyReportRecord[];
   attachments: Array<{
@@ -80,6 +82,7 @@ export function createReadableUserExport(userId: string, exportedAt = new Date()
     recurringTasks: reminder.tasks,
     recurringCycles: reminder.cycles,
     noteItems: noteItemService.exportNoteItems(userId),
+    libraryEntries: libraryService.exportUserLibraryEntries(userId),
     completions: activityStore.listCompletions(userId),
     dailyReports: activityStore.listDailyReports(userId),
     attachments: activityStore.listAttachments(userId).map(file => ({

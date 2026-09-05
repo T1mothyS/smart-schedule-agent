@@ -24,13 +24,14 @@ React/Vite 与 Electron 壳都使用同一套前端页面。Electron 主进程�
 | src/components/AiSchedulePanel.tsx、AiImportPage.tsx | 普通 AI、天气和待确认导入 |
 | src/components/NoteBoard.tsx | AI 记事的 CRUD、颜色、完成和导出 |
 | src/components/DailyReportsPage.tsx | 日报列表、独立阅读页和显式重发 |
+| src/components/LibraryPage.tsx | 知识库列表、搜索、Fragment/Article 生命周期、Markdown 阅读和评论 |
 | src/components/settings/ | Settings V2 的 Dialog、Layout、Section、Row 和领域设置 |
 
-当前登录后页面路由是 /today、/schedule、/assistant、/reminders、/import、/reports 和 /reports/:date；未登录时使用 /login。
+当前登录后页面路由是 /today、/schedule、/assistant、/reminders、/import、/reports、/reports/:date、/library 和 /library/:id；未登录时使用 /login。
 
 ## 3. 后端
 
-server/index.ts 目前是 Express 组合入口，集中注册认证、用户、日程、周期事务、通知、AI、记事、日报、附件、备份和管理员接口。业务实现已经部分下沉到 store/service 文件，但 HTTP 注册仍较集中。
+server/index.ts 目前是 Express 组合入口，集中注册认证、用户、日程、周期事务、通知、AI、记事、知识库、日报、附件、备份和管理员接口。业务实现已经部分下沉到 store/service 文件，但 HTTP 注册仍较集中。
 
 认证中间件先解析登录身份；业务接口使用当前用户 ID 查询或写入数据。管理员接口额外检查管理员角色。外部日报接口使用独立的按账号绑定令牌，权限与登录会话分开。
 
@@ -40,7 +41,7 @@ server/index.ts 目前是 Express 组合入口，集中注册认证、用户、�
 
 数据层使用 sql.js。服务启动时把 SQLite 文件加载到内存，业务修改后导出并写回 data/。当前主要文件为：
 
-- chat.db：用户、会话、消息、AI 配置、记事、日报和部分账号级数据。
+- chat.db：用户、会话、消息、AI 配置、记事、日报和账号私有知识库的 `library_entries`、Article 版本、评论及发布令牌哈希；知识正文以 Markdown 为 source，HTML 按读取时安全渲染。
 - schedule.db：日历、分类和日程。
 - reminder.db：周期事务和提醒配置。
 - activity.db：通知、完成记录和活动审计。
@@ -56,6 +57,7 @@ server/index.ts 目前是 Express 组合入口，集中注册认证、用户、�
 | 周期事务与通知 | ReminderPage、ActionCenterPage | reminder-store、notification-service、scheduler | 月末兜底、逾期完成、免打扰和失败重试 |
 | AI | AiSchedulePanel、AiImportPage | AI 服务、ai-plan、ai-import-service | 生成计划不等于写入；必须用户确认 |
 | AI 记事 | NoteBoard | note-item-service | 记事独立于行动中心；导出确定性生成 |
+| 知识库 | LibraryPage | library-service、library-markdown、library publish API | Fragment/Article 统一模型、账号隔离、普通搜索、版本与安全 Markdown；日程关系只预留 |
 | 日报 | DailyReportsPage | daily-report API、模板、media service | 媒体先校验/托管；内容版本决定入队 |
 | 完成和附件 | ActionCenterPage | completion、attachment service | 所有权、大小、MIME 和恢复边界 |
 | 备份与管理 | Settings、AdminModal | backup-service、admin API | 高风险操作确认、快照和回滚 |

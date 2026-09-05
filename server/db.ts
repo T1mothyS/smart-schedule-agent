@@ -244,6 +244,97 @@ async function initDb(): Promise<void> {
   }
   db.run("UPDATE note_items SET color = 'neutral' WHERE color IS NULL OR color NOT IN ('neutral', 'purple', 'blue', 'green', 'amber', 'rose')");
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS library_entries (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('fragment', 'article')),
+      type TEXT NOT NULL CHECK (type IN ('knowledge', 'insight', 'framework', 'experience', 'tutorial', 'reference')),
+      source_id TEXT,
+      slug TEXT,
+      title TEXT,
+      content TEXT NOT NULL,
+      summary TEXT NOT NULL DEFAULT '',
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('draft', 'active', 'archived')),
+      source_type TEXT NOT NULL DEFAULT 'manual',
+      source_ref TEXT,
+      source_url TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      content_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      published_at TEXT,
+      archived_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  const libraryEntryColumns = queryAll<{ name: string }>('PRAGMA table_info(library_entries)');
+  const libraryEntryMigrations: Array<[string, string]> = [
+    ['kind', "TEXT NOT NULL DEFAULT 'fragment'"],
+    ['type', "TEXT NOT NULL DEFAULT 'knowledge'"],
+    ['source_id', 'TEXT'],
+    ['slug', 'TEXT'],
+    ['summary', "TEXT NOT NULL DEFAULT ''"],
+    ['tags_json', "TEXT NOT NULL DEFAULT '[]'"],
+    ['status', "TEXT NOT NULL DEFAULT 'active'"],
+    ['source_type', "TEXT NOT NULL DEFAULT 'manual'"],
+    ['source_ref', 'TEXT'],
+    ['source_url', 'TEXT'],
+    ['metadata_json', "TEXT NOT NULL DEFAULT '{}'"],
+    ['content_hash', "TEXT NOT NULL DEFAULT ''"],
+    ['published_at', 'TEXT'],
+    ['archived_at', 'TEXT'],
+  ];
+  for (const [name, definition] of libraryEntryMigrations) {
+    if (!libraryEntryColumns.some(column => column.name === name)) {
+      db.run(`ALTER TABLE library_entries ADD COLUMN ${name} ${definition}`);
+    }
+  }
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS library_entry_versions (
+      id TEXT PRIMARY KEY,
+      entry_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      title TEXT,
+      summary TEXT NOT NULL DEFAULT '',
+      content TEXT NOT NULL,
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (entry_id) REFERENCES library_entries(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS library_comments (
+      id TEXT PRIMARY KEY,
+      entry_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (entry_id) REFERENCES library_entries(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS library_publish_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL UNIQUE,
+      token_hash TEXT NOT NULL UNIQUE,
+      token_prefix TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
   // 创建索引
   db.run('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
@@ -251,6 +342,12 @@ async function initDb(): Promise<void> {
   db.run('CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email)');
   db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_report_token_hash ON daily_report_tokens(token_hash)');
   db.run('CREATE INDEX IF NOT EXISTS idx_note_items_user_updated ON note_items(user_id, updated_at)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_library_entries_user_updated ON library_entries(user_id, updated_at)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_library_entries_user_kind ON library_entries(user_id, kind, status)');
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_library_entries_user_source ON library_entries(user_id, source_id) WHERE source_id IS NOT NULL');
+  db.run('CREATE INDEX IF NOT EXISTS idx_library_versions_entry_created ON library_entry_versions(entry_id, created_at DESC)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_library_comments_entry_created ON library_comments(entry_id, created_at ASC)');
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_library_publish_token_hash ON library_publish_tokens(token_hash)');
 
   // 保存到文件
   saveDb();
@@ -412,6 +509,60 @@ export interface DbNoteItem {
   linked_schedule_ids: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface DbLibraryEntry {
+  id: string;
+  user_id: string;
+  kind: 'fragment' | 'article';
+  type: 'knowledge' | 'insight' | 'framework' | 'experience' | 'tutorial' | 'reference';
+  source_id: string | null;
+  slug: string | null;
+  title: string | null;
+  content: string;
+  summary: string;
+  tags_json: string;
+  status: 'draft' | 'active' | 'archived';
+  source_type: string;
+  source_ref: string | null;
+  source_url: string | null;
+  metadata_json: string;
+  content_hash: string;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+  archived_at: string | null;
+}
+
+export interface DbLibraryEntryVersion {
+  id: string;
+  entry_id: string;
+  user_id: string;
+  content_hash: string;
+  title: string | null;
+  summary: string;
+  content: string;
+  tags_json: string;
+  created_at: string;
+}
+
+export interface DbLibraryComment {
+  id: string;
+  entry_id: string;
+  user_id: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbLibraryPublishToken {
+  id: string;
+  user_id: string;
+  token_hash: string;
+  token_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
 }
 
 // ============= 会话操作 =============
@@ -914,6 +1065,295 @@ export function deleteNoteItem(id: string, userId: string): boolean {
   return run('DELETE FROM note_items WHERE id = ? AND user_id = ?', [id, userId]).changes > 0;
 }
 
+// ============= Library / 知识库操作 =============
+
+export interface DbLibraryListFilters {
+  q?: string;
+  kind?: string;
+  type?: string;
+  status?: string;
+  tag?: string;
+  source_type?: string;
+  limit?: number;
+  offset?: number;
+  sort?: 'updated_desc' | 'created_desc';
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, match => `\\${match}`);
+}
+
+export function getLibraryEntry(id: string, userId: string): DbLibraryEntry | undefined {
+  return queryOne<DbLibraryEntry>('SELECT * FROM library_entries WHERE id = ? AND user_id = ?', [id, userId]);
+}
+
+export function getLibraryEntryBySourceId(sourceId: string, userId: string): DbLibraryEntry | undefined {
+  return queryOne<DbLibraryEntry>(
+    'SELECT * FROM library_entries WHERE source_id = ? AND user_id = ? LIMIT 1',
+    [sourceId, userId],
+  );
+}
+
+export function listLibraryEntries(userId: string, filters: DbLibraryListFilters = {}): { items: DbLibraryEntry[]; total: number } {
+  const clauses = ['user_id = ?'];
+  const params: any[] = [userId];
+  if (filters.kind && filters.kind !== 'all') {
+    clauses.push('kind = ?');
+    params.push(filters.kind);
+  }
+  if (filters.type && filters.type !== 'all') {
+    clauses.push('type = ?');
+    params.push(filters.type);
+  }
+  if (filters.status && filters.status !== 'all') {
+    clauses.push('status = ?');
+    params.push(filters.status);
+  }
+  if (filters.source_type && filters.source_type !== 'all') {
+    clauses.push('source_type = ?');
+    params.push(filters.source_type);
+  }
+  if (filters.tag) {
+    clauses.push("tags_json LIKE ? ESCAPE '\\'");
+    params.push(`%"${escapeLike(filters.tag)}"%`);
+  }
+  if (filters.q?.trim()) {
+    const pattern = `%${escapeLike(filters.q.trim())}%`;
+    clauses.push("(title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\' OR tags_json LIKE ? ESCAPE '\\')");
+    params.push(pattern, pattern, pattern, pattern);
+  }
+  const where = clauses.join(' AND ');
+  const total = queryOne<{ count: number }>(`SELECT COUNT(*) AS count FROM library_entries WHERE ${where}`, params)?.count || 0;
+  const limit = Math.min(Math.max(Math.floor(filters.limit || 40), 1), 100);
+  const offset = Math.max(Math.floor(filters.offset || 0), 0);
+  const order = filters.sort === 'created_desc' ? 'created_at DESC, id DESC' : 'updated_at DESC, created_at DESC, id DESC';
+  const items = queryAll<DbLibraryEntry>(
+    `SELECT * FROM library_entries WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
+    [...params, limit, offset],
+  );
+  return { items, total: Number(total) };
+}
+
+export function createLibraryEntry(entry: DbLibraryEntry): DbLibraryEntry {
+  run(
+    `INSERT INTO library_entries
+     (id, user_id, kind, type, source_id, slug, title, content, summary, tags_json, status,
+      source_type, source_ref, source_url, metadata_json, content_hash, created_at, updated_at, published_at, archived_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      entry.id,
+      entry.user_id,
+      entry.kind,
+      entry.type,
+      entry.source_id,
+      entry.slug,
+      entry.title,
+      entry.content,
+      entry.summary,
+      entry.tags_json,
+      entry.status,
+      entry.source_type,
+      entry.source_ref,
+      entry.source_url,
+      entry.metadata_json,
+      entry.content_hash,
+      entry.created_at,
+      entry.updated_at,
+      entry.published_at,
+      entry.archived_at,
+    ],
+  );
+  return entry;
+}
+
+export function updateLibraryEntry(
+  id: string,
+  userId: string,
+  updates: Partial<Pick<DbLibraryEntry, 'kind' | 'type' | 'source_id' | 'slug' | 'title' | 'content' | 'summary' | 'tags_json' | 'status' | 'source_type' | 'source_ref' | 'source_url' | 'metadata_json' | 'content_hash' | 'updated_at' | 'published_at' | 'archived_at'>>,
+): DbLibraryEntry | undefined {
+  const fields: string[] = [];
+  const values: any[] = [];
+  const allowed = [
+    'kind', 'type', 'source_id', 'slug', 'title', 'content', 'summary', 'tags_json', 'status',
+    'source_type', 'source_ref', 'source_url', 'metadata_json', 'content_hash', 'updated_at',
+    'published_at', 'archived_at',
+  ] as const;
+  for (const field of allowed) {
+    if (updates[field] !== undefined) {
+      fields.push(`${field} = ?`);
+      values.push(updates[field]);
+    }
+  }
+  if (!fields.length) return getLibraryEntry(id, userId);
+  values.push(id, userId);
+  run(`UPDATE library_entries SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, values);
+  return getLibraryEntry(id, userId);
+}
+
+export function deleteLibraryEntry(id: string, userId: string): boolean {
+  if (!getLibraryEntry(id, userId)) return false;
+  run('DELETE FROM library_comments WHERE entry_id = ? AND user_id = ?', [id, userId]);
+  run('DELETE FROM library_entry_versions WHERE entry_id = ? AND user_id = ?', [id, userId]);
+  return run('DELETE FROM library_entries WHERE id = ? AND user_id = ?', [id, userId]).changes > 0;
+}
+
+export function createLibraryEntryVersion(version: DbLibraryEntryVersion): DbLibraryEntryVersion {
+  run(
+    `INSERT INTO library_entry_versions
+     (id, entry_id, user_id, content_hash, title, summary, content, tags_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [version.id, version.entry_id, version.user_id, version.content_hash, version.title, version.summary, version.content, version.tags_json, version.created_at],
+  );
+  return version;
+}
+
+export function listLibraryEntryVersions(entryId: string, userId: string): DbLibraryEntryVersion[] {
+  return queryAll<DbLibraryEntryVersion>(
+    `SELECT v.* FROM library_entry_versions v
+     JOIN library_entries e ON e.id = v.entry_id
+     WHERE v.entry_id = ? AND v.user_id = ? AND e.user_id = ?
+     ORDER BY v.created_at DESC, v.id DESC`,
+    [entryId, userId, userId],
+  );
+}
+
+export function listLibraryComments(entryId: string, userId: string): DbLibraryComment[] {
+  return queryAll<DbLibraryComment>(
+    `SELECT c.* FROM library_comments c
+     JOIN library_entries e ON e.id = c.entry_id
+     WHERE c.entry_id = ? AND c.user_id = ? AND e.user_id = ?
+     ORDER BY c.created_at ASC, c.id ASC`,
+    [entryId, userId, userId],
+  );
+}
+
+export function createLibraryComment(comment: DbLibraryComment): DbLibraryComment {
+  run(
+    `INSERT INTO library_comments (id, entry_id, user_id, content, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [comment.id, comment.entry_id, comment.user_id, comment.content, comment.created_at, comment.updated_at],
+  );
+  return comment;
+}
+
+export function deleteLibraryComment(id: string, entryId: string, userId: string): boolean {
+  return run(
+    'DELETE FROM library_comments WHERE id = ? AND entry_id = ? AND user_id = ?',
+    [id, entryId, userId],
+  ).changes > 0;
+}
+
+export function getLibraryPublishToken(userId: string): DbLibraryPublishToken | undefined {
+  return queryOne<DbLibraryPublishToken>('SELECT * FROM library_publish_tokens WHERE user_id = ?', [userId]);
+}
+
+export function replaceLibraryPublishToken(token: DbLibraryPublishToken): DbLibraryPublishToken {
+  run('DELETE FROM library_publish_tokens WHERE user_id = ?', [token.user_id]);
+  run(
+    `INSERT INTO library_publish_tokens
+     (id, user_id, token_hash, token_prefix, created_at, last_used_at, revoked_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [token.id, token.user_id, token.token_hash, token.token_prefix, token.created_at, token.last_used_at, token.revoked_at],
+  );
+  return token;
+}
+
+export function revokeLibraryPublishToken(userId: string, revokedAt = new Date().toISOString()): boolean {
+  return run(
+    'UPDATE library_publish_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL',
+    [revokedAt, userId],
+  ).changes > 0;
+}
+
+export function findActiveLibraryPublishTokenByHash(tokenHash: string): DbLibraryPublishToken | undefined {
+  return queryOne<DbLibraryPublishToken>(
+    `SELECT t.* FROM library_publish_tokens t
+     JOIN users u ON u.id = t.user_id
+     WHERE t.token_hash = ? AND t.revoked_at IS NULL AND u.disabled = 0`,
+    [tokenHash],
+  );
+}
+
+export function markLibraryPublishTokenUsed(id: string, usedAt = new Date().toISOString()): void {
+  run('UPDATE library_publish_tokens SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL', [usedAt, id]);
+}
+
+export function exportUserLibraryEntries(userId: string): DbLibraryEntry[] {
+  return queryAll<DbLibraryEntry>('SELECT * FROM library_entries WHERE user_id = ? ORDER BY updated_at DESC, id DESC', [userId]);
+}
+
+export function restoreUserLibraryEntries(
+  userId: string,
+  rows: Array<Partial<DbLibraryEntry> & { sourceId?: unknown; sourceType?: unknown; sourceRef?: unknown; sourceUrl?: unknown; tags?: unknown }>,
+  mode: 'merge' | 'replace',
+): { entries: number; versions: number } {
+  if (mode === 'replace') {
+    run('DELETE FROM library_comments WHERE user_id = ?', [userId]);
+    run('DELETE FROM library_entry_versions WHERE user_id = ?', [userId]);
+    run('DELETE FROM library_entries WHERE user_id = ?', [userId]);
+  }
+  let entries = 0;
+  let versions = 0;
+  for (const row of rows || []) {
+    const id = String(row.id || '').trim() || crypto.randomUUID();
+    if (getLibraryEntry(id, userId)) continue;
+    const sourceId = String(row.source_id ?? row.sourceId ?? '').trim() || null;
+    if (sourceId && getLibraryEntryBySourceId(sourceId, userId)) continue;
+    const now = new Date().toISOString();
+    const kind = row.kind === 'article' ? 'article' : 'fragment';
+    const typeValues = ['knowledge', 'insight', 'framework', 'experience', 'tutorial', 'reference'] as const;
+    const type = (typeValues as readonly string[]).includes(String(row.type)) ? String(row.type) as DbLibraryEntry['type'] : 'knowledge';
+    const statusValues = ['draft', 'active', 'archived'] as const;
+    const status = (statusValues as readonly string[]).includes(String(row.status)) ? String(row.status) as DbLibraryEntry['status'] : 'active';
+    const content = String(row.content || '').trim();
+    if (!content) continue;
+    const tags = Array.isArray(row.tags)
+      ? row.tags
+      : typeof row.tags_json === 'string'
+        ? (() => { try { return JSON.parse(row.tags_json); } catch { return []; } })()
+        : [];
+    const entry: DbLibraryEntry = {
+      id,
+      user_id: userId,
+      kind,
+      type,
+      source_id: sourceId,
+      slug: String(row.slug || '').trim() || null,
+      title: String(row.title || '').trim() || null,
+      content,
+      summary: String(row.summary || '').trim(),
+      tags_json: JSON.stringify(Array.isArray(tags) ? tags.map(tag => String(tag || '').trim()).filter(Boolean).slice(0, 50) : []),
+      status,
+      source_type: String(row.source_type ?? row.sourceType ?? 'manual').trim() || 'manual',
+      source_ref: String(row.source_ref ?? row.sourceRef ?? '').trim() || null,
+      source_url: String(row.source_url ?? row.sourceUrl ?? '').trim() || null,
+      metadata_json: String(row.metadata_json || '{}'),
+      content_hash: String(row.content_hash || crypto.createHash('sha256').update(content, 'utf8').digest('hex')),
+      created_at: String(row.created_at || now),
+      updated_at: String(row.updated_at || now),
+      published_at: String(row.published_at || '').trim() || null,
+      archived_at: String(row.archived_at || '').trim() || null,
+    };
+    createLibraryEntry(entry);
+    entries++;
+    if (kind === 'article') {
+      createLibraryEntryVersion({
+        id: crypto.randomUUID(),
+        entry_id: id,
+        user_id: userId,
+        content_hash: entry.content_hash,
+        title: entry.title,
+        summary: entry.summary,
+        content: entry.content,
+        tags_json: entry.tags_json,
+        created_at: entry.updated_at,
+      });
+      versions++;
+    }
+  }
+  return { entries, versions };
+}
+
 function restoreLinkedScheduleIds(value: unknown): string[] {
   let parsed: unknown = value;
   if (typeof value === 'string') {
@@ -1077,6 +1517,10 @@ export function markDailyReportTokenUsed(id: string, usedAt = new Date().toISOSt
 export function deleteUser(userId: string): boolean {
   try {
     run('DELETE FROM daily_report_tokens WHERE user_id = ?', [userId]);
+    run('DELETE FROM library_publish_tokens WHERE user_id = ?', [userId]);
+    run('DELETE FROM library_comments WHERE user_id = ?', [userId]);
+    run('DELETE FROM library_entry_versions WHERE user_id = ?', [userId]);
+    run('DELETE FROM library_entries WHERE user_id = ?', [userId]);
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
     run('DELETE FROM user_mail_accounts WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
@@ -1099,9 +1543,13 @@ export function clearUserData(userId: string): { schedules: number; sessions: nu
   try {
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
     run('DELETE FROM user_mail_accounts WHERE user_id = ?', [userId]);
+    run('DELETE FROM library_publish_tokens WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
     run('DELETE FROM ai_schedule_messages WHERE user_id = ?', [userId]);
     run('DELETE FROM note_items WHERE user_id = ?', [userId]);
+    run('DELETE FROM library_comments WHERE user_id = ?', [userId]);
+    run('DELETE FROM library_entry_versions WHERE user_id = ?', [userId]);
+    run('DELETE FROM library_entries WHERE user_id = ?', [userId]);
     const sessions = queryAll<{ id: string }>('SELECT id FROM sessions WHERE user_id = ?', [userId]);
     for (const session of sessions) run('DELETE FROM messages WHERE session_id = ?', [session.id]);
     run('DELETE FROM sessions WHERE user_id = ?', [userId]);

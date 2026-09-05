@@ -33,6 +33,8 @@ import { extractWeatherLocationQuery, getDailyWeather, isWeatherQuestion, search
 import { createReadableUserExport, createSchedulesCsv } from './export-service.js';
 import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
 import { getDailyReportView, listDailyReportViews, publishDailyReport, queueDailyReportEmail } from './daily-report-service.js';
+import * as libraryService from './library-service.js';
+import { authenticateLibraryPublishToken, generateLibraryPublishToken, getLibraryPublishTokenStatus, revokeLibraryPublishToken } from './library-publish-token-service.js';
 import {
   DAILY_REPORT_MEDIA_MAX_BYTES,
   DAILY_REPORT_MEDIA_ROUTE,
@@ -97,6 +99,29 @@ function describeErrorData(error: unknown, extra: Record<string, unknown> = {}):
     error: describeError(error),
     ...(code ? { errorCode: code } : {}),
   };
+}
+
+function sendLibraryError(res: express.Response, error: unknown, fallback: string, status = 400): void {
+  if (error instanceof libraryService.LibraryInputError) {
+    res.status(status).json({
+      success: false,
+      error: { code: error.code, message: error.message, ...(error.field ? { field: error.field } : {}) },
+    });
+    return;
+  }
+  res.status(status).json({ success: false, error: { code: 'LIBRARY_ERROR', message: error instanceof Error ? error.message : fallback } });
+}
+
+function sendLibraryMutation(res: express.Response, result: libraryService.LibraryMutationResult, status?: number): void {
+  res.status(status ?? (result.status === 'CREATED' ? 201 : 200)).json({
+    success: true,
+    status: result.status,
+    entry: result.entry,
+    normalizedFields: result.normalizedFields,
+    warnings: result.warnings,
+    relations: { calendarEvents: [], libraryEntries: [] },
+    detailPath: `/library/${result.entry.id}`,
+  });
 }
 
 function notificationLogCategory(data: Record<string, unknown> = {}): LogCategory {
@@ -1095,6 +1120,187 @@ app.delete('/api/note-items/:id', authenticate, (req, res) => {
   } catch (error: any) {
     res.status(400).json({ error: error?.message || '删除记事失败' });
   }
+});
+
+// ============= Library / 知识库 MVP =============
+
+const libraryCreateFields = [
+  'kind', 'type', 'sourceId', 'externalId', 'slug', 'title', 'content', 'summary', 'tags', 'status',
+  'sourceType', 'sourceRef', 'sourceUrl', 'metadata',
+];
+const libraryUpdateFields = [
+  'type', 'slug', 'title', 'content', 'summary', 'tags', 'status', 'sourceId', 'sourceType', 'sourceRef', 'sourceUrl', 'metadata',
+];
+
+function libraryBody(req: express.Request): Record<string, unknown> {
+  return req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+}
+
+app.get('/api/library', authenticate, (req, res) => {
+  try {
+    const kind = String(req.query.kind || 'all');
+    const type = String(req.query.type || 'all');
+    const status = String(req.query.status || 'active');
+    const allowedKind = ['all', ...libraryService.LIBRARY_KINDS];
+    const allowedType = ['all', ...libraryService.LIBRARY_TYPES];
+    const allowedStatus = ['all', ...libraryService.LIBRARY_STATUSES];
+    if (!allowedKind.includes(kind)) return res.status(400).json({ success: false, error: { code: 'INVALID_KIND', message: 'kind 不合法', field: 'kind' } });
+    if (!allowedType.includes(type)) return res.status(400).json({ success: false, error: { code: 'INVALID_TYPE', message: 'type 不合法', field: 'type' } });
+    if (!allowedStatus.includes(status)) return res.status(400).json({ success: false, error: { code: 'INVALID_STATUS', message: 'status 不合法', field: 'status' } });
+    res.setHeader('Cache-Control', 'no-store');
+    const result = libraryService.listLibraryEntries((req as any).user.userId, {
+      q: typeof req.query.q === 'string' ? req.query.q : undefined,
+      kind,
+      type,
+      status,
+      tag: typeof req.query.tag === 'string' ? req.query.tag : undefined,
+      sourceType: typeof req.query.sourceType === 'string' ? req.query.sourceType : undefined,
+      page: Number(req.query.page || 1),
+      pageSize: Number(req.query.pageSize || 40),
+      sort: req.query.sort === 'created_desc' ? 'created_desc' : 'updated_desc',
+    });
+    res.json({ success: true, ...result });
+  } catch (error) {
+    sendLibraryError(res, error, '获取知识库失败', 500);
+  }
+});
+
+const getLibraryPublishTokenHandler = (req: express.Request, res: express.Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ status: getLibraryPublishTokenStatus((req as any).user.userId) });
+};
+
+app.get('/api/library/publish-token', authenticate, getLibraryPublishTokenHandler);
+app.get('/api/integrations/library-token', authenticate, getLibraryPublishTokenHandler);
+
+const generateLibraryPublishTokenHandler = (req: express.Request, res: express.Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const generated = generateLibraryPublishToken((req as any).user.userId);
+  res.json({
+    token: generated.token,
+    status: generated.status,
+    warning: '令牌明文只显示这一次，请立即保存到迁移脚本或其他本地私密配置。',
+  });
+};
+
+app.post('/api/library/publish-token', authenticate, generateLibraryPublishTokenHandler);
+app.post('/api/integrations/library-token', authenticate, generateLibraryPublishTokenHandler);
+
+const revokeLibraryPublishTokenHandler = (req: express.Request, res: express.Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ status: revokeLibraryPublishToken((req as any).user.userId) });
+};
+
+app.delete('/api/library/publish-token', authenticate, revokeLibraryPublishTokenHandler);
+app.delete('/api/integrations/library-token', authenticate, revokeLibraryPublishTokenHandler);
+
+// 本地 Markdown 发布脚本使用独立的、仅限知识库写入的令牌，不拥有登录会话权限。
+const publishLibraryHandler = (req: express.Request, res: express.Response) => {
+  const authorization = String(req.header('authorization') || '');
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  const authenticated = match ? authenticateLibraryPublishToken(match[1].trim()) : null;
+  if (!authenticated) return res.status(401).json({ success: false, error: { code: 'INVALID_PUBLISH_TOKEN', message: '知识库发布令牌无效或已经撤销' } });
+  try {
+    const body = libraryBody(req);
+    const unknownFields = Object.keys(body).filter(key => !libraryCreateFields.includes(key));
+    if (unknownFields.length) return res.status(400).json({ success: false, error: { code: 'UNKNOWN_FIELD', message: `不允许的字段：${unknownFields.join(', ')}` } });
+    sendLibraryMutation(res, libraryService.publishLibraryArticle(authenticated.userId, body));
+  } catch (error) {
+    sendLibraryError(res, error, '发布知识失败');
+  }
+};
+
+app.post('/api/library/publish', publishLibraryHandler);
+app.post('/api/integrations/library', publishLibraryHandler);
+
+app.post('/api/library', authenticate, (req, res) => {
+  try {
+    const body = libraryBody(req);
+    const unknownFields = Object.keys(body).filter(key => !libraryCreateFields.includes(key));
+    if (unknownFields.length) return res.status(400).json({ success: false, error: { code: 'UNKNOWN_FIELD', message: `不允许的字段：${unknownFields.join(', ')}` } });
+    sendLibraryMutation(res, libraryService.createLibraryEntry((req as any).user.userId, body));
+  } catch (error) {
+    sendLibraryError(res, error, '创建知识失败');
+  }
+});
+
+app.get('/api/library/:id/versions', authenticate, (req, res) => {
+  const detail = libraryService.getLibraryDetail((req as any).user.userId, req.params.id);
+  if (!detail) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '知识不存在或无权访问' } });
+  res.json({ success: true, versions: detail.versions });
+});
+
+app.get('/api/library/:id/export', authenticate, (req, res) => {
+  const exported = libraryService.exportLibraryEntryMarkdown((req as any).user.userId, req.params.id);
+  if (!exported) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '知识不存在或无权访问' } });
+  res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(exported.filename)}`);
+  res.send('\uFEFF' + exported.markdown);
+});
+
+app.post('/api/library/:id/promote', authenticate, (req, res) => {
+  try {
+    const result = libraryService.promoteFragmentToArticle((req as any).user.userId, req.params.id);
+    if (!result) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '知识不存在或无权访问' } });
+    sendLibraryMutation(res, result, 201);
+  } catch (error) {
+    sendLibraryError(res, error, '整理为正式知识失败');
+  }
+});
+
+app.post('/api/library/:id/archive', authenticate, (req, res) => {
+  const entry = libraryService.archiveLibraryEntry((req as any).user.userId, req.params.id);
+  if (!entry) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '知识不存在或无权访问' } });
+  res.json({ success: true, entry, detailPath: `/library/${entry.id}` });
+});
+
+app.get('/api/library/:id/comments', authenticate, (req, res) => {
+  const detail = libraryService.getLibraryDetail((req as any).user.userId, req.params.id);
+  if (!detail) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '知识不存在或无权访问' } });
+  res.json({ success: true, comments: detail.comments });
+});
+
+app.post('/api/library/:id/comments', authenticate, (req, res) => {
+  try {
+    const comment = libraryService.addLibraryComment((req as any).user.userId, req.params.id, libraryBody(req).content);
+    if (!comment) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '知识不存在或无权访问' } });
+    res.status(201).json({ success: true, comment });
+  } catch (error) {
+    sendLibraryError(res, error, '添加评论失败');
+  }
+});
+
+app.delete('/api/library/:id/comments/:commentId', authenticate, (req, res) => {
+  const deleted = libraryService.deleteLibraryComment((req as any).user.userId, req.params.id, req.params.commentId);
+  if (!deleted) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '评论不存在或无权访问' } });
+  res.json({ success: true });
+});
+
+app.get('/api/library/:id', authenticate, (req, res) => {
+  const detail = libraryService.getLibraryDetail((req as any).user.userId, req.params.id);
+  if (!detail) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '知识不存在或无权访问' } });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ success: true, ...detail });
+});
+
+app.patch('/api/library/:id', authenticate, (req, res) => {
+  try {
+    const body = libraryBody(req);
+    const unknownFields = Object.keys(body).filter(key => !libraryUpdateFields.includes(key));
+    if (unknownFields.length) return res.status(400).json({ success: false, error: { code: 'UNKNOWN_FIELD', message: `不允许的字段：${unknownFields.join(', ')}` } });
+    const result = libraryService.updateLibraryEntry((req as any).user.userId, req.params.id, body);
+    if (!result) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '知识不存在或无权访问' } });
+    sendLibraryMutation(res, result);
+  } catch (error) {
+    sendLibraryError(res, error, '更新知识失败');
+  }
+});
+
+app.delete('/api/library/:id', authenticate, (req, res) => {
+  if (libraryBody(req).confirm !== true) return res.status(400).json({ success: false, error: { code: 'CONFIRMATION_REQUIRED', message: '永久删除需要 confirm=true' } });
+  const deleted = libraryService.deleteLibraryEntry((req as any).user.userId, req.params.id);
+  if (!deleted) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: '知识不存在或无权访问' } });
+  res.json({ success: true });
 });
 
 app.post("/api/suspended-todos", authenticate, (req, res) => {

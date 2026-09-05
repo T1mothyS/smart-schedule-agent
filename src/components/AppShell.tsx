@@ -1,7 +1,7 @@
 import { ReactNode } from 'react';
-import { BellRing, Moon, Newspaper, Settings, Shield, Sun, type LucideIcon } from 'lucide-react';
+import { BellRing, BookOpen, Moon, Newspaper, Settings, Shield, Sun, type LucideIcon } from 'lucide-react';
 
-type Section = 'today' | 'schedule' | 'assistant' | 'reminders' | 'import' | 'reports';
+type Section = 'today' | 'schedule' | 'assistant' | 'reminders' | 'import' | 'reports' | 'library';
 
 const productNavItems: Array<{ section: Section; label: string; icon?: string; Icon?: LucideIcon }> = [
   { section: 'today', label: '今日', icon: '/navigation-icons/today.png' },
@@ -10,6 +10,7 @@ const productNavItems: Array<{ section: Section; label: string; icon?: string; I
   { section: 'import', label: '智能导入', icon: '/navigation-icons/import.png' },
   { section: 'assistant', label: 'AI 助手', icon: '/navigation-icons/assistant.png' },
   { section: 'reports', label: '日报', Icon: Newspaper },
+  { section: 'library', label: '知识库', Icon: BookOpen },
 ];
 
 interface AppShellProps {

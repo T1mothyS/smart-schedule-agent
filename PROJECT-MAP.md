@@ -20,12 +20,13 @@ flowchart TD
     API --> Auth[认证与账号隔离]
     API --> Domains[领域服务]
     Domains --> Notes[note-item-service\nAI 记事]
+    Domains --> Library[library-service\n知识库]
     Domains --> Calendar[日程与分类]
     Domains --> Reminders[周期事务与提醒]
     Domains --> Reports[日报与媒体]
     Domains --> Backup[备份与导出]
     Domains --> DB[(SQLite / sql.js)]
-    DB --> ChatDB[data/chat.db]
+    DB --> ChatDB[data/chat.db\n用户、记事、日报、知识库]
     DB --> ScheduleDB[data/schedule.db]
     DB --> ReminderDB[data/reminder.db]
     DB --> ActivityDB[data/activity.db]
@@ -63,6 +64,8 @@ flowchart LR
 | `/api/integrations/daily-report/reports/:date` | V2 publisher | 创建或幂等更新当日已校验日报 | 只接受合法结构与本站媒体引用；按账号、日期和内容版本处理 |
 | `/api/daily-reports`、`/reports/:date` | 登录用户 | 查看日报列表和独立阅读页 | 登录态、当前账号隔离；详情页不重复产品壳 |
 | `/api/note-items` | 登录用户 | AI 记事 CRUD、颜色、完成/恢复和导出所需数据 | JWT 身份与 `user_id` 所有权；颜色只允许预设枚举 |
+| `/api/library`、`/library` | 登录用户 | Fragment/Article 列表、搜索、阅读、编辑、评论和归档 | 当前账号隔离；Markdown 由服务端安全渲染；日程关联只预留 |
+| `/api/integrations/library` | 本地 Markdown 迁移脚本 | 使用独立 Knowledge Publish Token 幂等发布 Article | 只保存 token 哈希；`sourceId + user_id` 定位文章；不拥有登录或日程权限 |
 | `/api/ai-chat` | 登录用户 | 普通问答、天气和待确认计划 | 普通对话可生成计划，但计划写入仍需用户确认；旧专用 `create_todo` 参数拒绝 |
 
 凭据分界：账号级设置和日报令牌只在各自的网页/忽略配置中保存；Prompt、日报、日志、Git 和可读导出均不包含凭据。生产邮件的 SMTP 接受、通知状态或网页状态都不等同于收件箱到达。
@@ -84,6 +87,7 @@ flowchart LR
 | --- | --- | --- |
 | 日记/记事板 UI、快捷键、导出 | `src/components/NoteBoard.tsx`、`src/components/AiSchedulePanel.tsx`、`src/utils/note-export.ts` | 不让 LLM 负责布局；导出在前端确定性生成 |
 | 记事数据、迁移、备份恢复 | `server/note-item-service.ts`、`server/db.ts`、`server/backup-service.ts` | 保留旧 `linked_schedule_ids` 兼容字段；不跨账号读取 |
+| 知识库、Markdown 迁移 | `server/library-service.ts`、`server/library-markdown.ts`、`scripts/migrate-library.ts` | 先 dry-run；不直接修改运行中的数据库；令牌只放在网页/当前本地私密配置 |
 | AI 计划确认 | `server/index.ts`、`server/ai-plan.ts` | 先生成待确认草稿；禁止旧专用入口自动完成来源记事 |
 | 日报采集/生成/校验 | `日报-v2/scripts/`、`日报-v2/schemas/`、`日报-v2/tests/` | V2 只输出结构化内容；`-NoSend` 不发布、不入队、不发信 |
 | 日报媒体与发布 | `日报-v2/scripts/report_media.py`、`日报-v2/scripts/publish_report.py`、主仓库 `server/daily-report*.ts` | 先本地校验和上传媒体，再执行最后日报 PUT |
@@ -101,7 +105,7 @@ npm run build
 git diff --check
 ```
 
-涉及 UI 时，还要在实际浏览器检查桌面与窄屏 viewport、长文本、三位数编号、暗色主题、抽屉、调色板、下载和无横向溢出。涉及生产时，另行检查预构建包 SHA256、备份、原子切换、PM2、`/api/health`、静态 JS MIME/大小/连续请求和页面行为。
+涉及 UI 时，还要在实际浏览器检查桌面与窄屏 viewport、长文本、三位数编号、暗色主题、抽屉、调色板、知识库 Markdown/表格/评论、下载和无横向溢出。涉及生产时，另行检查预构建包 SHA256、备份、原子切换、PM2、`/api/health`、静态 JS MIME/大小/连续请求和页面行为。
 
 ### 日报 V2
 

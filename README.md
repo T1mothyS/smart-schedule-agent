@@ -18,6 +18,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - 支持可读 JSON/CSV 导出、用户加密导出/恢复和管理员全站快照。
 - AI 可从自然语言或截图生成待确认草稿；确认前不会写入正式数据。
 - AI 助手支持普通问答；配置常驻城市/区县后，可查询 Open-Meteo 实时与未来天气。
+- 知识库 MVP 提供账号私有的“正式知识 + 知识碎片”统一页面：支持 Markdown 阅读/轻量编辑、普通搜索、标签、评论、版本、碎片归档/删除/整理为正式知识，以及独立发布令牌和幂等迁移脚本。
 - 每日邮件摘要包含天气、进度、分类日程和完整明细，不与单项提醒混用。
 - 日报页面按日期保存当前账号的个人情报日报；新版 `daily-digest.v1` 内容由固定 Newsletter 模板渲染，发布前由 V2 在本地下载、校验并上传新闻图片与来源 logo，服务端按内容哈希保存并在入库前确认 Markdown 只引用本站媒体；未读邮箱默认生成独立的邮件简报，明确动作另列为邮件待办；旧日报继续使用受限 Markdown 兼容路径，并严格按账号隔离。
 - 日报由外部 V2 程序在 Validator 通过后通过专用接口发布；“日报邮件”是独立于每日摘要的设置，首次发布和后续内容更新都会为新的内容版本入队，同一内容版本保持幂等；每一天的日报详情都支持手动重新发送。
@@ -39,7 +40,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 ### 1.1 版本与邮件链路
 
-- 当前版本：`0.12.0-260905.1054`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
+- 当前版本：`0.13.0-260905.1857`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
 - 每日摘要邮件链路：账号提醒设置 → 每日摘要调度器 → 持久化通知队列 → 固定发件邮箱；按账号、时区、日期和配置时间组成触发键幂等。
 - 高优先级邮件链路：高优先级事件/待办 → 开始前 1–15 分钟调度器 → 持久化通知队列 → 固定发件邮箱；不依赖每日提醒或邮件开关。
 - V2 日报链路：Validator 通过 → 本地下载/校验并上传 `daily-digest.v1` 图片与来源 logo → `PUT /api/integrations/daily-report/reports/:date` → 服务端确认本站媒体存在 → 账号日报记录 → 新内容版本进入日报邮件通知队列 → 固定发件邮箱；同一内容版本只自动入队一次，媒体失败不会进入最后的日报 PUT，详情页可对当前正文手动重新发送。
@@ -314,6 +315,7 @@ cp .env.example .env
 | docs/UI-GUIDELINES.md | 响应式、控件、主题和 UI 验收原则 |
 | docs/TEST-MATRIX.md | 自动测试、浏览器手工验收和生产验收分层 |
 | docs/ROADMAP.md | Now、Next、Later、Ideas 和 Won't Do 路线图 |
+| docs/LIBRARY.md | 知识库 MVP 的数据、API、迁移和安全边界 |
 | .github/workflows/ci.yml | push 和 pull_request 的安装、类型、测试、构建检查；不执行部署 |
 
 | 文件或目录 | 作用 |
@@ -361,6 +363,7 @@ cp .env.example .env
 | `src/components/ScheduleSidebar.tsx` | 日历侧栏、日历源和分类操作 |
 | `src/components/ReminderPage.tsx` | 周期事务模板、任务、完成和提醒历史页面 |
 | `src/components/DailyReportsPage.tsx` | 当前账号的日报列表、全屏阅读页、状态和显式邮件重试入口 |
+| `src/components/LibraryPage.tsx` | 知识库列表、搜索筛选、Markdown 详情、碎片/正式知识生命周期和评论 |
 | `src/components/settings/` | Settings V2：Dialog/Layout/Section/Row 统一响应式布局；账户、AI、通知、日报、QQ 邮箱、数据和管理领域组件 |
 | `src/components/AiImportPage.tsx` | 自然语言/截图智能导入、草稿校对与确认 |
 | `src/components/AiSchedulePanel.tsx` | 普通问答、天气查询、待确认日程建议和记事模式的 AI 助手 |
@@ -398,6 +401,10 @@ cp .env.example .env
 | `server/weather-service.ts` | Open-Meteo 地点搜索、天气读取、缓存、超时和天气代码转换 |
 | `server/export-service.ts` | 当前账号的可读 JSON/CSV 数据导出与表格公式注入防护 |
 | `server/note-item-service.ts` | 账号隔离的 AI 记事 CRUD、批量校验和预设颜色校验 |
+| `server/library-service.ts` | 知识库条目校验、搜索、版本、评论、归档、发布幂等和导出 |
+| `server/library-markdown.ts` | 知识库 Markdown 的保守安全渲染和危险链接处理 |
+| `server/library-publish-token-service.ts` | 独立知识库发布令牌的哈希保存、轮换、撤销和鉴权 |
+| `scripts/migrate-library.ts` | Markdown 目录 `dry-run → report → API import` 迁移工具 |
 | `server/daily-report-token-service.ts` | 只读日报令牌生成、哈希保存、轮换、吊销和鉴权 |
 | `server/daily-report*.test.ts` | 日报服务、HTTP API 和 V2 假 SMTP 隔离端到端测试 |
 | `server/http-security.ts` | 安全响应头、请求体限制和分接口频率限制 |
