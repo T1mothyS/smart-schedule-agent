@@ -4,7 +4,7 @@ import { useTheme } from './hooks/useTheme';
 import { useAuth } from './hooks/useAuth';
 import { CalendarDays, Check, MoonStar, PartyPopper, X } from 'lucide-react';
 
-import { SettingsPage } from './components/SettingsPage';
+import { SettingsDialog } from './components/settings/SettingsDialog';
 import { AdminModal } from './components/AdminModal';
 import { AiSchedulePanel } from './components/AiSchedulePanel';
 import { CalendarView } from './components/CalendarView';
@@ -17,7 +17,6 @@ import { AiImportPage } from './components/AiImportPage';
 import { DailyReportReaderPage, DailyReportsPage } from './components/DailyReportsPage';
 import { MiniMonthCalendar } from './components/calendar/MiniMonthCalendar';
 import { SCHEDULE_CATEGORIES } from './utils/scheduleCategories';
-import { APP_CONFIG } from './config';
 
 // ==================== 日程主页（三栏布局） ====================
 
@@ -269,39 +268,10 @@ function AppContent() {
         ) : activeSection === 'reports' ? <DailyReportsPage /> : <AiImportPage />}
       </AppShell>
 
-      {/* 设置弹层 */}
-      {showSettings && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
-          onMouseDown={() => setShowSettings(false)}
-        >
-          <div
-            className="settings-dialog-content rounded-2xl shadow-2xl overflow-hidden relative"
-            style={{
-              backgroundColor: 'var(--td-bg-color-container)',
-              width: '680px',
-              maxWidth: '95vw',
-              maxHeight: '85vh',
-              overflowY: 'auto',
-            }}
-            onMouseDown={e => e.stopPropagation()}
-          >
-            <div className="settings-dialog-toolbar">
-              <span className="settings-dialog-version">V{APP_CONFIG.version}</span>
-              <button
-                type="button"
-                className="settings-dialog-close"
-                onClick={() => setShowSettings(false)}
-                aria-label="关闭设置"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
-              </button>
-            </div>
-            <SettingsPage onOpenAdmin={() => { setShowSettings(false); setShowAdmin(true); }} />
-          </div>
-        </div>
-      )}
+      {showSettings && <SettingsDialog
+        onClose={() => setShowSettings(false)}
+        onOpenAdmin={() => { setShowSettings(false); setShowAdmin(true); }}
+      />}
 
       {/* 管理员弹层 */}
       {showAdmin && (

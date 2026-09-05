@@ -1,0 +1,27 @@
+import { useAuth } from '../../hooks/useAuth';
+import { SettingsLayout } from './SettingsLayout';
+import { AccountSettings } from './sections/AccountSettings';
+import { AiSettings } from './sections/AiSettings';
+import { NotificationSettings } from './sections/NotificationSettings';
+import { DailyReportSettings } from './sections/DailyReportSettings';
+import { MailSettings } from './sections/MailSettings';
+import { DataSettings } from './sections/DataSettings';
+import { AdminSettings } from './sections/AdminSettings';
+
+export function SettingsPage({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
+  const { user, authHeaders, logout, isLoading } = useAuth();
+  if (isLoading) return <p className="settings-empty" role="status">正在加载账号设置…</p>;
+  if (!user) return <p className="settings-empty" role="alert">无法读取当前账号，请关闭设置后重新登录。</p>;
+
+  return (
+    <SettingsLayout isAdmin={user.role === 'admin'}>
+      <AccountSettings user={user} onLogout={logout} />
+      <AiSettings authHeaders={authHeaders} />
+      <NotificationSettings authHeaders={authHeaders} userEmail={user.email} />
+      <DailyReportSettings authHeaders={authHeaders} />
+      <MailSettings authHeaders={authHeaders} />
+      <DataSettings authHeaders={authHeaders} />
+      {user.role === 'admin' && <AdminSettings onOpenAdmin={onOpenAdmin} />}
+    </SettingsLayout>
+  );
+}
