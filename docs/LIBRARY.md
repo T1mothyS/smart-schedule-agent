@@ -27,13 +27,14 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
     source-manifest.json
     validation-report.json
     upload-report.json
+  scripts\process-migration-folder.ps1
   prompts\knowledge-processing.md
   scripts\publish-library.ps1
 ```
 
 `originals/` 是不可修改的本批次备份；`processed/` 是唯一上传输入。发布脚本从自身所在的 V2 项目根目录解析批次，不接受 `--knowledge-dir`、`--tutorial-dir` 等旧目录参数。
 
-当前三篇试运行样本已放在 `20260906-sample-01`：一篇认知、一篇框架和一篇教程/速查参考。原始旧目录只被复制读取，未被修改。
+当前三篇试运行样本已放在 `20260906-sample-01`；针对 `C:\Users\Elysia\Desktop\知识库迁移` 的全量本地加工结果已放在 `20260906-full-01`，包含 33 篇业务材料、6 个排除的维护文档、原文副本、处理稿、130 条双向关系和干跑报告。原始旧目录只被复制读取，未被修改；本轮全量批次尚未上传服务器。
 
 ## 3. 数据边界
 
@@ -97,8 +98,9 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
   "relations": [],
   "metadata": {
     "sourceProject": "知识库V2",
-    "runId": "20260906-sample-01",
-    "legacyId": "framework-003"
+    "runId": "20260906-full-01",
+    "legacyId": "framework-003",
+    "aliases": ["边际买家见顶信号"]
   }
 }
 ```
@@ -112,7 +114,7 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
 1. 复制材料到本批次 `originals/`，不修改来源文件。
 2. 计算原始 SHA-256，写入 `source-manifest.json`。
 3. Codex 只读取 V2 项目内副本，生成 `processed/` Markdown、摘要、标签和稳定 `sourceId`。
-4. 先检索当前批次和此前批次的 `processed/` 内容，只有能指出共同概念、互补框架、上下位关系或实际使用关系时才建立关联。
+4. 先检索当前批次和此前批次的 `processed/` 内容，只有能指出共同概念、互补框架、上下位关系或实际使用关系时才建立关联；正文引用、`legacyId` 和别名会统一解析为本地关系。
 5. 将既有显式关系迁移到 `relations.json`；推断关系先写 `suggested`，目标暂时不存在时写 `unresolved`，并为当前批次内的关系同时写入反向记录。
 6. 运行发布脚本的默认干跑，确认 `validation-report.json` 为 0 errors、0 warnings。
 7. 只有明确授权上传时，才在当前 PowerShell 会话设置 `LIBRARY_PUBLISH_TOKEN` 并加 `-Upload`。
@@ -122,6 +124,13 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
 ```powershell
 Set-Location 'C:\Users\Elysia\Documents\Codex_Knowledge_Library'
 pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-sample-01
+```
+
+全量迁移目录的本地加工和干跑：
+
+```powershell
+pwsh -NoProfile -File .\scripts\process-migration-folder.ps1 -RunId 20260906-full-01
+pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-full-01
 ```
 
 隔离环境上传：
@@ -164,10 +173,10 @@ git diff --check
 
 ## 9. 后续阶段
 
-三篇样本确认后，再按顺序考虑：
+全量本地批次完成后，再按顺序考虑：
 
-1. 批量处理剩余 23 条知识和 7 条教程；
-2. 补齐本地关系网络并确认 suggested 关系；
+1. 人工查看 130 条关系，重点确认 2 条 `suggested` 关系；
+2. 明确授权后，在隔离本地服务上传 33 篇并复核幂等、版本、评论和导出；
 3. 增加 Note Board → Knowledge Fragment 单向入口；
 4. 增加 Daily Report → Knowledge Fragment 单向入口；
 5. 设计知识与日程的关联；

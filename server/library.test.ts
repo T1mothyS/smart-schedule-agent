@@ -193,18 +193,21 @@ test('详情页会把已存在的知识库标题解析为站内跳转链接', ()
     title: '可跳转目标',
     content: '# 可跳转目标\n\n目标正文\n',
     sourceType: 'codex',
+    metadata: { legacyId: 'legacy-target', aliases: ['目标简称'] },
   });
   const source = libraryService.createLibraryEntry(user.id, {
     kind: 'article',
     type: 'insight',
     sourceId: 'kb:internal-source',
     title: '站内引用',
-    content: '# 站内引用\n\n参见 [[可跳转目标]]。\n\n[[不存在的条目]]\n',
+    content: '# 站内引用\n\n参见 [[可跳转目标]]、[[目标简称]] 和 [[#legacy-target]]。\n\n[[不存在的条目]]\n',
     sourceType: 'codex',
   });
   const detail = libraryService.getLibraryDetail(user.id, source.entry.id);
   assert.ok(detail);
   assert.match(detail.entry.html || '', new RegExp(`<a class="library-internal-link" href="/library/${target.entry.id}">可跳转目标</a>`));
+  assert.match(detail.entry.html || '', new RegExp(`<a class="library-internal-link" href="/library/${target.entry.id}">目标简称</a>`));
+  assert.match(detail.entry.html || '', new RegExp(`<a class="library-internal-link" href="/library/${target.entry.id}">#legacy-target</a>`));
   assert.match(detail.entry.html || '', /class="library-unresolved-link"/);
 });
 

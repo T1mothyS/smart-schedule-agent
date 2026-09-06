@@ -288,7 +288,16 @@ function buildLibraryLinkTargets(userId: string): Map<string, LibraryLinkTarget>
       href: `/library/${encodeURIComponent(row.id)}`,
       label: row.title || row.source_id || row.slug || '未命名知识',
     } satisfies LibraryLinkTarget;
-    for (const key of [row.source_id, row.title, row.slug]) {
+    const metadataValue = parseJson<unknown>(row.metadata_json, {});
+    const metadata = metadataValue && typeof metadataValue === 'object' && !Array.isArray(metadataValue)
+      ? metadataValue as Record<string, unknown>
+      : {};
+    const legacyId = typeof metadata.legacyId === 'string' ? metadata.legacyId : null;
+    const aliases = Array.isArray(metadata.aliases)
+      ? metadata.aliases.filter(item => typeof item === 'string') as string[]
+      : [];
+    const keys = [row.source_id, row.title, row.slug, legacyId, legacyId ? `#${legacyId}` : null, ...aliases];
+    for (const key of keys) {
       if (key) targets.set(normaliseLibraryLinkKey(key), target);
     }
   }

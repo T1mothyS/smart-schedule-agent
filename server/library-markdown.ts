@@ -33,7 +33,7 @@ function renderInline(value: string, linkTargets: LibraryLinkTargets): string {
     if (match[1] !== undefined) {
       const targetText = match[1].trim();
       const target = linkTargets.get(normaliseLinkKey(targetText));
-      const label = escapeHtml(match[2]?.trim() || target?.label || targetText);
+      const label = escapeHtml(match[2]?.trim() || targetText);
       output += target
         ? `<a class="library-internal-link" href="${escapeHtml(target.href)}">${label}</a>`
         : `<span class="library-unresolved-link" title="未找到对应知识条目">[[${label}]]</span>`;
