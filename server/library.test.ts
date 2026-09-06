@@ -15,6 +15,7 @@ process.env.JWT_SECRET = 'library-test-jwt-secret';
 
 const api = await import('./index.js');
 const db = await import('./db.js');
+const libraryService = await import('./library-service.js');
 const libraryTokens = await import('./library-publish-token-service.js');
 const libraryMarkdown = await import('./library-markdown.js');
 
@@ -182,6 +183,29 @@ test('正式知识发布令牌只保存哈希、按 sourceId 幂等并保留版�
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
+});
+
+test('详情页会把已存在的知识库标题解析为站内跳转链接', () => {
+  const target = libraryService.createLibraryEntry(user.id, {
+    kind: 'article',
+    type: 'reference',
+    sourceId: 'kb:internal-target',
+    title: '可跳转目标',
+    content: '# 可跳转目标\n\n目标正文\n',
+    sourceType: 'codex',
+  });
+  const source = libraryService.createLibraryEntry(user.id, {
+    kind: 'article',
+    type: 'insight',
+    sourceId: 'kb:internal-source',
+    title: '站内引用',
+    content: '# 站内引用\n\n参见 [[可跳转目标]]。\n\n[[不存在的条目]]\n',
+    sourceType: 'codex',
+  });
+  const detail = libraryService.getLibraryDetail(user.id, source.entry.id);
+  assert.ok(detail);
+  assert.match(detail.entry.html || '', new RegExp(`<a class="library-internal-link" href="/library/${target.entry.id}">可跳转目标</a>`));
+  assert.match(detail.entry.html || '', /class="library-unresolved-link"/);
 });
 
 test('Markdown 渲染不信任原始 HTML 和危险链接', () => {

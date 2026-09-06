@@ -1,5 +1,12 @@
 import { escapeHtml } from './markdown-renderer.js';
 
+export interface LibraryLinkTarget {
+  href: string;
+  label: string;
+}
+
+type LibraryLinkTargets = Map<string, LibraryLinkTarget>;
+
 function isSafeUrl(value: string): boolean {
   const url = value.trim();
   if (!url || /[\u0000-\u001f\u007f]/.test(url) || url.startsWith('//')) return false;
@@ -12,29 +19,40 @@ function isSafeUrl(value: string): boolean {
   }
 }
 
-function renderInline(value: string): string {
-  const pattern = /!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__/g;
+function normaliseLinkKey(value: string): string {
+  return value.trim().toLocaleLowerCase('zh-CN');
+}
+
+function renderInline(value: string, linkTargets: LibraryLinkTargets): string {
+  const pattern = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]|!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__/g;
   let output = '';
   let cursor = 0;
   for (const match of value.matchAll(pattern)) {
     const index = match.index ?? 0;
     output += escapeHtml(value.slice(cursor, index));
     if (match[1] !== undefined) {
-      const alt = escapeHtml(match[1]);
-      const src = match[2];
+      const targetText = match[1].trim();
+      const target = linkTargets.get(normaliseLinkKey(targetText));
+      const label = escapeHtml(match[2]?.trim() || target?.label || targetText);
+      output += target
+        ? `<a class="library-internal-link" href="${escapeHtml(target.href)}">${label}</a>`
+        : `<span class="library-unresolved-link" title="未找到对应知识条目">[[${label}]]</span>`;
+    } else if (match[3] !== undefined) {
+      const alt = escapeHtml(match[3]);
+      const src = match[4];
       output += isSafeUrl(src)
         ? `<img src="${escapeHtml(src)}" alt="${alt}" loading="lazy" />`
         : `<span class="library-unsafe-link">${alt}</span>`;
-    } else if (match[3] !== undefined) {
-      const label = escapeHtml(match[3]);
-      const href = match[4];
+    } else if (match[5] !== undefined) {
+      const label = escapeHtml(match[5]);
+      const href = match[6];
       output += isSafeUrl(href)
         ? `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${label}</a>`
         : `<span class="library-unsafe-link">${label}</span>`;
-    } else if (match[5] !== undefined) {
-      output += `<code>${escapeHtml(match[5])}</code>`;
+    } else if (match[7] !== undefined) {
+      output += `<code>${escapeHtml(match[7])}</code>`;
     } else {
-      output += `<strong>${escapeHtml(match[6] ?? match[7] ?? '')}</strong>`;
+      output += `<strong>${escapeHtml(match[8] ?? match[9] ?? '')}</strong>`;
     }
     cursor = index + match[0].length;
   }
@@ -53,21 +71,21 @@ function isTableSeparator(value: string): boolean {
   return cells.length > 0 && cells.every(cell => /^:?-{3,}:?$/.test(cell));
 }
 
-function renderTable(headerLine: string, rows: string[]): string {
+function renderTable(headerLine: string, rows: string[], linkTargets: LibraryLinkTargets): string {
   const headers = tableCells(headerLine);
   const body = rows.map(row => tableCells(row));
-  return `<div class="library-table-wrap"><table><thead><tr>${headers.map(cell => `<th>${renderInline(cell)}</th>`).join('')}</tr></thead><tbody>${body.map(cells => {
-    return `<tr>${headers.map((_header, index) => `<td>${renderInline(cells[index] || '')}</td>`).join('')}</tr>`;
+  return `<div class="library-table-wrap"><table><thead><tr>${headers.map(cell => `<th>${renderInline(cell, linkTargets)}</th>`).join('')}</tr></thead><tbody>${body.map(cells => {
+    return `<tr>${headers.map((_header, index) => `<td>${renderInline(cells[index] || '', linkTargets)}</td>`).join('')}</tr>`;
   }).join('')}</tbody></table></div>`;
 }
 
-function renderList(lines: string[], ordered: boolean): string {
+function renderList(lines: string[], ordered: boolean, linkTargets: LibraryLinkTargets): string {
   const tag = ordered ? 'ol' : 'ul';
   const items = lines.map(line => line.replace(ordered ? /^\s*\d+[.)]\s+/ : /^\s*[-*+]\s+/, ''));
-  return `<${tag}>${items.map(item => `<li>${renderInline(item)}</li>`).join('')}</${tag}>`;
+  return `<${tag}>${items.map(item => `<li>${renderInline(item, linkTargets)}</li>`).join('')}</${tag}>`;
 }
 
-export function renderLibraryMarkdown(markdown: string): string {
+export function renderLibraryMarkdown(markdown: string, linkTargets: LibraryLinkTargets = new Map()): string {
   const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
   const blocks: string[] = [];
   let index = 0;
@@ -92,7 +110,7 @@ export function renderLibraryMarkdown(markdown: string): string {
     const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*$/);
     if (heading) {
       const level = heading[1].length;
-      blocks.push(`<h${level}>${renderInline(heading[2])}</h${level}>`);
+      blocks.push(`<h${level}>${renderInline(heading[2], linkTargets)}</h${level}>`);
       index += 1;
       continue;
     }
@@ -102,7 +120,7 @@ export function renderLibraryMarkdown(markdown: string): string {
         list.push(lines[index]);
         index += 1;
       }
-      blocks.push(renderList(list, false));
+      blocks.push(renderList(list, false, linkTargets));
       continue;
     }
     if (/^\s*\d+[.)]\s+/.test(line)) {
@@ -111,7 +129,7 @@ export function renderLibraryMarkdown(markdown: string): string {
         list.push(lines[index]);
         index += 1;
       }
-      blocks.push(renderList(list, true));
+      blocks.push(renderList(list, true, linkTargets));
       continue;
     }
     if (/^>\s?/.test(line)) {
@@ -120,7 +138,7 @@ export function renderLibraryMarkdown(markdown: string): string {
         quote.push(lines[index].replace(/^>\s?/, ''));
         index += 1;
       }
-      blocks.push(`<blockquote>${quote.map(renderInline).join('<br>')}</blockquote>`);
+      blocks.push(`<blockquote>${quote.map(line => renderInline(line, linkTargets)).join('<br>')}</blockquote>`);
       continue;
     }
     if (/^\s*(---+|\*\*\*+)\s*$/.test(line)) {
@@ -136,7 +154,7 @@ export function renderLibraryMarkdown(markdown: string): string {
         rows.push(lines[index]);
         index += 1;
       }
-      blocks.push(renderTable(header, rows));
+      blocks.push(renderTable(header, rows, linkTargets));
       continue;
     }
     const paragraph: string[] = [];
@@ -146,7 +164,7 @@ export function renderLibraryMarkdown(markdown: string): string {
       paragraph.push(lines[index]);
       index += 1;
     }
-    blocks.push(`<p>${paragraph.map(renderInline).join('<br>')}</p>`);
+    blocks.push(`<p>${paragraph.map(line => renderInline(line, linkTargets)).join('<br>')}</p>`);
   }
   return blocks.join('\n');
 }

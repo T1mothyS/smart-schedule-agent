@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, BookOpen, Download, Link2, RefreshCw, Search, Send, Trash2 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -109,6 +109,28 @@ async function downloadResponse(response: Response, fallbackName: string): Promi
   window.URL.revokeObjectURL(url);
 }
 
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Fall back to a temporary textarea when clipboard permission is unavailable.
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  let copied = false;
+  try { copied = document.execCommand('copy'); } catch { copied = false; }
+  textarea.remove();
+  return copied;
+}
+
 function relationItems(detail: LibraryDetail): LibraryRelation[] {
   return detail.relations?.items || detail.entry.relations || [];
 }
@@ -172,11 +194,6 @@ function LibraryHomePage() {
 
       {error && <div className="library-notice error" role="alert">{error}<button type="button" onClick={() => void load()}>重试</button></div>}
 
-      <section className="library-readonly-card" aria-label="知识库写入说明">
-        <strong>网页端只读</strong>
-        <p>正文、类型、标签和关联只能从“知识库V2”项目的本地批次发布。发布令牌请到“设置 → 知识库集成”生成或撤销；本页面不会提供正文编辑入口。</p>
-      </section>
-
       <section className="library-toolbar" aria-label="知识库筛选">
         <form className="library-search" onSubmit={event => { event.preventDefault(); setQuery(searchText); }}>
           <Search size={16} aria-hidden="true" />
@@ -233,6 +250,7 @@ function LibraryDetailPage({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState('');
   const [commentSaving, setCommentSaving] = useState(false);
+  const markdownRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -249,6 +267,28 @@ function LibraryDetailPage({ id }: { id: string }) {
   }, [authHeaders, id]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    const root = markdownRef.current;
+    if (!root) return;
+    const buttons: HTMLButtonElement[] = [];
+    root.querySelectorAll('pre').forEach(pre => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'library-code-copy';
+      button.textContent = '复制';
+      button.setAttribute('aria-label', '复制代码');
+      button.addEventListener('click', async () => {
+        const code = pre.querySelector('code')?.textContent || pre.textContent || '';
+        const copied = await copyText(code);
+        button.textContent = copied ? '已复制' : '复制失败';
+        window.setTimeout(() => { button.textContent = '复制'; }, 1500);
+      });
+      pre.appendChild(button);
+      buttons.push(button);
+    });
+    return () => { buttons.forEach(button => button.remove()); };
+  }, [detail?.entry.html]);
 
   const exportMarkdown = async () => {
     try {
@@ -310,7 +350,7 @@ function LibraryDetailPage({ id }: { id: string }) {
       </header>
       <div className="library-detail-layout">
         <article className="library-document">
-          <div className="chat-markdown library-markdown" dangerouslySetInnerHTML={{ __html: entry.html || '' }} />
+          <div ref={markdownRef} className="chat-markdown library-markdown" dangerouslySetInnerHTML={{ __html: entry.html || '' }} />
         </article>
         <aside className="library-detail-aside">
           <section className="library-aside-card"><strong>内容信息</strong><dl><dt>内容 ID</dt><dd>{entry.id}</dd><dt>sourceId</dt><dd>{entry.sourceId || '—'}</dd><dt>哈希</dt><dd>{entry.contentHash.slice(0, 16)}…</dd><dt>创建</dt><dd>{formatTime(entry.createdAt)}</dd><dt>版本</dt><dd>{detail.versions.length || '—'}</dd></dl></section>

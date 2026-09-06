@@ -9,10 +9,11 @@ Codex 在本地批次中复制原始材料、保留 SHA-256、生成处理后的
 ## 1. 当前能力
 
 - `/library`：只读列表、搜索、形态/类型/状态筛选、标签展示和全库导出。
-- `/library/:id`：安全 Markdown 阅读、来源、标签、关系状态、版本内容、评论和单条原文导出。
+- `/library/:id`：安全 Markdown 阅读、来源、标签、关系状态、版本内容、评论和单条原文导出；代码块使用浅灰背景并支持一键复制。
 - 服务器保留 Fragment/Article 兼容模型和底层归档/删除/整理函数，网页公开写入接口统一返回 `405 READ_ONLY_LIBRARY`。
 - Article 只能通过本地发布令牌写入；同一 `sourceId + user_id` 支持 `CREATED`、`UPDATED`、`UNCHANGED` 幂等行为。
-- 关系单独保存为 `relations_json`，允许 `confirmed`、`suggested`、`unresolved`；服务器只保存和返回，不计算目标是否存在。
+- 关系单独保存为 `relations_json`，允许 `confirmed`、`suggested`、`unresolved`；服务器只保存和返回，不计算关系，也不把单边关系自动补成双向关系。
+- 详情正文支持 `[[目标标题]]` 和 `[[目标 sourceId|显示文字]]`；目标属于当前账号知识库时渲染为站内跳转，目标不存在时显示为未解析文本。
 - 令牌生成、轮换和撤销位于“设置 → 知识库集成”，知识内容页面不再显示令牌或正文编辑入口。
 
 ## 2. V2 批次结构
@@ -111,9 +112,10 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
 1. 复制材料到本批次 `originals/`，不修改来源文件。
 2. 计算原始 SHA-256，写入 `source-manifest.json`。
 3. Codex 只读取 V2 项目内副本，生成 `processed/` Markdown、摘要、标签和稳定 `sourceId`。
-4. 将既有显式关系迁移到 `relations.json`；目标不在本批次时使用 `unresolved`，推断关系使用 `suggested`。
-5. 运行发布脚本的默认干跑，确认 `validation-report.json` 为 0 errors、0 warnings。
-6. 只有明确授权上传时，才在当前 PowerShell 会话设置 `LIBRARY_PUBLISH_TOKEN` 并加 `-Upload`。
+4. 先检索当前批次和此前批次的 `processed/` 内容，只有能指出共同概念、互补框架、上下位关系或实际使用关系时才建立关联。
+5. 将既有显式关系迁移到 `relations.json`；推断关系先写 `suggested`，目标暂时不存在时写 `unresolved`，并为当前批次内的关系同时写入反向记录。
+6. 运行发布脚本的默认干跑，确认 `validation-report.json` 为 0 errors、0 warnings。
+7. 只有明确授权上传时，才在当前 PowerShell 会话设置 `LIBRARY_PUBLISH_TOKEN` 并加 `-Upload`。
 
 默认干跑：
 
@@ -131,7 +133,7 @@ pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-sample-01 -U
 Remove-Item Env:LIBRARY_PUBLISH_TOKEN
 ```
 
-脚本只读取当前批次 `processed/`、`source-manifest.json` 和 `relations.json`；报告只写 sourceId、处理路径、正文 SHA-256、状态和脱敏错误，不保存令牌。
+脚本只读取当前批次 `processed/`、`source-manifest.json` 和 `relations.json`；会把 `suggested` 关系以“待确认”状态同步到服务器，并校验当前批次内部关系是否有反向记录。报告只写 sourceId、处理路径、正文 SHA-256、状态和脱敏错误，不保存令牌。
 
 ## 6. 全库导出
 
@@ -145,7 +147,7 @@ Remove-Item Env:LIBRARY_PUBLISH_TOKEN
 
 ## 7. Markdown 安全
 
-服务端允许安全 Markdown 展示：原始 HTML 会转义；链接仅允许 `http`、`https`、`mailto` 和安全相对路径；危险链接不产生可点击地址；代码块、表格、图片和列表由受限规则生成。渲染不参与摘要、分类或关系生成。
+服务端允许安全 Markdown 展示：原始 HTML 会转义；链接仅允许 `http`、`https`、`mailto` 和安全相对路径；危险链接不产生可点击地址；代码块、表格、图片和列表由受限规则生成。代码块展示为浅灰背景、黑色文字，并提供复制按钮。站内 `[[...]]` 链接只解析到当前账号自己的知识条目。渲染不参与摘要、分类或关系生成。
 
 ## 8. 验收入口
 

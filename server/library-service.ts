@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import * as db from './db.js';
-import { renderLibraryMarkdown } from './library-markdown.js';
+import { renderLibraryMarkdown, type LibraryLinkTarget } from './library-markdown.js';
 
 export const LIBRARY_KINDS = ['fragment', 'article'] as const;
 export type LibraryKind = (typeof LIBRARY_KINDS)[number];
@@ -277,7 +277,25 @@ function parseJson<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
-function toEntry(row: db.DbLibraryEntry, includeContent = false): LibraryEntry {
+function normaliseLibraryLinkKey(value: string): string {
+  return value.trim().toLocaleLowerCase('zh-CN');
+}
+
+function buildLibraryLinkTargets(userId: string): Map<string, LibraryLinkTarget> {
+  const targets = new Map<string, LibraryLinkTarget>();
+  for (const row of db.exportUserLibraryEntries(userId)) {
+    const target = {
+      href: `/library/${encodeURIComponent(row.id)}`,
+      label: row.title || row.source_id || row.slug || '未命名知识',
+    } satisfies LibraryLinkTarget;
+    for (const key of [row.source_id, row.title, row.slug]) {
+      if (key) targets.set(normaliseLibraryLinkKey(key), target);
+    }
+  }
+  return targets;
+}
+
+function toEntry(row: db.DbLibraryEntry, includeContent = false, linkTargets?: Map<string, LibraryLinkTarget>): LibraryEntry {
   const tags = parseJson<unknown[]>(row.tags_json, []).filter(item => typeof item === 'string') as string[];
   const metadataValue = parseJson<unknown>(row.metadata_json, {});
   const metadata = metadataValue && typeof metadataValue === 'object' && !Array.isArray(metadataValue)
@@ -302,7 +320,7 @@ function toEntry(row: db.DbLibraryEntry, includeContent = false): LibraryEntry {
     sourceId: row.source_id,
     slug: row.slug,
     title: row.title,
-    ...(includeContent ? { content: row.content, html: renderLibraryMarkdown(row.content) } : {}),
+    ...(includeContent ? { content: row.content, html: renderLibraryMarkdown(row.content, linkTargets) } : {}),
     summary: row.summary,
     tags,
     status: row.status,
@@ -550,7 +568,7 @@ export function exportLibraryBundle(userId: string, exportedAt = new Date().toIS
 export function getLibraryDetail(userId: string, id: string): LibraryDetail | undefined {
   const entry = db.getLibraryEntry(id, userId);
   if (!entry) return undefined;
-  const mappedEntry = toEntry(entry, true);
+  const mappedEntry = toEntry(entry, true, buildLibraryLinkTargets(userId));
   return {
     entry: mappedEntry,
     versions: db.listLibraryEntryVersions(id, userId).map(toVersion),
