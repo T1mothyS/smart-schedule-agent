@@ -23,6 +23,17 @@ export const LIBRARY_SUMMARY_MAX_LENGTH = 1_000;
 export const LIBRARY_TAG_MAX_LENGTH = 50;
 export const LIBRARY_TAG_MAX_COUNT = 30;
 export const LIBRARY_COMMENT_MAX_LENGTH = 2_000;
+export const LIBRARY_RELATION_MAX_COUNT = 100;
+export const LIBRARY_RELATION_STATUSES = ['confirmed', 'suggested', 'unresolved'] as const;
+export type LibraryRelationStatus = (typeof LIBRARY_RELATION_STATUSES)[number];
+
+export interface LibraryRelation {
+  sourceId: string;
+  targetSourceId: string;
+  type: string;
+  label: string;
+  status: LibraryRelationStatus;
+}
 
 export interface LibraryEntry {
   id: string;
@@ -40,6 +51,7 @@ export interface LibraryEntry {
   sourceRef: string | null;
   sourceUrl: string | null;
   metadata: Record<string, unknown>;
+  relations: LibraryRelation[];
   contentHash: string;
   createdAt: string;
   updatedAt: string;
@@ -55,6 +67,7 @@ export interface LibraryVersion {
   summary: string;
   content: string;
   tags: string[];
+  relations: LibraryRelation[];
   createdAt: string;
 }
 
@@ -71,6 +84,7 @@ export interface LibraryDetail {
   versions: LibraryVersion[];
   comments: LibraryComment[];
   relations: {
+    items: LibraryRelation[];
     calendarEvents: string[];
     libraryEntries: string[];
   };
@@ -110,6 +124,7 @@ interface EntryInput {
   sourceRef?: unknown;
   sourceUrl?: unknown;
   metadata?: unknown;
+  relations?: unknown;
 }
 
 interface NormalizedEntryInput {
@@ -126,6 +141,7 @@ interface NormalizedEntryInput {
   sourceRef: string | null;
   sourceUrl: string | null;
   metadata: Record<string, unknown>;
+  relations: LibraryRelation[];
   normalizedFields: string[];
   warnings: string[];
 }
@@ -153,8 +169,8 @@ function boundedString(value: unknown, field: string, maxLength: number, options
 
 function normaliseContent(value: unknown): { content: string; changed: boolean } {
   if (typeof value !== 'string') throw new LibraryInputError('MISSING_FIELD', 'content 不能为空', 'content');
-  const content = value.replace(/\r\n?/g, '\n').trim();
-  if (!content) throw new LibraryInputError('MISSING_FIELD', 'content 不能为空', 'content');
+  const content = value.replace(/\r\n?/g, '\n');
+  if (!content.trim()) throw new LibraryInputError('MISSING_FIELD', 'content 不能为空', 'content');
   if (Buffer.byteLength(content, 'utf8') > LIBRARY_CONTENT_MAX_BYTES) {
     throw new LibraryInputError('CONTENT_TOO_LONG', `content 不能超过 ${LIBRARY_CONTENT_MAX_BYTES} 字节`, 'content');
   }
@@ -191,6 +207,32 @@ function normaliseMetadata(value: unknown): { metadata: Record<string, unknown>;
   }
   if (Buffer.byteLength(serialized, 'utf8') > 40_000) throw new LibraryInputError('CONTENT_TOO_LONG', 'metadata 不能超过 40000 字节', 'metadata');
   return { metadata: value as Record<string, unknown>, changed: false };
+}
+
+function normaliseRelations(value: unknown, fallbackSourceId: string | null): { relations: LibraryRelation[]; changed: boolean } {
+  let source: unknown = value;
+  if (typeof value === 'string') {
+    try { source = JSON.parse(value); } catch { throw new LibraryInputError('INVALID_VALUE', 'relations 必须是有效 JSON 数组', 'relations'); }
+  }
+  if (source === undefined || source === null) return { relations: [], changed: false };
+  if (!Array.isArray(source)) throw new LibraryInputError('INVALID_VALUE', 'relations 必须是 JSON 数组', 'relations');
+  if (source.length > LIBRARY_RELATION_MAX_COUNT) {
+    throw new LibraryInputError('TOO_MANY_RELATIONS', `relations 最多 ${LIBRARY_RELATION_MAX_COUNT} 条`, 'relations');
+  }
+  const relations = source.map((item, index): LibraryRelation => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new LibraryInputError('INVALID_RELATION', `relations[${index}] 必须是对象`, 'relations');
+    }
+    const raw = item as Record<string, unknown>;
+    const sourceId = boundedString(raw.sourceId ?? fallbackSourceId, `relations[${index}].sourceId`, 240);
+    const targetSourceId = boundedString(raw.targetSourceId, `relations[${index}].targetSourceId`, 240, { required: true });
+    if (!sourceId) throw new LibraryInputError('INVALID_RELATION', `relations[${index}] 缺少 sourceId`, 'relations');
+    const type = boundedString(raw.type, `relations[${index}].type`, 80) || 'related';
+    const label = boundedString(raw.label, `relations[${index}].label`, 160) || type;
+    const status = enumValue(raw.status, LIBRARY_RELATION_STATUSES, `relations[${index}].status`, 'unresolved');
+    return { sourceId, targetSourceId: targetSourceId!, type, label, status };
+  });
+  return { relations, changed: JSON.stringify(relations) !== JSON.stringify(source) };
 }
 
 function validateSourceUrl(value: unknown): string | null {
@@ -241,6 +283,18 @@ function toEntry(row: db.DbLibraryEntry, includeContent = false): LibraryEntry {
   const metadata = metadataValue && typeof metadataValue === 'object' && !Array.isArray(metadataValue)
     ? metadataValue as Record<string, unknown>
     : {};
+  const relations = parseJson<unknown[]>(row.relations_json, []).filter(item => item && typeof item === 'object').map(item => {
+    const raw = item as Record<string, unknown>;
+    return {
+      sourceId: String(raw.sourceId || '').trim(),
+      targetSourceId: String(raw.targetSourceId || '').trim(),
+      type: String(raw.type || 'related').trim() || 'related',
+      label: String(raw.label || raw.type || '相关').trim() || '相关',
+      status: LIBRARY_RELATION_STATUSES.includes(String(raw.status) as LibraryRelationStatus)
+        ? String(raw.status) as LibraryRelationStatus
+        : 'unresolved',
+    } satisfies LibraryRelation;
+  }).filter(item => item.sourceId && item.targetSourceId);
   return {
     id: row.id,
     kind: row.kind,
@@ -256,6 +310,7 @@ function toEntry(row: db.DbLibraryEntry, includeContent = false): LibraryEntry {
     sourceRef: row.source_ref,
     sourceUrl: row.source_url,
     metadata,
+    relations,
     contentHash: row.content_hash,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -273,6 +328,7 @@ function toVersion(row: db.DbLibraryEntryVersion): LibraryVersion {
     summary: row.summary,
     content: row.content,
     tags: parseJson<unknown[]>(row.tags_json, []).filter(item => typeof item === 'string') as string[],
+    relations: parseJson<unknown[]>(row.relations_json, []).filter(item => item && typeof item === 'object').map(item => item as LibraryRelation),
     createdAt: row.created_at,
   };
 }
@@ -326,6 +382,11 @@ function normaliseInput(input: EntryInput, options: {
   const sourceRef = boundedString(input.sourceRef !== undefined ? input.sourceRef : existing?.source_ref, 'sourceRef', 2_000);
   const sourceUrl = validateSourceUrl(input.sourceUrl !== undefined ? input.sourceUrl : existing?.source_url);
   const metadataResult = normaliseMetadata(input.metadata !== undefined ? input.metadata : existing ? parseJson(existing.metadata_json, {}) : {});
+  const relationResult = normaliseRelations(
+    input.relations !== undefined ? input.relations : existing ? parseJson(existing.relations_json, []) : [],
+    sourceId,
+  );
+  if (relationResult.changed) normalizedFields.push('relations');
   const slug = boundedString(input.slug !== undefined ? input.slug : existing?.slug, 'slug', 120) || makeSlug(title, options.id);
   const normalized = {
     kind,
@@ -341,6 +402,7 @@ function normaliseInput(input: EntryInput, options: {
     sourceRef,
     sourceUrl,
     metadata: metadataResult.metadata,
+    relations: relationResult.relations,
     normalizedFields,
     warnings,
   } satisfies NormalizedEntryInput;
@@ -369,6 +431,7 @@ function entryFromNormalized(userId: string, id: string, input: NormalizedEntryI
     source_ref: input.sourceRef,
     source_url: input.sourceUrl,
     metadata_json: JSON.stringify(input.metadata),
+    relations_json: JSON.stringify(input.relations),
     content_hash: crypto.createHash('sha256').update(input.content, 'utf8').digest('hex'),
     created_at: existing?.created_at || now,
     updated_at: now,
@@ -387,6 +450,7 @@ function saveArticleVersion(entry: db.DbLibraryEntry, now: string): void {
     summary: entry.summary,
     content: entry.content,
     tags_json: entry.tags_json,
+    relations_json: entry.relations_json,
     created_at: now,
   });
 }
@@ -422,14 +486,80 @@ export function exportUserLibraryEntries(userId: string): LibraryEntry[] {
   return db.exportUserLibraryEntries(userId).map(row => toEntry(row, true));
 }
 
+export interface LibraryExportBundle {
+  format: 'ai-calendar-library-export';
+  version: 1;
+  exportedAt: string;
+  manifest: {
+    entryCount: number;
+    relationCount: number;
+    commentCount: number;
+    versionCount: number;
+    entries: Array<{ path: string; id: string; sourceId: string | null; contentHash: string }>;
+  };
+  entries: Array<{
+    path: string;
+    sourceId: string | null;
+    entry: LibraryEntry;
+    markdown: string;
+  }>;
+  relations: LibraryRelation[];
+  comments: Array<LibraryComment & { sourceId: string | null }>;
+  versions: Array<LibraryVersion & { sourceId: string | null }>;
+}
+
+function exportPathPart(value: string): string {
+  return value.replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 160) || 'entry';
+}
+
+export function exportLibraryBundle(userId: string, exportedAt = new Date().toISOString()): LibraryExportBundle {
+  const entries = db.exportUserLibraryEntries(userId).map(row => toEntry(row, true));
+  const bundleEntries = entries.map(entry => ({
+    path: `entries/${exportPathPart(entry.sourceId || entry.id)}.md`,
+    sourceId: entry.sourceId,
+    entry,
+    markdown: entry.content || '',
+  }));
+  const relations = entries.flatMap(entry => entry.relations);
+  const comments = entries.flatMap(entry => db.listLibraryComments(entry.id, userId).map(comment => ({
+    ...toComment(comment),
+    sourceId: entry.sourceId,
+  })));
+  const versions = entries.flatMap(entry => db.listLibraryEntryVersions(entry.id, userId).map(version => ({
+    ...toVersion(version),
+    sourceId: entry.sourceId,
+  })));
+  return {
+    format: 'ai-calendar-library-export',
+    version: 1,
+    exportedAt,
+    manifest: {
+      entryCount: bundleEntries.length,
+      relationCount: relations.length,
+      commentCount: comments.length,
+      versionCount: versions.length,
+      entries: bundleEntries.map(item => ({ path: item.path, id: item.entry.id, sourceId: item.sourceId, contentHash: item.entry.contentHash })),
+    },
+    entries: bundleEntries,
+    relations,
+    comments,
+    versions,
+  };
+}
+
 export function getLibraryDetail(userId: string, id: string): LibraryDetail | undefined {
   const entry = db.getLibraryEntry(id, userId);
   if (!entry) return undefined;
+  const mappedEntry = toEntry(entry, true);
   return {
-    entry: toEntry(entry, true),
+    entry: mappedEntry,
     versions: db.listLibraryEntryVersions(id, userId).map(toVersion),
     comments: db.listLibraryComments(id, userId).map(toComment),
-    relations: { calendarEvents: [], libraryEntries: [] },
+    relations: {
+      items: mappedEntry.relations,
+      calendarEvents: [],
+      libraryEntries: mappedEntry.relations.map(item => item.targetSourceId),
+    },
   };
 }
 
@@ -456,7 +586,7 @@ export function updateLibraryEntry(userId: string, id: string, input: EntryInput
   const candidate = entryFromNormalized(userId, id, normalized, new Date().toISOString(), existing);
   const unchanged = [
     'kind', 'type', 'source_id', 'slug', 'title', 'content', 'summary', 'tags_json', 'status', 'source_type',
-    'source_ref', 'source_url', 'metadata_json', 'content_hash', 'published_at', 'archived_at',
+    'source_ref', 'source_url', 'metadata_json', 'relations_json', 'content_hash', 'published_at', 'archived_at',
   ].every(field => String(candidate[field as keyof db.DbLibraryEntry] ?? '') === String(existing[field as keyof db.DbLibraryEntry] ?? ''));
   if (unchanged) return { status: 'UNCHANGED', entry: toEntry(existing, true), normalizedFields: normalized.normalizedFields, warnings: normalized.warnings };
   const updated = db.updateLibraryEntry(id, userId, {
@@ -473,6 +603,7 @@ export function updateLibraryEntry(userId: string, id: string, input: EntryInput
     source_ref: candidate.source_ref,
     source_url: candidate.source_url,
     metadata_json: candidate.metadata_json,
+    relations_json: candidate.relations_json,
     content_hash: candidate.content_hash,
     updated_at: candidate.updated_at,
     published_at: candidate.published_at,
@@ -483,6 +614,7 @@ export function updateLibraryEntry(userId: string, id: string, input: EntryInput
     || updated.title !== existing.title
     || updated.summary !== existing.summary
     || updated.tags_json !== existing.tags_json
+    || updated.relations_json !== existing.relations_json
   );
   if (articleVersionChanged) saveArticleVersion(updated, updated.updated_at);
   return { status: 'UPDATED', entry: toEntry(updated, true), normalizedFields: normalized.normalizedFields, warnings: normalized.warnings };
@@ -553,24 +685,6 @@ export function deleteLibraryComment(userId: string, entryId: string, commentId:
 export function exportLibraryEntryMarkdown(userId: string, id: string): { filename: string; markdown: string } | undefined {
   const entry = db.getLibraryEntry(id, userId);
   if (!entry) return undefined;
-  const tags = parseJson<unknown[]>(entry.tags_json, []).filter(item => typeof item === 'string') as string[];
-  const frontmatter = [
-    '---',
-    `id: ${entry.id}`,
-    `sourceId: ${JSON.stringify(entry.source_id || '')}`,
-    `kind: ${entry.kind}`,
-    `type: ${entry.type}`,
-    `title: ${JSON.stringify(entry.title || '')}`,
-    `summary: ${JSON.stringify(entry.summary)}`,
-    `tags: ${JSON.stringify(tags)}`,
-    `sourceType: ${entry.source_type}`,
-    `sourceRef: ${JSON.stringify(entry.source_ref || '')}`,
-    `sourceUrl: ${JSON.stringify(entry.source_url || '')}`,
-    `status: ${entry.status}`,
-    `updatedAt: ${entry.updated_at}`,
-    '---',
-    '',
-  ].join('\n');
   const safeFilename = (entry.title || entry.slug || entry.id).replace(/[^\p{L}\p{N}._-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 100) || entry.id;
-  return { filename: `${safeFilename}.md`, markdown: frontmatter + entry.content.trimEnd() + '\n' };
+  return { filename: `${safeFilename}.md`, markdown: entry.content };
 }

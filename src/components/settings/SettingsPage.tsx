@@ -4,6 +4,7 @@ import { AccountSettings } from './sections/AccountSettings';
 import { AiSettings } from './sections/AiSettings';
 import { NotificationSettings } from './sections/NotificationSettings';
 import { DailyReportSettings } from './sections/DailyReportSettings';
+import { LibraryIntegrationSettings } from './sections/LibraryIntegrationSettings';
 import { MailSettings } from './sections/MailSettings';
 import { DataSettings } from './sections/DataSettings';
 import { AdminSettings } from './sections/AdminSettings';
@@ -19,6 +20,7 @@ export function SettingsPage({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
       <AiSettings authHeaders={authHeaders} />
       <NotificationSettings authHeaders={authHeaders} userEmail={user.email} />
       <DailyReportSettings authHeaders={authHeaders} />
+      <LibraryIntegrationSettings authHeaders={authHeaders} />
       <MailSettings authHeaders={authHeaders} />
       <DataSettings authHeaders={authHeaders} />
       {user.role === 'admin' && <AdminSettings onOpenAdmin={onOpenAdmin} />}

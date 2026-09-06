@@ -41,7 +41,7 @@ server/index.ts 目前是 Express 组合入口，集中注册认证、用户、�
 
 数据层使用 sql.js。服务启动时把 SQLite 文件加载到内存，业务修改后导出并写回 data/。当前主要文件为：
 
-- chat.db：用户、会话、消息、AI 配置、记事、日报和账号私有知识库的 `library_entries`、Article 版本、评论及发布令牌哈希；知识正文以 Markdown 为 source，HTML 按读取时安全渲染。
+- chat.db：用户、会话、消息、AI 配置、记事、日报和账号私有知识库的 `library_entries`、Article 版本、评论、关系 JSON 及发布令牌哈希；知识正文以 Markdown 为 source，HTML 按读取时安全渲染。
 - schedule.db：日历、分类和日程。
 - reminder.db：周期事务和提醒配置。
 - activity.db：通知、完成记录和活动审计。
@@ -57,7 +57,7 @@ server/index.ts 目前是 Express 组合入口，集中注册认证、用户、�
 | 周期事务与通知 | ReminderPage、ActionCenterPage | reminder-store、notification-service、scheduler | 月末兜底、逾期完成、免打扰和失败重试 |
 | AI | AiSchedulePanel、AiImportPage | AI 服务、ai-plan、ai-import-service | 生成计划不等于写入；必须用户确认 |
 | AI 记事 | NoteBoard | note-item-service | 记事独立于行动中心；导出确定性生成 |
-| 知识库 | LibraryPage | library-service、library-markdown、library publish API | Fragment/Article 统一模型、账号隔离、普通搜索、版本与安全 Markdown；日程关系只预留 |
+| 知识库 | LibraryPage | library-service、library-markdown、library publish API | V2 本地加工、服务器只读呈现、评论、版本、关系原样保存和安全 Markdown；不在服务器做 AI 加工 |
 | 日报 | DailyReportsPage | daily-report API、模板、media service | 媒体先校验/托管；内容版本决定入队 |
 | 完成和附件 | ActionCenterPage | completion、attachment service | 所有权、大小、MIME 和恢复边界 |
 | 备份与管理 | Settings、AdminModal | backup-service、admin API | 高风险操作确认、快照和回滚 |

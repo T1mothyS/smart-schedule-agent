@@ -37,7 +37,7 @@ function listen(server: http.Server): Promise<number> {
   });
 }
 
-test('知识库 API 支持 fragment、搜索、编辑、归档、评论和账号隔离', async () => {
+test('知识库网页只读、评论隔离并可导出原始 Markdown 与关系', async () => {
   const server = http.createServer(api.app);
   const port = await listen(server);
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -48,57 +48,69 @@ test('知识库 API 支持 fragment、搜索、编辑、归档、评论和账号
   const json = (body: unknown): RequestInit => ({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
   try {
-    const created = await request('/api/library', userToken, { method: 'POST', ...json({
-      kind: 'fragment', type: 'insight', content: '一段值得长期保留的结构化观察。', tags: ['工作', '认知'],
-    }) });
+    const generated = await request('/api/library/publish-token', userToken, { method: 'POST' });
+    assert.equal(generated.status, 200);
+    const publishToken = (await generated.json()).token as string;
+    const markdown = '---\nsourceId: kb:readonly\n---\n\n# 只读样本\n\n正文保留原样。\n';
+    const publishBody = {
+      sourceId: 'kb:readonly',
+      type: 'insight',
+      title: '只读样本',
+      summary: '网页只读测试',
+      content: markdown,
+      tags: ['测试'],
+      sourceType: 'codex',
+      sourceRef: 'knowledge-v2/test/readonly.md',
+      relations: [{ sourceId: 'kb:readonly', targetSourceId: 'kb:missing', type: 'related', label: '未上传目标', status: 'unresolved' }],
+    };
+    const created = await request('/api/integrations/library', publishToken, { method: 'POST', ...json(publishBody) });
     assert.equal(created.status, 201);
     const createdPayload = await created.json();
-    assert.equal(createdPayload.success, true);
-    assert.equal(createdPayload.entry.kind, 'fragment');
-    assert.equal(createdPayload.entry.summary, '一段值得长期保留的结构化观察。');
-    const fragmentId = createdPayload.entry.id as string;
+    const entryId = createdPayload.entry.id as string;
+    assert.deepEqual(createdPayload.entry.relations, publishBody.relations);
 
-    const searched = await request('/api/library?q=结构化&kind=fragment', userToken);
-    assert.equal(searched.status, 200);
-    assert.equal((await searched.json()).total, 1);
+    for (const [method, pathname, body] of [
+      ['POST', '/api/library', {}],
+      ['PATCH', `/api/library/${entryId}`, { content: '网页不能修改' }],
+      ['POST', `/api/library/${entryId}/archive`, {}],
+      ['POST', `/api/library/${entryId}/promote`, {}],
+      ['DELETE', `/api/library/${entryId}`, { confirm: true }],
+    ] as const) {
+      const response = await request(pathname, userToken, { method, ...json(body) });
+      assert.equal(response.status, 405, `${method} ${pathname} 应返回只读错误`);
+      assert.equal((await response.json()).error.code, 'READ_ONLY_LIBRARY');
+    }
 
-    const otherList = await request('/api/library', otherToken);
-    assert.equal((await otherList.json()).total, 0);
-    const otherDetail = await request(`/api/library/${fragmentId}`, otherToken);
-    assert.equal(otherDetail.status, 404);
-    const crossUpdate = await request(`/api/library/${fragmentId}`, otherToken, { method: 'PATCH', ...json({ content: '越权修改' }) });
-    assert.equal(crossUpdate.status, 404);
-
-    const updated = await request(`/api/library/${fragmentId}`, userToken, { method: 'PATCH', ...json({ content: '<script>alert(1)</script>\n\n**更新后的正文**' }) });
-    assert.equal(updated.status, 200);
-    const updatedPayload = await updated.json();
-    assert.equal(updatedPayload.status, 'UPDATED');
-    assert.match(updatedPayload.entry.html, /&lt;script&gt;/);
-    assert.doesNotMatch(updatedPayload.entry.html, /<script>/);
-
-    const comment = await request(`/api/library/${fragmentId}/comments`, userToken, { method: 'POST', ...json({ content: '后续补充一个反例。' }) });
-    assert.equal(comment.status, 201);
-    const detail = await request(`/api/library/${fragmentId}`, userToken);
+    const detail = await request(`/api/library/${entryId}`, userToken);
+    assert.equal(detail.status, 200);
     const detailPayload = await detail.json();
-    assert.equal(detailPayload.comments.length, 1);
+    assert.equal(detailPayload.relations.items[0].status, 'unresolved');
+    assert.equal(detailPayload.relations.items[0].targetSourceId, 'kb:missing');
 
-    const archived = await request(`/api/library/${fragmentId}/archive`, userToken, { method: 'POST' });
-    assert.equal(archived.status, 200);
-    const activeList = await request('/api/library', userToken);
-    assert.equal((await activeList.json()).total, 0);
-    const allList = await request('/api/library?status=all', userToken);
-    assert.equal((await allList.json()).total, 1);
+    const comment = await request(`/api/library/${entryId}/comments`, userToken, { method: 'POST', ...json({ content: '补充一个验证点。' }) });
+    assert.equal(comment.status, 201);
+    const otherDetail = await request(`/api/library/${entryId}`, otherToken);
+    assert.equal(otherDetail.status, 404);
 
-    const deleted = await request(`/api/library/${fragmentId}`, userToken, { method: 'DELETE', ...json({ confirm: true }) });
-    assert.equal(deleted.status, 200);
-    const deletedDetail = await request(`/api/library/${fragmentId}`, userToken);
-    assert.equal(deletedDetail.status, 404);
+    const exported = await request(`/api/library/${entryId}/export`, userToken);
+    assert.equal(exported.status, 200);
+    assert.equal(await exported.text(), markdown);
+
+    const fullExport = await request('/api/library/export', userToken);
+    assert.equal(fullExport.status, 200);
+    const fullPayload = await fullExport.json();
+    assert.equal(fullPayload.format, 'ai-calendar-library-export');
+    assert.equal(fullPayload.manifest.entryCount, 1);
+    assert.equal(fullPayload.entries[0].markdown, markdown);
+    assert.equal(fullPayload.relations[0].targetSourceId, 'kb:missing');
+    assert.equal(fullPayload.comments.length, 1);
+    assert.doesNotMatch(JSON.stringify(fullPayload), /klp_[A-Za-z0-9]+/);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }
 });
 
-test('正式知识发布令牌只保存哈希，发布按 sourceId 幂等并保留版本', async () => {
+test('正式知识发布令牌只保存哈希、按 sourceId 幂等并保留版本', async () => {
   const server = http.createServer(api.app);
   const port = await listen(server);
   const baseUrl = `http://127.0.0.1:${port}`;
@@ -118,26 +130,36 @@ test('正式知识发布令牌只保存哈希，发布按 sourceId 幂等并保�
     assert.notEqual(stored.token_hash, publishToken);
     assert.equal(stored.token_hash, libraryTokens.hashLibraryPublishToken(publishToken));
 
-    const publishBody = { sourceId: 'migration:knowledge:stable-entry', type: 'framework', title: '稳定发布条目', content: '# 稳定发布条目\n\n第一版正文', tags: ['迁移'], sourceType: 'migration', sourceRef: '框架/stable.md' };
+    const publishBody = {
+      sourceId: 'kb:versioned',
+      type: 'framework',
+      title: '稳定发布条目',
+      content: '# 稳定发布条目\n\n第一版正文\n',
+      tags: ['迁移'],
+      sourceType: 'codex',
+      sourceRef: 'knowledge-v2/test/versioned.md',
+      relations: [{ sourceId: 'kb:versioned', targetSourceId: 'kb:other', type: 'related', label: '相关认知', status: 'confirmed' }],
+      metadata: { sourceProject: '知识库V2', runId: 'test' },
+    };
     const created = await request('/api/library/publish', publishToken, { method: 'POST', ...json(publishBody) });
     assert.equal(created.status, 201);
     const createdPayload = await created.json();
-    assert.equal(createdPayload.status, 'CREATED');
     const entryId = createdPayload.entry.id as string;
-
-    const exported = await request(`/api/library/${entryId}/export`, userToken);
-    assert.equal(exported.status, 200);
-    assert.match(await exported.text(), /sourceId: "migration:knowledge:stable-entry"/);
 
     const duplicate = await request('/api/library/publish', publishToken, { method: 'POST', ...json(publishBody) });
     assert.equal(duplicate.status, 200);
     assert.equal((await duplicate.json()).status, 'UNCHANGED');
     assert.equal(db.listLibraryEntryVersions(entryId, user.id).length, 1);
 
-    const changed = await request('/api/library/publish', publishToken, { method: 'POST', ...json({ ...publishBody, content: `${publishBody.content}\n\n第二版修订` }) });
+    const changed = await request('/api/library/publish', publishToken, { method: 'POST', ...json({ ...publishBody, content: `${publishBody.content}\n第二版修订\n` }) });
     assert.equal(changed.status, 200);
     assert.equal((await changed.json()).status, 'UPDATED');
     assert.equal(db.listLibraryEntryVersions(entryId, user.id).length, 2);
+
+    const tokenCannotReadWebApi = await request('/api/library?status=all', publishToken);
+    assert.equal(tokenCannotReadWebApi.status, 401);
+    const tokenCannotComment = await request(`/api/library/${entryId}/comments`, publishToken, { method: 'POST', ...json({ content: '越权评论' }) });
+    assert.equal(tokenCannotComment.status, 401);
 
     const revoked = await request('/api/library/publish-token', userToken, { method: 'DELETE' });
     assert.equal(revoked.status, 200);
@@ -149,11 +171,12 @@ test('正式知识发布令牌只保存哈希，发布按 sourceId 幂等并保�
     const otherGeneratedPayload = await otherGenerated.json();
     const otherPublished = await request('/api/integrations/library', otherGeneratedPayload.token, { method: 'POST', ...json({
       ...publishBody,
-      sourceId: 'migration:other:entry',
+      sourceId: 'kb:other-account',
+      relations: [],
     }) });
     assert.equal(otherPublished.status, 201);
     const userListAfterOtherPublish = await request('/api/library?status=all', userToken);
-    assert.equal((await userListAfterOtherPublish.json()).total, 1);
+    assert.equal((await userListAfterOtherPublish.json()).total, 2);
     const otherListAfterPublish = await request('/api/library?status=all', otherToken);
     assert.equal((await otherListAfterPublish.json()).total, 1);
   } finally {
@@ -161,7 +184,7 @@ test('正式知识发布令牌只保存哈希，发布按 sourceId 幂等并保�
   }
 });
 
-test('知识碎片可以生成独立的正式知识草稿，Markdown 渲染不信任原始 HTML 和危险链接', () => {
+test('Markdown 渲染不信任原始 HTML 和危险链接', () => {
   const rendered = libraryMarkdown.renderLibraryMarkdown([
     '# 标题',
     '',

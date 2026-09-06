@@ -261,6 +261,7 @@ async function initDb(): Promise<void> {
       source_ref TEXT,
       source_url TEXT,
       metadata_json TEXT NOT NULL DEFAULT '{}',
+      relations_json TEXT NOT NULL DEFAULT '[]',
       content_hash TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -283,6 +284,7 @@ async function initDb(): Promise<void> {
     ['source_ref', 'TEXT'],
     ['source_url', 'TEXT'],
     ['metadata_json', "TEXT NOT NULL DEFAULT '{}'"],
+    ['relations_json', "TEXT NOT NULL DEFAULT '[]'"],
     ['content_hash', "TEXT NOT NULL DEFAULT ''"],
     ['published_at', 'TEXT'],
     ['archived_at', 'TEXT'],
@@ -303,11 +305,17 @@ async function initDb(): Promise<void> {
       summary TEXT NOT NULL DEFAULT '',
       content TEXT NOT NULL,
       tags_json TEXT NOT NULL DEFAULT '[]',
+      relations_json TEXT NOT NULL DEFAULT '[]',
       created_at TEXT NOT NULL,
       FOREIGN KEY (entry_id) REFERENCES library_entries(id) ON DELETE CASCADE,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
+
+  const libraryVersionColumns = queryAll<{ name: string }>('PRAGMA table_info(library_entry_versions)');
+  if (!libraryVersionColumns.some(column => column.name === 'relations_json')) {
+    db.run("ALTER TABLE library_entry_versions ADD COLUMN relations_json TEXT NOT NULL DEFAULT '[]'");
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS library_comments (
@@ -527,6 +535,7 @@ export interface DbLibraryEntry {
   source_ref: string | null;
   source_url: string | null;
   metadata_json: string;
+  relations_json: string;
   content_hash: string;
   created_at: string;
   updated_at: string;
@@ -543,6 +552,7 @@ export interface DbLibraryEntryVersion {
   summary: string;
   content: string;
   tags_json: string;
+  relations_json: string;
   created_at: string;
 }
 
@@ -1138,8 +1148,8 @@ export function createLibraryEntry(entry: DbLibraryEntry): DbLibraryEntry {
   run(
     `INSERT INTO library_entries
      (id, user_id, kind, type, source_id, slug, title, content, summary, tags_json, status,
-      source_type, source_ref, source_url, metadata_json, content_hash, created_at, updated_at, published_at, archived_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      source_type, source_ref, source_url, metadata_json, relations_json, content_hash, created_at, updated_at, published_at, archived_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       entry.id,
       entry.user_id,
@@ -1156,6 +1166,7 @@ export function createLibraryEntry(entry: DbLibraryEntry): DbLibraryEntry {
       entry.source_ref,
       entry.source_url,
       entry.metadata_json,
+      entry.relations_json,
       entry.content_hash,
       entry.created_at,
       entry.updated_at,
@@ -1169,14 +1180,14 @@ export function createLibraryEntry(entry: DbLibraryEntry): DbLibraryEntry {
 export function updateLibraryEntry(
   id: string,
   userId: string,
-  updates: Partial<Pick<DbLibraryEntry, 'kind' | 'type' | 'source_id' | 'slug' | 'title' | 'content' | 'summary' | 'tags_json' | 'status' | 'source_type' | 'source_ref' | 'source_url' | 'metadata_json' | 'content_hash' | 'updated_at' | 'published_at' | 'archived_at'>>,
+  updates: Partial<Pick<DbLibraryEntry, 'kind' | 'type' | 'source_id' | 'slug' | 'title' | 'content' | 'summary' | 'tags_json' | 'status' | 'source_type' | 'source_ref' | 'source_url' | 'metadata_json' | 'relations_json' | 'content_hash' | 'updated_at' | 'published_at' | 'archived_at'>>,
 ): DbLibraryEntry | undefined {
   const fields: string[] = [];
   const values: any[] = [];
   const allowed = [
     'kind', 'type', 'source_id', 'slug', 'title', 'content', 'summary', 'tags_json', 'status',
     'source_type', 'source_ref', 'source_url', 'metadata_json', 'content_hash', 'updated_at',
-    'published_at', 'archived_at',
+    'published_at', 'archived_at', 'relations_json',
   ] as const;
   for (const field of allowed) {
     if (updates[field] !== undefined) {
@@ -1200,9 +1211,9 @@ export function deleteLibraryEntry(id: string, userId: string): boolean {
 export function createLibraryEntryVersion(version: DbLibraryEntryVersion): DbLibraryEntryVersion {
   run(
     `INSERT INTO library_entry_versions
-     (id, entry_id, user_id, content_hash, title, summary, content, tags_json, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [version.id, version.entry_id, version.user_id, version.content_hash, version.title, version.summary, version.content, version.tags_json, version.created_at],
+     (id, entry_id, user_id, content_hash, title, summary, content, tags_json, relations_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [version.id, version.entry_id, version.user_id, version.content_hash, version.title, version.summary, version.content, version.tags_json, version.relations_json, version.created_at],
   );
   return version;
 }
@@ -1284,7 +1295,7 @@ export function exportUserLibraryEntries(userId: string): DbLibraryEntry[] {
 
 export function restoreUserLibraryEntries(
   userId: string,
-  rows: Array<Partial<DbLibraryEntry> & { sourceId?: unknown; sourceType?: unknown; sourceRef?: unknown; sourceUrl?: unknown; tags?: unknown }>,
+  rows: Array<Partial<DbLibraryEntry> & { sourceId?: unknown; sourceType?: unknown; sourceRef?: unknown; sourceUrl?: unknown; tags?: unknown; metadata?: unknown; relations?: unknown }>,
   mode: 'merge' | 'replace',
 ): { entries: number; versions: number } {
   if (mode === 'replace') {
@@ -1327,7 +1338,12 @@ export function restoreUserLibraryEntries(
       source_type: String(row.source_type ?? row.sourceType ?? 'manual').trim() || 'manual',
       source_ref: String(row.source_ref ?? row.sourceRef ?? '').trim() || null,
       source_url: String(row.source_url ?? row.sourceUrl ?? '').trim() || null,
-      metadata_json: String(row.metadata_json || '{}'),
+      metadata_json: typeof row.metadata_json === 'string'
+        ? row.metadata_json
+        : JSON.stringify(row.metadata && typeof row.metadata === 'object' ? row.metadata : {}),
+      relations_json: typeof row.relations_json === 'string'
+        ? row.relations_json
+        : JSON.stringify(Array.isArray(row.relations) ? row.relations : []),
       content_hash: String(row.content_hash || crypto.createHash('sha256').update(content, 'utf8').digest('hex')),
       created_at: String(row.created_at || now),
       updated_at: String(row.updated_at || now),
@@ -1346,6 +1362,7 @@ export function restoreUserLibraryEntries(
         summary: entry.summary,
         content: entry.content,
         tags_json: entry.tags_json,
+        relations_json: entry.relations_json,
         created_at: entry.updated_at,
       });
       versions++;
