@@ -140,7 +140,7 @@ $newRunId = '20260907-next-01'
 pwsh -NoProfile -File .\scripts\process-migration-folder.ps1 -RunId $newRunId
 ```
 
-单篇 V2 Markdown（包括操作文档）也可直接作为 `-SourceRoot` 输入；脚本会从 frontmatter 读取稳定 `sourceId`，普通处理默认 `publish`，生命周期操作仍需显式选择。
+单篇 V2 Markdown（包括操作文档）也可直接作为 `-SourceRoot` 输入；脚本会从 frontmatter 读取稳定 `sourceId`，普通处理默认 `publish`，生命周期操作仍需显式选择。单篇处理稿若含未解析的跨文章引用，会在校验阶段停止，需改用完整批次同步关系。
 
 仅检查、不上传：
 
