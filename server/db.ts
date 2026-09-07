@@ -396,6 +396,25 @@ function run(sql: string, params: any[] = []): { changes: number } {
   return { changes };
 }
 
+function executeWithoutSave(sql: string, params: any[] = []): void {
+  const safeParams = params.map(p => p === undefined ? null : p);
+  db.run(sql, safeParams);
+}
+
+function runTransaction<T>(callback: () => T): T {
+  executeWithoutSave('BEGIN');
+  try {
+    const result = callback();
+    executeWithoutSave('COMMIT');
+    saveDb();
+    return result;
+  } catch (error) {
+    try { executeWithoutSave('ROLLBACK'); } catch {}
+    saveDb();
+    throw error;
+  }
+}
+
 // 类型定义
 export interface DbSession {
   id: string;
@@ -1206,6 +1225,130 @@ export function deleteLibraryEntry(id: string, userId: string): boolean {
   run('DELETE FROM library_comments WHERE entry_id = ? AND user_id = ?', [id, userId]);
   run('DELETE FROM library_entry_versions WHERE entry_id = ? AND user_id = ?', [id, userId]);
   return run('DELETE FROM library_entries WHERE id = ? AND user_id = ?', [id, userId]).changes > 0;
+}
+
+export type LibraryLifecycleAction = 'retire' | 'restore' | 'purge';
+
+export interface LibraryLifecycleResult {
+  action: LibraryLifecycleAction;
+  items: Array<{
+    sourceId: string;
+    status: 'RETIRED' | 'RESTORED' | 'PURGED' | 'UNCHANGED' | 'NOT_FOUND';
+    entryId?: string;
+  }>;
+  cleanedRelationCount: number;
+  touchedEntryCount: number;
+}
+
+function parseLibraryRelations(value: string): Array<Record<string, unknown>> {
+  try {
+    const parsed: unknown = JSON.parse(value || '[]');
+    return Array.isArray(parsed)
+      ? parsed.filter(item => item && typeof item === 'object' && !Array.isArray(item)) as Array<Record<string, unknown>>
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function relationTouchesSourceIds(relation: Record<string, unknown>, sourceIds: Set<string>): boolean {
+  const sourceId = String(relation.sourceId || '').trim();
+  const targetSourceId = String(relation.targetSourceId || '').trim();
+  return sourceIds.has(sourceId) || sourceIds.has(targetSourceId);
+}
+
+function createRelationChangeVersion(row: DbLibraryEntry, relationsJson: string, createdAt: string): void {
+  if (row.kind !== 'article') return;
+  executeWithoutSave(
+    `INSERT INTO library_entry_versions
+     (id, entry_id, user_id, content_hash, title, summary, content, tags_json, relations_json, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [crypto.randomUUID(), row.id, row.user_id, row.content_hash, row.title, row.summary, row.content, row.tags_json, relationsJson, createdAt],
+  );
+}
+
+export function applyLibraryLifecycle(userId: string, sourceIds: string[], action: LibraryLifecycleAction): LibraryLifecycleResult {
+  const normalizedSourceIds = [...new Set(sourceIds.map(sourceId => String(sourceId || '').trim()).filter(Boolean))];
+  if (!normalizedSourceIds.length) {
+    return { action, items: [], cleanedRelationCount: 0, touchedEntryCount: 0 };
+  }
+
+  const placeholders = normalizedSourceIds.map(() => '?').join(', ');
+  return runTransaction(() => {
+    const rows = queryAll<DbLibraryEntry>(
+      `SELECT * FROM library_entries WHERE user_id = ? AND source_id IN (${placeholders})`,
+      [userId, ...normalizedSourceIds],
+    );
+    const rowBySourceId = new Map(rows.map(row => [row.source_id || '', row]));
+    const targetSet = new Set(normalizedSourceIds);
+    const now = new Date().toISOString();
+    let cleanedRelationCount = 0;
+    const touchedEntryIds = new Set<string>();
+
+    if (action !== 'restore') {
+      const allRows = queryAll<DbLibraryEntry>('SELECT * FROM library_entries WHERE user_id = ?', [userId]);
+      for (const row of allRows) {
+        const relations = parseLibraryRelations(row.relations_json);
+        const remainingRelations = relations.filter(relation => !relationTouchesSourceIds(relation, targetSet));
+        const removedCount = relations.length - remainingRelations.length;
+        const isTarget = Boolean(row.source_id && targetSet.has(row.source_id));
+        if (removedCount > 0) cleanedRelationCount += removedCount;
+
+        if (action === 'retire' && isTarget) {
+          const relationsJson = JSON.stringify(remainingRelations);
+          const statusChanged = row.status !== 'archived' || row.archived_at === null;
+          const relationChanged = relationsJson !== row.relations_json;
+          if (statusChanged || relationChanged) {
+            executeWithoutSave(
+              `UPDATE library_entries
+               SET status = 'archived', archived_at = COALESCE(archived_at, ?), relations_json = ?, updated_at = ?
+               WHERE id = ? AND user_id = ?`,
+              [now, relationsJson, now, row.id, userId],
+            );
+            if (relationChanged) createRelationChangeVersion(row, relationsJson, now);
+            touchedEntryIds.add(row.id);
+          }
+        } else if (action === 'purge' && isTarget) {
+          executeWithoutSave('DELETE FROM library_comments WHERE entry_id = ? AND user_id = ?', [row.id, userId]);
+          executeWithoutSave('DELETE FROM library_entry_versions WHERE entry_id = ? AND user_id = ?', [row.id, userId]);
+          executeWithoutSave('DELETE FROM library_entries WHERE id = ? AND user_id = ?', [row.id, userId]);
+          touchedEntryIds.add(row.id);
+        } else if (removedCount > 0) {
+          const relationsJson = JSON.stringify(remainingRelations);
+          executeWithoutSave(
+            'UPDATE library_entries SET relations_json = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+            [relationsJson, now, row.id, userId],
+          );
+          createRelationChangeVersion(row, relationsJson, now);
+          touchedEntryIds.add(row.id);
+        }
+      }
+    } else {
+      for (const row of rows) {
+        if (row.status !== 'archived') continue;
+        executeWithoutSave(
+          "UPDATE library_entries SET status = 'active', archived_at = NULL, updated_at = ? WHERE id = ? AND user_id = ?",
+          [now, row.id, userId],
+        );
+        touchedEntryIds.add(row.id);
+      }
+    }
+
+    const items = normalizedSourceIds.map(sourceId => {
+      const row = rowBySourceId.get(sourceId);
+      if (action === 'purge') return row
+        ? { sourceId, status: 'PURGED' as const, entryId: row.id }
+        : { sourceId, status: 'NOT_FOUND' as const };
+      if (!row) return { sourceId, status: 'NOT_FOUND' as const };
+      if (action === 'retire') return row.status === 'archived'
+        ? { sourceId, status: 'UNCHANGED' as const, entryId: row.id }
+        : { sourceId, status: 'RETIRED' as const, entryId: row.id };
+      return row.status === 'archived'
+        ? { sourceId, status: 'RESTORED' as const, entryId: row.id }
+        : { sourceId, status: 'UNCHANGED' as const, entryId: row.id };
+    });
+    return { action, items, cleanedRelationCount, touchedEntryCount: touchedEntryIds.size };
+  });
 }
 
 export function createLibraryEntryVersion(version: DbLibraryEntryVersion): DbLibraryEntryVersion {

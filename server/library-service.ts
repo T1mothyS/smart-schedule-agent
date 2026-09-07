@@ -284,6 +284,7 @@ function normaliseLibraryLinkKey(value: string): string {
 function buildLibraryLinkTargets(userId: string): Map<string, LibraryLinkTarget> {
   const targets = new Map<string, LibraryLinkTarget>();
   for (const row of db.exportUserLibraryEntries(userId)) {
+    if (row.status === 'archived') continue;
     const target = {
       href: `/library/${encodeURIComponent(row.id)}`,
       label: row.title || row.source_id || row.slug || '未命名知识',
@@ -672,6 +673,13 @@ export function archiveLibraryEntry(userId: string, id: string): LibraryEntry | 
 
 export function deleteLibraryEntry(userId: string, id: string): boolean {
   return db.deleteLibraryEntry(id, userId);
+}
+
+export type LibraryLifecycleAction = db.LibraryLifecycleAction;
+export type LibraryLifecycleResult = db.LibraryLifecycleResult;
+
+export function applyLibraryLifecycle(userId: string, sourceIds: string[], action: LibraryLifecycleAction): LibraryLifecycleResult {
+  return db.applyLibraryLifecycle(userId, sourceIds, action);
 }
 
 export function promoteFragmentToArticle(userId: string, id: string): LibraryMutationResult | undefined {

@@ -1214,6 +1214,36 @@ const publishLibraryHandler = (req: express.Request, res: express.Response) => {
 app.post('/api/library/publish', publishLibraryHandler);
 app.post('/api/integrations/library', publishLibraryHandler);
 
+const libraryLifecycleFields = ['sourceIds', 'confirm'];
+const libraryLifecycleActions = ['retire', 'restore', 'purge'] as const;
+
+function publishLibraryLifecycleHandler(action: (typeof libraryLifecycleActions)[number]) {
+  return (req: express.Request, res: express.Response) => {
+    const authorization = String(req.header('authorization') || '');
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    const authenticated = match ? authenticateLibraryPublishToken(match[1].trim()) : null;
+    if (!authenticated) return res.status(401).json({ success: false, error: { code: 'INVALID_PUBLISH_TOKEN', message: '知识库发布令牌无效或已经撤销' } });
+    try {
+      const body = libraryBody(req);
+      const unknownFields = Object.keys(body).filter(key => !libraryLifecycleFields.includes(key));
+      if (unknownFields.length) return res.status(400).json({ success: false, error: { code: 'UNKNOWN_FIELD', message: `不允许的字段：${unknownFields.join(', ')}` } });
+      if (!Array.isArray(body.sourceIds)) return res.status(400).json({ success: false, error: { code: 'INVALID_SOURCE_IDS', message: 'sourceIds 必须是非空字符串数组', field: 'sourceIds' } });
+      const sourceIds = [...new Set(body.sourceIds.map(value => String(value || '').trim()).filter(Boolean))];
+      if (!sourceIds.length || sourceIds.length > 100) return res.status(400).json({ success: false, error: { code: 'INVALID_SOURCE_IDS', message: 'sourceIds 数量必须在 1 到 100 之间', field: 'sourceIds' } });
+      if (action === 'purge' && body.confirm !== true) return res.status(400).json({ success: false, error: { code: 'PURGE_CONFIRMATION_REQUIRED', message: '彻底清除必须显式提供 confirm: true', field: 'confirm' } });
+      const result = libraryService.applyLibraryLifecycle(authenticated.userId, sourceIds, action);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      sendLibraryError(res, error, `知识库${action}操作失败`);
+    }
+  };
+}
+
+for (const action of libraryLifecycleActions) {
+  app.post(`/api/library/publish/${action}`, publishLibraryLifecycleHandler(action));
+  app.post(`/api/integrations/library/${action}`, publishLibraryLifecycleHandler(action));
+}
+
 function sendReadOnlyLibraryError(res: express.Response): void {
   res.status(405).setHeader('Allow', 'GET, POST /comments, DELETE /comments/:commentId').json({
     success: false,

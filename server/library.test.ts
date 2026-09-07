@@ -185,6 +185,80 @@ test('正式知识发布令牌只保存哈希、按 sourceId 幂等并保留版�
   }
 });
 
+test('发布令牌支持撤回、恢复和彻底清除，并清理当前双向关系', async () => {
+  const server = http.createServer(api.app);
+  const port = await listen(server);
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const request = (pathname: string, token: string, init: RequestInit = {}) => fetch(baseUrl + pathname, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, ...(init.headers || {}) },
+  });
+  const json = (body: unknown): RequestInit => ({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+  try {
+    const generated = await request('/api/library/publish-token', userToken, { method: 'POST' });
+    const publishToken = (await generated.json()).token as string;
+    const targetBody = {
+      sourceId: 'kb:lifecycle-target',
+      type: 'reference',
+      title: '生命周期目标',
+      content: '# 生命周期目标\n\n目标正文\n',
+      sourceType: 'codex',
+      relations: [],
+    };
+    const sourceBody = {
+      sourceId: 'kb:lifecycle-source',
+      type: 'insight',
+      title: '生命周期来源',
+      content: '# 生命周期来源\n\n参见 [[生命周期目标]]。\n',
+      sourceType: 'codex',
+      relations: [{ sourceId: 'kb:lifecycle-source', targetSourceId: 'kb:lifecycle-target', type: 'related', label: '相关目标', status: 'confirmed' }],
+    };
+    const publishedTarget = await request('/api/integrations/library', publishToken, { method: 'POST', ...json(targetBody) });
+    assert.equal(publishedTarget.status, 201);
+    const publishedSource = await request('/api/integrations/library', publishToken, { method: 'POST', ...json(sourceBody) });
+    assert.equal(publishedSource.status, 201);
+    const sourceId = (await publishedSource.json()).entry.id as string;
+
+    const retired = await request('/api/integrations/library/retire', publishToken, { method: 'POST', ...json({ sourceIds: ['kb:lifecycle-target'] }) });
+    assert.equal(retired.status, 200);
+    const retiredPayload = await retired.json();
+    assert.equal(retiredPayload.items[0].status, 'RETIRED');
+    assert.equal(retiredPayload.cleanedRelationCount, 1);
+
+    const archivedTarget = await request('/api/library?status=archived', userToken);
+    assert.equal((await archivedTarget.json()).items.some((item: { sourceId: string }) => item.sourceId === 'kb:lifecycle-target'), true);
+    const sourceAfterRetire = await request(`/api/library/${sourceId}`, userToken);
+    const sourceAfterRetirePayload = await sourceAfterRetire.json();
+    assert.equal(sourceAfterRetirePayload.relations.items.length, 0);
+    assert.match(sourceAfterRetirePayload.entry.html, /class="library-unresolved-link"/);
+    assert.doesNotMatch(sourceAfterRetirePayload.entry.html, /class="library-internal-link"/);
+
+    const restored = await request('/api/integrations/library/restore', publishToken, { method: 'POST', ...json({ sourceIds: ['kb:lifecycle-target'] }) });
+    assert.equal(restored.status, 200);
+    assert.equal((await restored.json()).items[0].status, 'RESTORED');
+    const republishedSource = await request('/api/integrations/library', publishToken, { method: 'POST', ...json(sourceBody) });
+    assert.equal(republishedSource.status, 200);
+    const restoredSource = await request(`/api/library/${sourceId}`, userToken);
+    const restoredSourcePayload = await restoredSource.json();
+    assert.equal(restoredSourcePayload.relations.items.length, 1);
+    assert.match(restoredSourcePayload.entry.html, /class="library-internal-link"/);
+
+    const purgeWithoutConfirmation = await request('/api/integrations/library/purge', publishToken, { method: 'POST', ...json({ sourceIds: ['kb:lifecycle-target'] }) });
+    assert.equal(purgeWithoutConfirmation.status, 400);
+    assert.equal((await purgeWithoutConfirmation.json()).error.code, 'PURGE_CONFIRMATION_REQUIRED');
+    const purged = await request('/api/integrations/library/purge', publishToken, { method: 'POST', ...json({ sourceIds: ['kb:lifecycle-target'], confirm: true }) });
+    assert.equal(purged.status, 200);
+    assert.equal((await purged.json()).items[0].status, 'PURGED');
+    const missingTarget = await request('/api/library?status=all&q=kb%3Alifecycle-target', userToken);
+    assert.equal((await missingTarget.json()).total, 0);
+    const sourceAfterPurge = await request(`/api/library/${sourceId}`, userToken);
+    assert.equal((await sourceAfterPurge.json()).relations.items.length, 0);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
 test('详情页会把已存在的知识库标题解析为站内跳转链接', () => {
   const target = libraryService.createLibraryEntry(user.id, {
     kind: 'article',
