@@ -87,7 +87,7 @@ flowchart LR
 | --- | --- | --- |
 | 日记/记事板 UI、快捷键、导出 | `src/components/NoteBoard.tsx`、`src/components/AiSchedulePanel.tsx`、`src/utils/note-export.ts` | 不让 LLM 负责布局；导出在前端确定性生成 |
 | 记事数据、迁移、备份恢复 | `server/note-item-service.ts`、`server/db.ts`、`server/backup-service.ts` | 保留旧 `linked_schedule_ids` 兼容字段；不跨账号读取 |
-| 知识库、Markdown 迁移 | `server/library-service.ts`、`server/library-markdown.ts`、V2 项目的 `scripts/process-migration-folder.ps1`、`docs/knowledge-library-operations.md` | 每次写入必须显式选择 `publish/retire/restore/purge`；本地关系和正文清理后再通过令牌写入；不直接修改运行中的数据库 |
+| 知识库、Markdown 迁移 | `server/library-service.ts`、`server/library-markdown.ts`、V2 项目的 `scripts/process-migration-folder.ps1`、`docs/knowledge-library-operations.md` | 普通处理校验通过后默认 `publish`；`retire/restore/purge` 必须显式选择；本地关系和正文清理后再通过令牌写入；不直接修改运行中的数据库 |
 | AI 计划确认 | `server/index.ts`、`server/ai-plan.ts` | 先生成待确认草稿；禁止旧专用入口自动完成来源记事 |
 | 日报采集/生成/校验 | `日报-v2/scripts/`、`日报-v2/schemas/`、`日报-v2/tests/` | V2 只输出结构化内容；`-NoSend` 不发布、不入队、不发信 |
 | 日报媒体与发布 | `日报-v2/scripts/report_media.py`、`日报-v2/scripts/publish_report.py`、主仓库 `server/daily-report*.ts` | 先本地校验和上传媒体，再执行最后日报 PUT |

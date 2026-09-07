@@ -18,7 +18,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 - 支持可读 JSON/CSV 导出、用户加密导出/恢复和管理员全站快照。
 - AI 可从自然语言或截图生成待确认草稿；确认前不会写入正式数据。
 - AI 助手支持普通问答；配置常驻城市/区县后，可查询 Open-Meteo 实时与未来天气。
-- 知识库 V2 链路以 `C:\Users\Elysia\Documents\Codex_Knowledge_Library` 为唯一内容入口：本地 Codex 负责 Markdown 加工、关系清单和生命周期操作，AI Calendar 负责只读呈现、评论、版本、原文导出和本地发布令牌；网页不再编辑正文。每次写入必须显式选择 `publish`、`retire`、`restore` 或 `purge`。
+- 知识库 V2 链路以 `C:\Users\Elysia\Documents\Codex_Knowledge_Library` 为唯一内容入口：本地 Codex 负责 Markdown 加工、关系清单和生命周期操作，AI Calendar 负责只读呈现、评论、版本、原文导出和本地发布令牌；网页不再编辑正文。普通处理完成后默认自动 `publish`，`retire`、`restore` 和 `purge` 仍需显式选择。
 - 每日邮件摘要包含天气、进度、分类日程和完整明细，不与单项提醒混用。
 - 日报页面按日期保存当前账号的个人情报日报；新版 `daily-digest.v1` 内容由固定 Newsletter 模板渲染，发布前由 V2 在本地下载、校验并上传新闻图片与来源 logo，服务端按内容哈希保存并在入库前确认 Markdown 只引用本站媒体；未读邮箱默认生成独立的邮件简报，明确动作另列为邮件待办；旧日报继续使用受限 Markdown 兼容路径，并严格按账号隔离。
 - 日报由外部 V2 程序在 Validator 通过后通过专用接口发布；“日报邮件”是独立于每日摘要的设置，首次发布和后续内容更新都会为新的内容版本入队，同一内容版本保持幂等；每一天的日报详情都支持手动重新发送。

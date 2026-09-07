@@ -105,7 +105,6 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
   "relations": [],
   "metadata": {
     "sourceProject": "知识库V2",
-    "runId": "20260906-full-01",
     "legacyId": "framework-003",
     "aliases": ["边际买家见顶信号"]
   }
@@ -123,9 +122,9 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
 3. Codex 只读取 V2 项目内副本，生成 `processed/` Markdown、摘要、标签和稳定 `sourceId`。
 4. 先检索当前批次和此前批次的 `processed/` 内容，只有能指出共同概念、互补框架、上下位关系或实际使用关系时才建立关联；正文引用、`legacyId` 和别名会统一解析为本地关系。
 5. 将既有显式关系迁移到 `relations.json`；推断关系先写 `suggested`，目标暂时不存在时写 `unresolved`，并为当前批次内的关系同时写入反向记录。
-6. 明确选择 `publish`、`retire`、`restore` 或 `purge`；脚本缺少 `-Operation` 时只显示操作清单并停止，绝不默认上传。
+6. 普通新增或更新默认选择 `publish`；`retire`、`restore`、`purge` 等生命周期操作仍必须显式选择，避免误触发状态变更。
 7. 运行发布脚本；只有检查而不改变服务器时才显式加 `-DryRun`，并确认 `validation-report.json` 为 0 errors、0 warnings。
-8. `process-migration-folder.ps1` 在处理结束后调用发布脚本；撤回/彻底清除批次会把目标排除出 active 关系并清理正文中的 `[[链接]]`，令牌只在当前 PowerShell 会话设置。
+8. `process-migration-folder.ps1` 在处理结束后自动调用发布脚本；撤回/彻底清除批次会把目标排除出 active 关系并清理正文中的 `[[链接]]`。目标与令牌优先从用户本地配置读取，也可用当前会话环境变量覆盖。
 
 默认干跑：
 
@@ -138,10 +137,10 @@ pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-sample-01 -O
 
 ```powershell
 $newRunId = '20260907-next-01'
-pwsh -NoProfile -File .\scripts\process-migration-folder.ps1 -RunId $newRunId -Operation publish
+pwsh -NoProfile -File .\scripts\process-migration-folder.ps1 -RunId $newRunId
 ```
 
-单篇 V2 Markdown（包括操作文档）也可直接作为 `-SourceRoot` 输入；脚本会从 frontmatter 读取稳定 `sourceId`，仍然要求显式选择操作。
+单篇 V2 Markdown（包括操作文档）也可直接作为 `-SourceRoot` 输入；脚本会从 frontmatter 读取稳定 `sourceId`，普通处理默认 `publish`，生命周期操作仍需显式选择。
 
 仅检查、不上传：
 
@@ -158,7 +157,7 @@ pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-sample-01 -O
 Remove-Item Env:LIBRARY_PUBLISH_TOKEN
 ```
 
-`LIBRARY_BASE_URL` 未设置时默认使用 `http://127.0.0.1:3000`；生产运行环境应预先设置为生产地址。每次写服务器前都必须由操作者明确选择操作；处理完成后不会自动替换为其他操作，但仍必须通过校验并具备当前会话令牌。完整参数、撤回/恢复/彻底清除和文档维护规则见 V2 项目的 `docs/knowledge-library-operations.md`。
+生产目标和令牌也可保存在当前 Windows 用户的 `%LOCALAPPDATA%\AI Calendar\knowledge-library.local.psd1` 中；环境变量优先级更高，文件不会写入批次报告。`LIBRARY_BASE_URL` 未设置且本地配置不存在时默认使用 `http://127.0.0.1:3000`。普通处理完成并通过校验后自动执行 `publish`；撤回/恢复/彻底清除仍需显式指定操作。完整参数、生命周期和文档维护规则见 V2 项目的 `docs/knowledge-library-operations.md`。
 
 脚本只读取当前批次 `processed/`、`source-manifest.json` 和 `relations.json`；会把 `suggested` 关系以“待确认”状态同步到服务器，并校验当前批次内部关系是否有反向记录。报告只写 sourceId、处理路径、正文 SHA-256、状态和脱敏错误，不保存令牌。
 
@@ -194,7 +193,7 @@ git diff --check
 全量本地批次上传完成后，再按顺序考虑：
 
 1. 人工查看 130 条关系，重点确认 2 条 `suggested` 关系；
-2. 后续新增文章按“本地处理 → 校验 → 明确选择操作 → 上传 → 前端复核”的链路执行；
+2. 后续新增文章按“本地处理 → 校验 → 自动 publish → 前端复核”的链路执行；撤回、恢复和彻底清除仍按显式生命周期操作执行；
 3. 增加 Note Board → Knowledge Fragment 单向入口；
 4. 增加 Daily Report → Knowledge Fragment 单向入口；
 5. 设计知识与日程的关联；
