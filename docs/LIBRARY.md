@@ -34,7 +34,7 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
 
 `originals/` 是不可修改的本批次备份；`processed/` 是唯一上传输入。发布脚本从自身所在的 V2 项目根目录解析批次，不接受 `--knowledge-dir`、`--tutorial-dir` 等旧目录参数。
 
-当前三篇试运行样本已放在 `20260906-sample-01`；针对 `C:\Users\Elysia\Desktop\知识库迁移` 的全量本地加工结果已放在 `20260906-full-01`，包含 33 篇业务材料、6 个排除的维护文档、原文副本、处理稿、130 条双向关系和干跑报告。原始旧目录只被复制读取，未被修改；本轮全量批次尚未上传服务器。
+当前三篇试运行样本已放在 `20260906-sample-01`；针对 `C:\Users\Elysia\Desktop\知识库迁移` 的全量本地加工结果已放在 `20260906-full-01`，包含 33 篇业务材料、6 个排除的维护文档、原文副本、处理稿、130 条双向关系和上传报告。原始旧目录只被复制读取，未被修改；本轮全量批次已上传到本地隔离服务，未上传生产。
 
 ## 3. 数据边界
 
@@ -116,21 +116,27 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
 3. Codex 只读取 V2 项目内副本，生成 `processed/` Markdown、摘要、标签和稳定 `sourceId`。
 4. 先检索当前批次和此前批次的 `processed/` 内容，只有能指出共同概念、互补框架、上下位关系或实际使用关系时才建立关联；正文引用、`legacyId` 和别名会统一解析为本地关系。
 5. 将既有显式关系迁移到 `relations.json`；推断关系先写 `suggested`，目标暂时不存在时写 `unresolved`，并为当前批次内的关系同时写入反向记录。
-6. 运行发布脚本的默认干跑，确认 `validation-report.json` 为 0 errors、0 warnings。
-7. 只有明确授权上传时，才在当前 PowerShell 会话设置 `LIBRARY_PUBLISH_TOKEN` 并加 `-Upload`。
+6. 运行发布脚本默认上传；只有检查而不改变服务器时才显式加 `-DryRun`，并确认 `validation-report.json` 为 0 errors、0 warnings。
+7. `process-migration-folder.ps1` 在处理结束后会自动调用发布脚本；令牌只在当前 PowerShell 会话设置，缺少令牌时流程在凭据闸门处停止。
 
 默认干跑：
 
 ```powershell
 Set-Location 'C:\Users\Elysia\Documents\Codex_Knowledge_Library'
-pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-sample-01
+pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-sample-01 -DryRun
 ```
 
-全量迁移目录的本地加工和干跑：
+全量迁移目录的本地加工和自动上传：
 
 ```powershell
-pwsh -NoProfile -File .\scripts\process-migration-folder.ps1 -RunId 20260906-full-01
-pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-full-01
+$newRunId = '20260907-next-01'
+pwsh -NoProfile -File .\scripts\process-migration-folder.ps1 -RunId $newRunId
+```
+
+仅检查、不上传：
+
+```powershell
+pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-full-01 -DryRun
 ```
 
 隔离环境上传：
@@ -138,9 +144,11 @@ pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-full-01
 ```powershell
 $env:LIBRARY_BASE_URL = 'http://127.0.0.1:<isolated-port>'
 $env:LIBRARY_PUBLISH_TOKEN = '<只保存在当前会话的令牌>'
-pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-sample-01 -Upload
+pwsh -NoProfile -File .\scripts\publish-library.ps1 -RunId 20260906-sample-01
 Remove-Item Env:LIBRARY_PUBLISH_TOKEN
 ```
+
+`LIBRARY_BASE_URL` 未设置时默认使用 `http://127.0.0.1:3000`；生产运行环境应预先设置为生产地址。处理完成后不再等待每篇文章的二次业务授权，但仍必须通过校验并具备当前会话令牌。
 
 脚本只读取当前批次 `processed/`、`source-manifest.json` 和 `relations.json`；会把 `suggested` 关系以“待确认”状态同步到服务器，并校验当前批次内部关系是否有反向记录。报告只写 sourceId、处理路径、正文 SHA-256、状态和脱敏错误，不保存令牌。
 
@@ -173,10 +181,10 @@ git diff --check
 
 ## 9. 后续阶段
 
-全量本地批次完成后，再按顺序考虑：
+全量本地批次上传完成后，再按顺序考虑：
 
 1. 人工查看 130 条关系，重点确认 2 条 `suggested` 关系；
-2. 明确授权后，在隔离本地服务上传 33 篇并复核幂等、版本、评论和导出；
+2. 后续新增文章按“本地处理 → 校验 → 自动上传 → 前端复核”的链路执行；
 3. 增加 Note Board → Knowledge Fragment 单向入口；
 4. 增加 Daily Report → Knowledge Fragment 单向入口；
 5. 设计知识与日程的关联；
