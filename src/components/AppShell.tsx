@@ -1,5 +1,6 @@
 import { ReactNode } from 'react';
 import { BellRing, BookOpen, Moon, Newspaper, Settings, Shield, Sun, type LucideIcon } from 'lucide-react';
+import { GlobalSearch } from './GlobalSearch';
 
 type Section = 'today' | 'schedule' | 'assistant' | 'reminders' | 'import' | 'reports' | 'library';
 
@@ -63,6 +64,7 @@ export function AppShell({
 
         <div className="topbar-actions">
           <span className="user-chip" title={user?.email}>{user?.email}</span>
+          <GlobalSearch />
           <button className="icon-button" onClick={onOpenSettings} title="设置" aria-label="打开设置">
             <Settings size={16} />
           </button>

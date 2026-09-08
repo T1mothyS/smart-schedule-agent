@@ -6,7 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export type LogLevel = 'info' | 'warn' | 'error' | 'debug';
-export type LogCategory = 'schedule' | 'ai' | 'db' | 'system' | 'reminder' | 'mail' | 'auth' | 'admin';
+export type LogCategory = 'schedule' | 'ai' | 'db' | 'system' | 'reminder' | 'mail' | 'daily-report' | 'library' | 'auth' | 'admin';
 
 export interface LogEntry {
   timestamp: string;
@@ -85,7 +85,7 @@ function isLogEntry(value: unknown): value is LogEntry {
   const entry = value as Partial<LogEntry>;
   return typeof entry.timestamp === 'string'
     && ['info', 'warn', 'error', 'debug'].includes(String(entry.level))
-    && ['schedule', 'ai', 'db', 'system', 'reminder', 'auth', 'admin'].includes(String(entry.category))
+    && ['schedule', 'ai', 'db', 'system', 'reminder', 'mail', 'daily-report', 'library', 'auth', 'admin'].includes(String(entry.category))
     && typeof entry.message === 'string';
 }
 

@@ -272,6 +272,31 @@ export function getAllSchedules(userId?: string): Schedule[] {
   return queryAll<any>('SELECT * FROM schedules ORDER BY start_time ASC').map(rowToSchedule);
 }
 
+function escapeSearchLike(value: string): string {
+  return value.replace(/[\\%_]/gu, character => `\\${character}`);
+}
+
+// 统一搜索的有限候选查询；排序和精确匹配优先级仍由 search-service 统一处理。
+export function searchSchedules(userId: string, query: string, limit = 100): Schedule[] {
+  const pattern = `%${escapeSearchLike(query.trim())}%`;
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 100);
+  return queryAll<any>(
+    `SELECT * FROM schedules
+     WHERE user_id = ?
+       AND (
+         title LIKE ? ESCAPE '\\'
+         OR description LIKE ? ESCAPE '\\'
+         OR notes LIKE ? ESCAPE '\\'
+         OR location LIKE ? ESCAPE '\\'
+         OR category LIKE ? ESCAPE '\\'
+         OR substr(start_time, 1, 10) LIKE ? ESCAPE '\\'
+       )
+     ORDER BY start_time ASC
+     LIMIT ?`,
+    [userId, pattern, pattern, pattern, pattern, pattern, pattern, safeLimit],
+  ).map(rowToSchedule);
+}
+
 // 获取指定日期范围的日程
 export function getSchedulesByDateRange(startDate: string, endDate: string, userId?: string): Schedule[] {
   if (userId) {

@@ -49,6 +49,7 @@ import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
 import { shiftScheduleDateValue } from './schedule-actions.js';
 import { assertNoLegacyCodeBuddyConfig } from './codebuddy-config.js';
 import { addLog, allLogs, clearLogs, listLogs, type LogCategory } from './log-service.js';
+import { SEARCH_SCOPES, searchAll } from './search-service.js';
 import {
   buildAiPlanSnapshot,
   normaliseAiPlanOperations,
@@ -266,6 +267,24 @@ app.get("/api/logs", authenticate, requireAdmin, (req, res) => {
     category: category ? String(category) : undefined,
     limit: limit ? Number(limit) : undefined,
   }));
+});
+
+app.get('/api/search', authenticate, (req, res) => {
+  const query = String(req.query.q || '').trim();
+  const scope = String(req.query.scope || 'all');
+  if (scope !== 'all' && !SEARCH_SCOPES.includes(scope as typeof SEARCH_SCOPES[number])) {
+    return res.status(400).json({ error: '搜索范围不正确' });
+  }
+  try {
+    return res.json(searchAll((req as any).user.userId, {
+      query,
+      scope,
+      limit: req.query.limit,
+    }));
+  } catch (error) {
+    addLog('error', 'system', '统一搜索失败', { error: error instanceof Error ? error.message : String(error) });
+    return res.status(500).json({ error: '搜索暂时不可用' });
+  }
 });
 
 app.delete("/api/logs", authenticate, requireAdmin, (req, res) => {
@@ -1974,7 +1993,7 @@ app.put('/api/integrations/daily-report/reports/:date', async (req, res) => {
     });
   } catch (error: any) {
     const message = String(error?.message || '日报发布失败');
-    addLog('error', 'mail', '日报发布失败', describeErrorData(error, {
+    addLog('error', 'daily-report', '日报发布失败', describeErrorData(error, {
       event: 'daily_report_publish_failed',
       userId: authenticated.userId,
       date,

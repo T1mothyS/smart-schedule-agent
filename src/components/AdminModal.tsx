@@ -354,7 +354,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
   };
 
   return (
-    <div>
+    <div className="admin-user-management">
       {/* 生产环境邀请码查询方法；这里只展示查询命令，不读取或回显邀请码。 */}
       <section className="mb-4 rounded-lg border p-3" style={{ borderColor: 'var(--td-component-stroke)', backgroundColor: 'var(--td-bg-color-page)' }}>
         <div className="flex items-center gap-2 mb-2">
@@ -386,7 +386,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
         </div>
       </section>
       {/* 搜索栏 */}
-      <div className="flex items-center gap-3 mb-4">
+      <div className="admin-toolbar mb-4">
         <Input
           placeholder="搜索邮箱..."
           value={searchText}
@@ -403,16 +403,72 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
       </div>
 
       {/* 表格 */}
-      <Table
-        data={users}
-        columns={columns}
-        rowKey="id"
-        loading={loading}
-        pagination={pagination}
-        stripe
-        hover
-        size="small"
-      />
+      <div className="admin-user-table-wrap">
+        <Table
+          data={users}
+          columns={columns}
+          rowKey="id"
+          loading={loading}
+          pagination={pagination}
+          stripe
+          hover
+          size="small"
+        />
+      </div>
+      <div className="admin-user-mobile-list" aria-label="用户列表">
+        {loading ? <Loading /> : users.length === 0 ? (
+          <div className="text-center py-8" style={{ color: 'var(--td-text-color-placeholder)' }}>暂无用户</div>
+        ) : users.map(user => (
+          <article key={user.id} className="admin-user-card">
+            <div className="admin-user-card-head">
+              <strong className="admin-user-card-email">{user.email}</strong>
+              <span
+                className="text-xs px-2 py-0.5 rounded-full"
+                style={{
+                  backgroundColor: user.role === 'admin' ? '#EDE9FE' : '#DBEAFE',
+                  color: user.role === 'admin' ? '#6D28D9' : '#1D4ED8',
+                }}
+              >
+                {user.role === 'admin' ? '管理员' : '用户'}
+              </span>
+            </div>
+            <div className="admin-user-card-meta">
+              <span>{user.disabled ? '已禁用' : '正常'} · 创建于 {formatDate(user.created_at)}</span>
+              <span>登录 {formatDate(user.last_login_at)}</span>
+            </div>
+            <div className="admin-user-card-actions">
+              <Select
+                size="small"
+                value={user.role}
+                onChange={(value) => handleRoleChange(user.id, value as 'admin' | 'user')}
+                options={[{ label: '管理员', value: 'admin' }, { label: '用户', value: 'user' }]}
+                disabled={user.role === 'admin'}
+              />
+              <Button
+                size="small"
+                variant="outline"
+                theme={user.admin_shared_api_enabled ? 'primary' : 'default'}
+                onClick={() => handleToggleAdminApiSharing(user)}
+                loading={loadingAction === `${user.id}:api-share`}
+                disabled={user.role === 'admin'}
+              >
+                {user.role === 'admin' ? '管理员账号' : user.admin_shared_api_enabled ? '取消共享' : '共享 API'}
+              </Button>
+              <Button
+                size="small"
+                variant="outline"
+                onClick={() => handleToggleDisabled(user.id, !user.disabled)}
+                loading={loadingAction === user.id}
+                disabled={user.role === 'admin'}
+              >
+                {user.disabled ? '启用' : '禁用'}
+              </Button>
+              <Button size="small" variant="outline" onClick={() => handleClearData(user)} disabled={user.role === 'admin'}>清空数据</Button>
+              <Button size="small" variant="outline" theme="danger" onClick={() => handleDeleteUser(user)} disabled={user.role === 'admin'}>删除</Button>
+            </div>
+          </article>
+        ))}
+      </div>
     </div>
   );
 }
@@ -422,6 +478,7 @@ function DebugLogsTab() {
   const { authHeaders } = useAuth();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [category, setCategory] = useState('all');
+  const [level, setLevel] = useState('all');
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [total, setTotal] = useState(0);
   const [maxLogs, setMaxLogs] = useState(0);
@@ -431,7 +488,8 @@ function DebugLogsTab() {
 
   const fetchLogs = useCallback(async () => {
     try {
-      const res = await fetch(`/api/logs?category=${category}&limit=200`, { headers: authHeaders() });
+      const params = new URLSearchParams({ category, level, limit: '200' });
+      const res = await fetch(`/api/logs?${params.toString()}`, { headers: authHeaders() });
       const data = await res.json();
       setLogs(data.logs || []);
       setTotal(data.total ?? 0);
@@ -439,7 +497,7 @@ function DebugLogsTab() {
     } catch (e) {
       console.error('获取日志失败', e);
     }
-  }, [authHeaders, category]);
+  }, [authHeaders, category, level]);
 
   useEffect(() => {
     if (autoRefresh) {
@@ -514,6 +572,8 @@ function DebugLogsTab() {
       case 'system': return '#6B7280';
       case 'reminder': return '#F59E0B';
       case 'mail': return '#0EA5E9';
+      case 'daily-report': return '#0284C7';
+      case 'library': return '#0F766E';
       case 'auth': return '#14B8A6';
       case 'admin': return '#EF4444';
       default: return '#6B7280';
@@ -547,26 +607,35 @@ function DebugLogsTab() {
         </span>
       </div>
 
-      {/* 分类过滤 */}
-      <div className="flex gap-2 mb-3 flex-wrap">
-        {['all', 'schedule', 'ai', 'db', 'system', 'reminder', 'mail', 'auth', 'admin'].map(cat => (
-          <button
-            key={cat}
-            onClick={() => setCategory(cat)}
-            className={`px-2 py-1 text-xs rounded ${
-              category === cat ? 'bg-blue-500 text-white' : 'bg-gray-100 dark:bg-gray-800'
-            }`}
-            style={{ color: category === cat ? '#fff' : 'var(--td-text-color-secondary)' }}
-          >
-            {cat === 'all' ? '全部' : cat.toUpperCase()}
-          </button>
-        ))}
+      {/* 分类和级别过滤 */}
+      <div className="admin-log-filter-section">
+        <div className="admin-log-filter-row" aria-label="日志级别筛选">
+          <span className="admin-filter-label">级别</span>
+          {[
+            ['all', '全部'], ['info', '信息'], ['warn', '警告'], ['error', '错误'], ['debug', '调试'],
+          ].map(([value, label]) => (
+            <button key={value} type="button" onClick={() => setLevel(value)} className={`admin-filter-chip${level === value ? ' active' : ''}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="admin-log-filter-row" aria-label="日志功能筛选">
+          <span className="admin-filter-label">功能</span>
+          {[
+            ['all', '全部'], ['schedule', '日程'], ['reminder', '提醒'], ['ai', 'AI'], ['mail', '邮件'],
+            ['daily-report', '日报'], ['library', '知识库'], ['auth', '认证'], ['admin', '管理'], ['db', '数据库'], ['system', '系统'],
+          ].map(([value, label]) => (
+            <button key={value} type="button" onClick={() => setCategory(value)} className={`admin-filter-chip${category === value ? ' active' : ''}`}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* 日志列表 */}
       <div
         ref={logContainerRef}
-        className="h-80 overflow-auto rounded border p-2 font-mono text-xs"
+        className="admin-log-list"
         style={{
           backgroundColor: 'var(--td-bg-color-component)',
           borderColor: 'var(--td-component-stroke)',
@@ -580,14 +649,9 @@ function DebugLogsTab() {
           logs.map((log, idx) => (
             <div
               key={idx}
-              className="py-0.5 flex gap-2 items-center whitespace-nowrap"
-              style={{
-                minWidth: '100%',
-                width: 'max-content',
-                borderBottom: '1px solid var(--td-component-stroke)',
-              }}
+              className="admin-log-row"
             >
-              <span className="opacity-50 flex-shrink-0 whitespace-nowrap">{log.timestamp}</span>
+              <span className="opacity-50 flex-shrink-0">{log.timestamp}</span>
               <span
                 className="px-1 rounded text-white flex-shrink-0"
                 style={{ backgroundColor: getLevelColor(log.level) }}
@@ -600,9 +664,9 @@ function DebugLogsTab() {
               >
                 {log.category}
               </span>
-              <span className="flex-shrink-0" style={{ color: 'var(--td-text-color-primary)' }}>{log.message}</span>
+              <span className="admin-log-message" style={{ color: 'var(--td-text-color-primary)' }}>{log.message}</span>
               {log.data && (
-                <span className="opacity-60 flex-shrink-0" style={{ color: 'var(--td-text-color-secondary)' }}>
+                <span className="admin-log-data opacity-60" style={{ color: 'var(--td-text-color-secondary)' }}>
                   {JSON.stringify(log.data)}
                 </span>
               )}
@@ -623,82 +687,68 @@ interface AdminModalProps {
 export function AdminModal({ visible, onClose }: AdminModalProps) {
   const [tab, setTab] = useState('users');
 
+  useEffect(() => {
+    if (!visible) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [onClose, visible]);
+
   if (!visible) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
-      onMouseDown={onClose}
-    >
-      <div
-        className="rounded-2xl shadow-2xl overflow-hidden relative"
-        style={{
-          backgroundColor: 'var(--td-bg-color-container)',
-          width: '900px',
-          maxWidth: '95vw',
-          maxHeight: '85vh',
-          display: 'flex',
-          flexDirection: 'column',
-        }}
-        onMouseDown={e => e.stopPropagation()}
-      >
-        {/* 固定在右上角的关闭按钮 */}
-        <button
-          onClick={onClose}
-          className="fixed p-1.5 rounded-lg hover:opacity-60 z-50"
-          style={{
-            top: 'calc(50vh - 42.5vh + 16px)',
-            right: 'calc(50vw - 450px + 16px)',
-            backgroundColor: 'var(--td-bg-color-container)',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-          }}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--td-text-color-secondary)' }}><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
-        </button>
-
+    <div className="admin-modal-backdrop" onMouseDown={onClose}>
+      <div className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="admin-modal-title" onMouseDown={event => event.stopPropagation()}>
         {/* 标题 */}
-        <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--td-component-stroke)' }}>
-          <h2 className="text-lg font-medium" style={{ color: 'var(--td-text-color-primary)' }}>
+        <button
+          type="button"
+          onClick={onClose}
+          className="admin-modal-close"
+          aria-label="关闭管理面板"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+        </button>
+        <div className="admin-modal-header">
+          <div>
+          <h2 id="admin-modal-title">
             管理面板
           </h2>
-          <p className="text-xs mt-1" style={{ color: 'var(--td-text-color-secondary)' }}>
+          <p>
             用户管理和调试日志
           </p>
+          </div>
         </div>
 
-        {/* 自定义 Tab 切换 */}
-        <div className="flex border-b" style={{ borderColor: 'var(--td-component-stroke)' }}>
-          <button
-            onClick={() => setTab('users')}
-            className={`px-6 py-3 text-sm font-medium transition-all ${
-              tab === 'users' ? 'border-b-2' : 'opacity-60 hover:opacity-80'
-            }`}
-            style={{
-              borderColor: tab === 'users' ? 'var(--td-brand-color)' : 'transparent',
-              color: tab === 'users' ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)',
-            }}
-          >
-            用户管理
-          </button>
-          <button
-            onClick={() => setTab('logs')}
-            className={`px-6 py-3 text-sm font-medium transition-all ${
-              tab === 'logs' ? 'border-b-2' : 'opacity-60 hover:opacity-80'
-            }`}
-            style={{
-              borderColor: tab === 'logs' ? 'var(--td-brand-color)' : 'transparent',
-              color: tab === 'logs' ? 'var(--td-brand-color)' : 'var(--td-text-color-secondary)',
-            }}
-          >
-            调试日志
-          </button>
-        </div>
+        <div className="admin-modal-body">
+          {/* 桌面端为侧边分区，窄屏时由 CSS 改为顶部横向 Tab。 */}
+          <div className="admin-modal-tabs" role="tablist" aria-label="管理面板分区">
+            <button
+              type="button"
+              onClick={() => setTab('users')}
+              className={`admin-modal-tab${tab === 'users' ? ' active' : ''}`}
+              role="tab"
+              aria-selected={tab === 'users'}
+            >
+              用户管理
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('logs')}
+              className={`admin-modal-tab${tab === 'logs' ? ' active' : ''}`}
+              role="tab"
+              aria-selected={tab === 'logs'}
+            >
+              调试日志
+            </button>
+          </div>
 
-        {/* Tab 内容 */}
-        <div className="flex-1 overflow-auto p-4">
-          {tab === 'users' && <UserManagementTab />}
-          {tab === 'logs' && <DebugLogsTab />}
+          {/* Tab 内容 */}
+          <div className="admin-modal-content">
+            {tab === 'users' && <UserManagementTab />}
+            {tab === 'logs' && <DebugLogsTab />}
+          </div>
         </div>
       </div>
     </div>

@@ -22,6 +22,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "test": "tsx --test server/*.test.ts",
+    "test:cross-project": "tsx --test integration/daily-report-cross-project.test.ts",
     "server": "tsx server/index.ts",
     "electron": "electron .",
     "electron:dev": "npm run build:electron:code && concurrently -k \"npm run dev:server\" \"npm run dev:electron:client\" \"npm run electron:dev:start\"",

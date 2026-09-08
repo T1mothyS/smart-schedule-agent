@@ -29,7 +29,10 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      - name: Test
+      # Only the in-repository service contract suite runs in GitHub CI.
+      # The real Daily Report V2 checkout is covered by the explicit local
+      # `npm run test:cross-project` command instead of a developer path.
+      - name: Service contract tests (no external workspace)
         run: npm test
 
       - name: Build

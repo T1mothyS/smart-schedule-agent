@@ -8,8 +8,15 @@ import test from 'node:test';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+const reportRootValue = process.env.DAILY_REPORT_V2_ROOT?.trim();
+if (!reportRootValue) {
+  throw new Error('跨项目日报测试需要设置 DAILY_REPORT_V2_ROOT，例如 C:\\Users\\Elysia\\Documents\\Codex\\2026-08-27\\日报-v2');
+}
+const reportRoot = path.resolve(reportRootValue);
+const publisherPath = path.join(reportRoot, 'scripts', 'publish_report.py');
+if (!fs.existsSync(publisherPath)) throw new Error(`日报 V2 publisher 不存在：${publisherPath}`);
 
-const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicalendar-daily-report-e2e-'));
+const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicalendar-daily-report-cross-project-'));
 process.env.DATA_DIR = tempDir;
 process.env.APP_ENV = 'development';
 process.env.NODE_ENV = 'test';
@@ -19,12 +26,12 @@ process.env.SMTP_HOST = 'smtp.163.com';
 process.env.SMTP_USER = 'aicalendarofficial@163.com';
 process.env.SMTP_PASS = 'test-only-smtp-placeholder';
 
-const api = await import('./index.js');
-const db = await import('./db.js');
-const activity = await import('./activity-store.js');
-const email = await import('./email-service.js');
-const notification = await import('./notification-service.js');
-const dailyReportTokens = await import('./daily-report-token-service.js');
+const api = await import('../server/index.js');
+const db = await import('../server/db.js');
+const activity = await import('../server/activity-store.js');
+const email = await import('../server/email-service.js');
+const notification = await import('../server/notification-service.js');
+const dailyReportTokens = await import('../server/daily-report-token-service.js');
 
 await api.initializeServer();
 
@@ -67,7 +74,6 @@ test('V2 Publisher → AI Calendar → 假 SMTP 形成一次隔离端到端链�
   const port = await listen(server);
   const reportDate = '2026-09-01';
   const token = dailyReportTokens.generateDailyReportToken(userId).token;
-  const reportRoot = path.resolve('C:/Users/Elysia/Documents/Codex/2026-08-27/日报-v2');
   const reportPath = path.join(tempDir, `${reportDate}.md`);
   const configPath = path.join(tempDir, 'calendar.toml');
   const headings = [
@@ -100,12 +106,11 @@ test('V2 Publisher → AI Calendar → 假 SMTP 形成一次隔离端到端链�
 
   try {
     const { stdout } = await execFileAsync('python', [
-      '-X', 'utf8',
-      path.join(reportRoot, 'scripts', 'publish_report.py'),
+      '-X', 'utf8', publisherPath,
       '--report', reportPath,
       '--date', reportDate,
       '--config', configPath,
-    ], { encoding: 'utf8' });
+    ], { encoding: 'utf8', cwd: reportRoot });
     const publishResult = JSON.parse(stdout);
     assert.equal(publishResult.status, 'PUBLISHED');
     assert.equal(publishResult.report_status, 'CREATED');

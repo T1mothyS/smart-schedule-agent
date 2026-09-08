@@ -548,6 +548,23 @@ export function listDailyReports(userId: string, limit = 100): DailyReportRecord
   ).map(rowToDailyReport);
 }
 
+function escapeSearchLike(value: string): string {
+  return value.replace(/[\\%_]/gu, character => `\\${character}`);
+}
+
+export function searchDailyReports(userId: string, query: string, limit = 100): DailyReportRecord[] {
+  const pattern = `%${escapeSearchLike(query.trim())}%`;
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 100);
+  return queryAll<any>(
+    `SELECT * FROM daily_reports
+     WHERE user_id = ?
+       AND (report_date LIKE ? ESCAPE '\\' OR markdown LIKE ? ESCAPE '\\')
+     ORDER BY report_date DESC, updated_at DESC
+     LIMIT ?`,
+    [userId, pattern, pattern, safeLimit],
+  ).map(rowToDailyReport);
+}
+
 export function createDailyReport(input: {
   userId: string;
   reportDate: string;

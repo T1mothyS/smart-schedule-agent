@@ -10,6 +10,7 @@ Codex 在本地批次中复制原始材料、保留 SHA-256、生成处理后的
 
 - `/library`：只读列表、搜索、形态/类型/状态筛选、标签展示和全库导出。
 - `/library/:id`：安全 Markdown 阅读、来源、标签、关系状态、版本内容、评论和单条原文导出；代码块使用浅灰背景并支持一键复制。
+- 全局搜索只读聚合日程、NoteBoard、Daily Report 和 Knowledge Library；搜索不会写入知识库或自动建立关系。
 - 服务器保留 Fragment/Article 兼容模型，网页公开正文写入、归档和删除接口统一返回 `405 READ_ONLY_LIBRARY`；发布令牌另提供显式的 `publish`、`retire`、`restore`、`purge` 生命周期操作。
 - Article 只能通过本地发布令牌写入；同一 `sourceId + user_id` 支持 `CREATED`、`UPDATED`、`UNCHANGED` 幂等行为。
 - 关系单独保存为 `relations_json`，允许 `confirmed`、`suggested`、`unresolved`；服务器不做 AI 推理，但 `retire`/`purge` 会事务性清理指向目标的当前关系。
@@ -63,6 +64,7 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
 | GET | `/api/library/:id/versions` | 读取版本列表 |
 | GET | `/api/library/:id/export` | 下载服务器保存的原始 Markdown 字节内容 |
 | GET | `/api/library/export` | 下载 JSON 全库包，包含 `entries/*.md` 的路径/原文、manifest、relations、comments、versions |
+| GET | `/api/search?q=关键词&scope=all|schedule|note|report|library&limit=...` | 按当前用户权限聚合搜索日程、记事、日报和知识库；只读，不建立关系 |
 | POST/DELETE | `/api/library/:id/comments`、`/api/library/:id/comments/:commentId` | 新增评论、删除当前账号自己的评论 |
 
 以下网页正文写入接口仍保留路由以便旧客户端得到明确反馈，但不再执行写入：
@@ -194,7 +196,6 @@ git diff --check
 
 1. 人工查看 130 条关系，重点确认 2 条 `suggested` 关系；
 2. 后续新增文章按“本地处理 → 校验 → 自动 publish → 前端复核”的链路执行；撤回、恢复和彻底清除仍按显式生命周期操作执行；
-3. 增加 Note Board → Knowledge Fragment 单向入口；
-4. 增加 Daily Report → Knowledge Fragment 单向入口；
-5. 设计知识与日程的关联；
-6. 最后再评估全文搜索、Embedding 或 RAG。
+3. NoteBoard 和 Daily Report 保持各自本地维护与上传，不自动写入 Knowledge Library；
+4. 通过 AI Calendar 的只读统一搜索访问日程、记事、日报和知识库，不在搜索过程中生成关系；
+5. 只有当普通搜索有真实规模瓶颈时，才重新评估索引、Embedding 或 RAG。

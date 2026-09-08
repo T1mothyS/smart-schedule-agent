@@ -164,7 +164,7 @@ export async function publishDailyReport(userId: string, reportDate: string, mar
     currentEmailStatus = emailStatus(record);
   }
 
-  addLog('info', 'mail', '日报发布状态已记录', {
+  addLog('info', 'daily-report', '日报发布状态已记录', {
     event: 'daily_report_published',
     userId,
     date: reportDate,

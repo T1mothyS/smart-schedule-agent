@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Routes, Route, useNavigate, useLocation, Navigate } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation, useSearchParams, Navigate } from 'react-router-dom';
 import { useTheme } from './hooks/useTheme';
 import { useAuth } from './hooks/useAuth';
 import { CalendarDays, Check, MoonStar, PartyPopper, X } from 'lucide-react';
@@ -32,24 +32,43 @@ interface SchedulePageProps {
 }
 
 function AiAssistantPage() {
+  const [searchParams] = useSearchParams();
   return (
     <div className="ai-schedule-page">
       <section className="ai-schedule-page-card">
-        <AiSchedulePanel />
+        <AiSchedulePanel initialNoteId={searchParams.get('note') || undefined} />
       </section>
     </div>
   );
 }
 
 function SchedulePage({ user }: SchedulePageProps) {
+  const location = useLocation();
+  const getSearchDate = () => {
+    const value = new URLSearchParams(location.search).get('date');
+    if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date();
+    const date = new Date(`${value}T12:00:00`);
+    return Number.isNaN(date.getTime()) ? new Date() : date;
+  };
   const [activeCategoryIds, setActiveCategoryIds] = useState<string[]>(() => SCHEDULE_CATEGORIES.map(category => category.id));
-  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState(getSearchDate);
   const [isRailOpen, setIsRailOpen] = useState(false);
   const railCloseButtonRef = useRef<HTMLButtonElement>(null);
   const [showLunar, setShowLunar] = useState(() => localStorage.getItem(`calendar:show-lunar:${user?.id || 'default'}`) !== 'false');
   const [showFestivals, setShowFestivals] = useState(() => localStorage.getItem(`calendar:show-festivals:${user?.id || 'default'}`) !== 'false');
   const [openScheduleRequest, setOpenScheduleRequest] = useState<{ id: string; nonce: number } | null>(null);
   const [openScheduleMenuRequest, setOpenScheduleMenuRequest] = useState<{ id: string; x: number; y: number; nonce: number } | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const dateValue = params.get('date');
+    if (dateValue && /^\d{4}-\d{2}-\d{2}$/.test(dateValue)) {
+      const nextDate = new Date(`${dateValue}T12:00:00`);
+      if (!Number.isNaN(nextDate.getTime())) setSelectedDate(nextDate);
+    }
+    const scheduleId = params.get('schedule');
+    if (scheduleId) setOpenScheduleRequest({ id: scheduleId, nonce: Date.now() });
+  }, [location.search]);
 
   useEffect(() => {
     if (!isRailOpen) return;

@@ -71,6 +71,7 @@ interface AiSchedulePanelProps {
   onOpenScheduleMenu?: (id: string, x: number, y: number) => void;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
+  initialNoteId?: string;
 }
 
 // ==================== 常量 ====================
@@ -472,6 +473,7 @@ export function AiSchedulePanel({
   onOpenScheduleMenu,
   collapsed = false,
   onToggleCollapsed,
+  initialNoteId,
 }: AiSchedulePanelProps) {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -484,6 +486,10 @@ export function AiSchedulePanel({
   const [noteDrawerOpen, setNoteDrawerOpen] = useState(false);
   const [noteMode, setNoteMode] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
+
+  useEffect(() => {
+    if (initialNoteId) setNoteDrawerOpen(true);
+  }, [initialNoteId]);
   const { isAuthenticated, token, authHeaders } = useAuth();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -850,6 +856,7 @@ export function AiSchedulePanel({
     '北京明天天气怎么样？',
     '帮我分析一下如何安排深度工作时间',
   ];
+  const pendingNoteCount = noteItems.filter(item => !item.completed).length;
 
   return (
     <div className="ai-assistant-workspace">
@@ -873,9 +880,9 @@ export function AiSchedulePanel({
             aria-controls="ai-note-board"
             title="打开 AI 记事板"
           >
-            <StickyNote size={15} />
-            <span>记事板</span>
-            {noteItems.filter(item => !item.completed).length > 0 && <em>{noteItems.filter(item => !item.completed).length}</em>}
+            <span className="note-board-trigger-icon"><StickyNote size={18} aria-hidden="true" /></span>
+            <span className="note-board-trigger-label">记事板</span>
+            {pendingNoteCount > 0 && <em aria-label={`${pendingNoteCount} 条未完成记事`}>{pendingNoteCount}</em>}
           </button>
           {onToggleCollapsed && (
             <button
@@ -1001,7 +1008,7 @@ export function AiSchedulePanel({
                 onKeyDown={handleKeyDown}
                 placeholder={noteMode ? '每行一条，轻松记录' : '输入日程、修改要求或随意聊天...'}
                 rows={1}
-                className="resize-none text-sm outline-none bg-transparent border-0"
+                className="resize-none text-sm outline-none bg-transparent border-0 schedule-ai-composer-field"
                 style={{ color: 'var(--td-text-color-primary)', border: 0, boxShadow: 'none' }}
                 aria-label={noteMode ? '记事输入框' : 'AI 助手输入框'}
               />

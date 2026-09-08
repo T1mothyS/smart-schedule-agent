@@ -1046,6 +1046,18 @@ export function listNoteItems(userId: string): DbNoteItem[] {
   );
 }
 
+export function searchNoteItems(userId: string, query: string, limit = 100): DbNoteItem[] {
+  const pattern = `%${escapeLike(query.trim())}%`;
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 100);
+  return queryAll<DbNoteItem>(
+    `SELECT * FROM note_items
+     WHERE user_id = ? AND content LIKE ? ESCAPE '\\'
+     ORDER BY completed ASC, updated_at DESC, created_at DESC
+     LIMIT ?`,
+    [userId, pattern, safeLimit],
+  );
+}
+
 export function createNoteItem(item: DbNoteItem): DbNoteItem {
   run(
     `INSERT INTO note_items
