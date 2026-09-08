@@ -8,6 +8,8 @@ type EmailStatus = 'DISABLED' | 'QUEUED' | 'SENT' | 'FAILED';
 interface DailyReportSummary {
   id: string;
   date: string;
+  headline: string | null;
+  heroImageUrl: string | null;
   excerpt: string;
   contentHash: string;
   publishedAt: string;
@@ -144,14 +146,18 @@ export function DailyReportsPage() {
                 onClick={() => navigate(`/reports/${item.date}`)}
                 aria-label={`打开 ${formatReportDate(item.date)} 日报`}
               >
+                {item.heroImageUrl && <img className="daily-report-card-hero" src={item.heroImageUrl} alt="" aria-hidden="true" />}
+                <div className="daily-report-card-body">
                 <div className="daily-report-card-topline">
                   <span className="daily-report-card-date">{formatReportDate(item.date)}</span>
                   <span className={`daily-report-email-status ${item.emailStatus.toLowerCase()}`}>
                     <Mail size={13} /> {emailStatusLabel[item.emailStatus]}
                   </span>
                 </div>
+                {item.headline && <h2 className="daily-report-card-headline">{item.headline}</h2>}
                 <p>{item.excerpt || '这份日报没有可显示的摘要。'}</p>
                 <span className="daily-report-card-meta">更新于 {formatUpdatedAt(item.updatedAt)} <span aria-hidden="true">→</span></span>
+                </div>
               </button>
               {item.emailStatus === 'FAILED' && item.emailNotificationId && (
                 <div className="daily-report-card-footer">

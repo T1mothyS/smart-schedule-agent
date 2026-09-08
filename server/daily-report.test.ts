@@ -19,6 +19,51 @@ await activity.initActivityDb();
 const userId = 'daily-report-user';
 const otherUserId = 'daily-report-other-user';
 const now = new Date().toISOString();
+const hostedPreviewImage = `/daily-report-media/${'d'.repeat(64)}.jpg`;
+
+function structuredPreviewMarkdown(): string {
+  return [
+    '# Daily Digest',
+    '<!-- daily-digest.v1 -->',
+    '日期：2026-09-08',
+    '今日主题：今天需要关注政策变化与企业经营的真实影响',
+    '',
+    '## Today at a Glance',
+    '1. 政策变化正在传导到订单、成本与现金流。',
+    '2. 企业需要同时核对需求、供应和回款变化。',
+    '3. 市场反应与经营数据仍然需要分开观察。',
+    '',
+    '## Lead Story',
+    '### 今日重点新闻标题',
+    '来源：BBC',
+    '时间：2026-09-08 08:05',
+    '链接：https://example.com/lead',
+    `图片：${hostedPreviewImage}`,
+    '#### What happened / 发生了什么',
+    '内容：公开资料显示，企业经营活动正在受到新变化影响，但仍需要核对完整行业范围。',
+    '#### Why it matters / 为什么重要',
+    '内容：订单、成本和回款会先于宏观统计变化，对判断真实影响更加直接。',
+    '#### What to watch / 接下来关注什么',
+    '内容：继续核对订单来源、成本转嫁能力、账期和回款情况。',
+    '',
+    '## Category Digest',
+    '### 市场与观察',
+    '#### 区域市场变化',
+    '来源：Yahoo Finance chart',
+    '时间：2026-09-08 收盘',
+    '链接：https://example.com/market',
+    '摘要：市场继续分化，不同时点数据不能拼成单一判断。',
+    '',
+    '## Mail Briefing',
+    '',
+    '## Mail Tasks',
+    '',
+    '## Worth Your Time',
+    '',
+    '## Footer',
+    '由日报 V2 自动整理。',
+  ].join('\n');
+}
 for (const [id, email] of [[userId, 'daily-report@example.com'], [otherUserId, 'other-report@example.com']] as const) {
   db.createUser({
     id,
@@ -136,6 +181,64 @@ test('日报隐藏已移除的工具章节，并放大为什么问题标题', ()
   assert.match(html, /daily-report-why-title/);
   assert.match(html, /金融｜为什么会这样/);
   assert.equal((html.match(/id="section-/g) || []).length, 3);
+});
+
+test('日报列表派生干净预览、重点标题和已托管头图', () => {
+  const view = reports.toDailyReportView({
+    id: 'preview-report',
+    userId,
+    reportDate: '2026-09-08',
+    markdown: structuredPreviewMarkdown(),
+    contentHash: 'preview-hash',
+    publishedAt: now,
+    updatedAt: now,
+    emailNotificationId: null,
+  } as any, false);
+  assert.equal(view.headline, '今日重点新闻标题');
+  assert.equal(view.heroImageUrl, hostedPreviewImage);
+  assert.match(view.excerpt, /^今日主要新闻概览：/);
+  assert.doesNotMatch(view.excerpt, /daily-digest\.v1|<!--|##|`/);
+});
+
+test('日报列表不会引用未托管的重点图片', () => {
+  const view = reports.toDailyReportView({
+    id: 'external-preview-report',
+    userId,
+    reportDate: '2026-09-06',
+    markdown: structuredPreviewMarkdown().replace(hostedPreviewImage, 'https://images.example/lead.jpg'),
+    contentHash: 'external-preview-hash',
+    publishedAt: now,
+    updatedAt: now,
+    emailNotificationId: null,
+  } as any, false);
+  assert.equal(view.heroImageUrl, null);
+  assert.equal(view.headline, '今日重点新闻标题');
+  assert.match(view.excerpt, /^今日主要新闻概览：/);
+});
+
+test('旧日报预览跳过结构标记并使用第一段有效正文', () => {
+  const view = reports.toDailyReportView({
+    id: 'legacy-preview-report',
+    userId,
+    reportDate: '2026-09-07',
+    markdown: [
+      '# Daily Digest',
+      '<!-- daily-digest.v1 -->',
+      '日期：2026-09-07',
+      '',
+      '## Today at a Glance',
+      '',
+      '1. **真正的新闻概览**：这是列表预览应显示的第一段正文。',
+    ].join('\n'),
+    contentHash: 'legacy-preview-hash',
+    publishedAt: now,
+    updatedAt: now,
+    emailNotificationId: null,
+  } as any, false);
+  assert.equal(view.headline, null);
+  assert.equal(view.heroImageUrl, null);
+  assert.equal(view.excerpt, '真正的新闻概览：这是列表预览应显示的第一段正文。');
+  assert.doesNotMatch(view.excerpt, /Daily Digest|Today at a Glance|<!--|\*\*/);
 });
 
 test('日报发布按账号和内容版本幂等，更新正文会重新发信', async () => {

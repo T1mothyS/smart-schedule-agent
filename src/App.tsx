@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Routes, Route, useNavigate, useLocation, useSearchParams, Navigate } from 'react-router-dom';
 import { useTheme } from './hooks/useTheme';
 import { useAuth } from './hooks/useAuth';
-import { CalendarDays, Check, MoonStar, PartyPopper, X } from 'lucide-react';
+import { CalendarDays, Check, Mail, MessageCircle, MoonStar, PartyPopper, X } from 'lucide-react';
 
 import { SettingsDialog } from './components/settings/SettingsDialog';
 import { AdminModal } from './components/AdminModal';
@@ -32,11 +32,56 @@ interface SchedulePageProps {
 }
 
 function AiAssistantPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTool = searchParams.get('tool') === 'email-import' ? 'email-import' : 'chat';
+
+  const selectTool = (tool: 'chat' | 'email-import') => {
+    const next = new URLSearchParams(searchParams);
+    if (tool === 'email-import') next.set('tool', tool);
+    else next.delete('tool');
+    setSearchParams(next);
+  };
+
   return (
-    <div className="ai-schedule-page">
-      <section className="ai-schedule-page-card">
-        <AiSchedulePanel initialNoteId={searchParams.get('note') || undefined} />
+    <div className="ai-assistant-page">
+      <aside className="ai-assistant-tool-rail" aria-label="AI 功能">
+        <div className="ai-assistant-tool-heading">
+          <span className="eyebrow">AI WORKSPACE</span>
+          <strong>AI 对话</strong>
+        </div>
+        <div className="ai-assistant-tool-list" role="tablist" aria-label="AI 功能切换">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTool === 'chat'}
+            className={`ai-assistant-tool${activeTool === 'chat' ? ' active' : ''}`}
+            onClick={() => selectTool('chat')}
+          >
+            <MessageCircle size={18} aria-hidden="true" />
+            <span><strong>AI 对话</strong><small>描述日程与待办</small></span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTool === 'email-import'}
+            className={`ai-assistant-tool${activeTool === 'email-import' ? ' active' : ''}`}
+            onClick={() => selectTool('email-import')}
+          >
+            <Mail size={18} aria-hidden="true" />
+            <span><strong>邮箱导入</strong><small>收集邮件交给 AI</small></span>
+          </button>
+        </div>
+      </aside>
+      <section className="ai-assistant-tool-content" role="tabpanel">
+        {activeTool === 'email-import' ? (
+          <AiImportPage />
+        ) : (
+          <div className="ai-schedule-page">
+            <section className="ai-schedule-page-card">
+              <AiSchedulePanel initialNoteId={searchParams.get('note') || undefined} />
+            </section>
+          </div>
+        )}
       </section>
     </div>
   );
@@ -240,7 +285,7 @@ function App() {
           <Route path="/schedule" element={<AppContent />} />
           <Route path="/assistant" element={<AppContent />} />
           <Route path="/reminders" element={<AppContent />} />
-          <Route path="/import" element={<AppContent />} />
+          <Route path="/import" element={<Navigate to="/assistant?tool=email-import" replace />} />
           <Route path="/reports" element={<AppContent />} />
           <Route path="/reports/:date" element={<DailyReportReaderPage />} />
           <Route path="/library" element={<AppContent />} />
@@ -259,8 +304,8 @@ function AppContent() {
   const [showAdmin, setShowAdmin] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const activeSection = location.pathname.startsWith('/reports') ? 'reports' : location.pathname.startsWith('/library') ? 'library' : location.pathname === '/schedule' ? 'schedule' : location.pathname === '/assistant' ? 'assistant' : location.pathname === '/reminders' ? 'reminders' : location.pathname === '/import' ? 'import' : 'today';
-  const changeSection = (section: 'today' | 'schedule' | 'assistant' | 'reminders' | 'import' | 'reports' | 'library') => navigate(section === 'schedule' ? '/schedule' : section === 'assistant' ? '/assistant' : section === 'reminders' ? '/reminders' : section === 'import' ? '/import' : section === 'reports' ? '/reports' : section === 'library' ? '/library' : '/today');
+  const activeSection = location.pathname.startsWith('/reports') ? 'reports' : location.pathname.startsWith('/library') ? 'library' : location.pathname === '/schedule' ? 'schedule' : location.pathname === '/assistant' ? 'assistant' : location.pathname === '/reminders' ? 'reminders' : 'today';
+  const changeSection = (section: 'today' | 'schedule' | 'assistant' | 'reminders' | 'reports' | 'library') => navigate(section === 'schedule' ? '/schedule' : section === 'assistant' ? '/assistant' : section === 'reminders' ? '/reminders' : section === 'reports' ? '/reports' : section === 'library' ? '/library' : '/today');
 
   // 设置弹窗打开/关闭时更新 Tab 标题
   useEffect(() => {
@@ -287,7 +332,7 @@ function AppContent() {
           <SchedulePage user={user} />
         ) : activeSection === 'assistant' ? <AiAssistantPage /> : activeSection === 'reminders' ? (
           <ReminderPage />
-        ) : activeSection === 'reports' ? <DailyReportsPage /> : activeSection === 'library' ? <LibraryPage /> : <AiImportPage />}
+        ) : activeSection === 'reports' ? <DailyReportsPage /> : activeSection === 'library' ? <LibraryPage /> : <ActionCenterPage />}
       </AppShell>
 
       {showSettings && <SettingsDialog

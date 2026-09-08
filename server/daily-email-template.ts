@@ -52,6 +52,15 @@ function weatherLine(weather: DailyWeather | null, locationName?: string | null,
   return locationName ? `${escapeEmailHtml(locationName)} · 尚未取得天气信息` : '设置常驻城市或区县后，可在邮件中查看天气';
 }
 
+export function getDailyReminderWeatherSubjectPrefix(weather: DailyWeather | null | undefined): string {
+  if (!weather) return '';
+  if ([95, 96, 99].includes(weather.weatherCode)) return '[雷暴预警]';
+  if ([71, 73, 75, 77, 85, 86].includes(weather.weatherCode)) return '[今天有雪]';
+  if ([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(weather.weatherCode)) return '[今天有雨]';
+  if (typeof weather.windSpeedMax === 'number' && weather.windSpeedMax >= 40) return '[大风提醒]';
+  return '';
+}
+
 function actionItemTypeLabel(item: ActionItem): string {
   return item.itemType === 'recurring' ? '周期事务' : item.itemType === 'todo' ? '待办' : '日程';
 }
@@ -106,13 +115,15 @@ export function renderDailyReminderEmail(input: {
   const unscheduled = [...(input.unscheduled || [])].filter(item => item.itemType === 'todo');
   const backlogCount = overdue.length + unscheduled.length;
   const allCompleted = schedules.length > 0 && pending.length === 0;
-  const subject = pending.length === 0 && backlogCount > 0
+  const baseSubject = pending.length === 0 && backlogCount > 0
     ? `${input.date.slice(5)} 今日 0 项，另有 ${backlogCount} 项待整理`
     : schedules.length === 0
       ? '太好了，今天没有安排日程'
       : allCompleted
         ? '今天的安排已全部完成'
         : `${input.date.slice(5)} 今日还有 ${pending.length} 项安排`;
+  const weatherPrefix = getDailyReminderWeatherSubjectPrefix(input.weather);
+  const subject = weatherPrefix ? `${weatherPrefix} ${baseSubject}` : baseSubject;
   const intro = pending.length === 0 && backlogCount > 0
     ? `今天没有待处理安排，另有 ${backlogCount} 项待整理。`
     : schedules.length === 0

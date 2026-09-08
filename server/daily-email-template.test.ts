@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { renderDailyReminderEmail } from './daily-email-template.js';
+import type { DailyWeather } from './weather-service.js';
 import type { Schedule } from './schedule-store.js';
 import type { ActionItem } from './action-center.js';
 
@@ -48,6 +49,19 @@ function actionItem(overrides: Partial<ActionItem> = {}): ActionItem {
   };
 }
 
+function weather(weatherCode: number, windSpeedMax = 18): DailyWeather {
+  return {
+    date: '2026-08-24',
+    timezone: 'Asia/Shanghai',
+    weatherCode,
+    description: '测试天气',
+    temperatureMax: 30,
+    temperatureMin: 23,
+    precipitationProbabilityMax: 70,
+    windSpeedMax,
+  };
+}
+
 test('0 条日程使用明确的轻松主题', () => {
   const result = renderDailyReminderEmail({ date: '2026-08-24', hour: 8, schedules: [], appUrl: 'https://example.com/today' });
   assert.equal(result.subject, '太好了，今天没有安排日程');
@@ -77,6 +91,15 @@ test('天气失败时降级但仍保留日程表', () => {
   });
   assert.match(result.html, /天气暂不可用/);
   assert.match(result.html, /项目会议/);
+});
+
+test('每日提醒标题根据天气增加单一高优先级提示', () => {
+  const base = { date: '2026-08-24', hour: 8, schedules: [], appUrl: 'https://example.com/today' };
+  assert.equal(renderDailyReminderEmail({ ...base, weather: weather(61) }).subject, '[今天有雨] 太好了，今天没有安排日程');
+  assert.equal(renderDailyReminderEmail({ ...base, weather: weather(71) }).subject, '[今天有雪] 太好了，今天没有安排日程');
+  assert.equal(renderDailyReminderEmail({ ...base, weather: weather(95, 80) }).subject, '[雷暴预警] 太好了，今天没有安排日程');
+  assert.equal(renderDailyReminderEmail({ ...base, weather: weather(3, 40) }).subject, '[大风提醒] 太好了，今天没有安排日程');
+  assert.equal(renderDailyReminderEmail({ ...base, weatherError: 'timeout' }).subject, '太好了，今天没有安排日程');
 });
 
 test('今日没有待处理安排时显示积压摘要，并限制每组最多十项', () => {

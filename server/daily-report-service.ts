@@ -4,7 +4,8 @@ import * as activityStore from './activity-store.js';
 import { enqueueUserEmailNotificationDetailed } from './notification-service.js';
 import { renderMarkdown } from './markdown-renderer.js';
 import { addLog } from './log-service.js';
-import { localizeDailyDigestImages, type DailyReportMediaOptions } from './daily-report-media-service.js';
+import { dailyReportMediaPath, localizeDailyDigestImages, type DailyReportMediaOptions } from './daily-report-media-service.js';
+import { parseDailyDigestMarkdown } from './daily-digest-template.js';
 
 export const DAILY_REPORT_SOURCE_TYPE = 'daily_report';
 export const DAILY_REPORT_KIND = 'daily_report';
@@ -17,6 +18,8 @@ export type DailyReportPublishEmailStatus = 'QUEUED' | 'DISABLED' | 'ALREADY_QUE
 export interface DailyReportView {
   id: string;
   date: string;
+  headline: string | null;
+  heroImageUrl: string | null;
   markdown?: string;
   html?: string;
   excerpt: string;
@@ -99,23 +102,61 @@ export function queueDailyReportEmail(userId: string, reportDate: string, option
   return toDailyReportView(queued.record);
 }
 
-function excerpt(markdown: string): string {
-  return markdown
-    .replace(/```[\s\S]*?```/g, ' ')
+const PREVIEW_FALLBACK = '今日主要新闻概览';
+
+function cleanPreviewText(value: string): string {
+  return value
+    .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/[#*_>|`]/g, '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/^\s{0,3}(?:#{1,6}\s+|>\s*|[-*+]\s+)/, '')
+    .replace(/^\s*\d+[.)]\s+/, '')
+    .replace(/\|/g, ' ')
+    .replace(/[*_~`]/g, '')
     .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 240);
+    .trim();
+}
+
+function isPreviewStructure(raw: string, cleaned: string): boolean {
+  if (!cleaned) return true;
+  if (/^\s*\|/.test(raw) || /^\s*:?-{3,}:?\s*(?:\||$)/.test(raw)) return true;
+  if (/^(?:Daily Digest|日期[:：]|今日主题[:：]|Today at a Glance|Lead Story|Category Digest|Mail Briefing|Mail Tasks|Worth Your Time|Footer)/i.test(cleaned)) return true;
+  return false;
+}
+
+function legacyExcerpt(markdown: string): string {
+  const withoutCode = markdown.replace(/```[\s\S]*?```/g, '\n');
+  const candidate = withoutCode
+    .split(/\r?\n/)
+    .map(line => ({ raw: line, cleaned: cleanPreviewText(line) }))
+    .find(({ raw, cleaned }) => !isPreviewStructure(raw, cleaned));
+  return (candidate?.cleaned || PREVIEW_FALLBACK).slice(0, 240);
+}
+
+function reportPresentation(markdown: string): { headline: string | null; heroImageUrl: string | null; excerpt: string } {
+  const digest = parseDailyDigestMarkdown(markdown);
+  if (digest) {
+    const lead = digest.leadStories[0] || null;
+    const overview = digest.atAGlance.slice(0, 3).join('；');
+    return {
+      headline: lead?.headline || null,
+      heroImageUrl: lead?.imageUrl ? dailyReportMediaPath(lead.imageUrl) : null,
+      excerpt: `${PREVIEW_FALLBACK}${overview ? `：${overview}` : ''}`.slice(0, 240),
+    };
+  }
+  return { headline: null, heroImageUrl: null, excerpt: legacyExcerpt(markdown) };
 }
 
 export function toDailyReportView(record: activityStore.DailyReportRecord, includeContent = true): DailyReportView {
+  const presentation = reportPresentation(record.markdown);
   return {
     id: record.id,
     date: record.reportDate,
+    headline: presentation.headline,
+    heroImageUrl: presentation.heroImageUrl,
     ...(includeContent ? { markdown: record.markdown, html: renderMarkdown(record.markdown) } : {}),
-    excerpt: excerpt(record.markdown),
+    excerpt: presentation.excerpt,
     contentHash: record.contentHash,
     publishedAt: record.publishedAt,
     updatedAt: record.updatedAt,

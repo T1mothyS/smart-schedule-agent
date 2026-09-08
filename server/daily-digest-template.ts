@@ -353,12 +353,16 @@ function renderMeta(source: string, publishedAt: string, sourceLogoUrl = '', abs
   return pieces.length ? pieces.join(' · ') : '来源与时间待核验';
 }
 
-function storyImage(story: LeadStory | DigestItem, absoluteMediaUrl = false): string {
+function storyImage(story: LeadStory | DigestItem, absoluteMediaUrl = false, hero = false): string {
   if (!story.imageUrl) return '';
   const mediaPath = dailyReportMediaPath(story.imageUrl);
   if (!mediaPath) return '';
   const imageUrl = absoluteMediaUrl ? `${getDailyReportMediaPublicOrigin()}${mediaPath}` : mediaPath;
-  return `<img class="story-image" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(story.headline)}" width="608" style="display:block;width:100%;max-width:100%;height:auto;margin:16px 0 2px;border-radius:8px;object-fit:cover">`;
+  const className = hero ? 'story-image hero-image' : 'story-image';
+  const style = hero
+    ? 'display:block;width:100%;max-width:100%;height:auto;margin:20px 0 0;border-radius:12px;object-fit:cover'
+    : 'display:block;width:100%;max-width:100%;height:auto;margin:16px 0 2px;border-radius:8px;object-fit:cover';
+  return `<img class="${className}" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(story.headline)}" width="608" style="${style}">`;
 }
 
 function storyHeadline(story: LeadStory | DigestItem, className: string): string {
@@ -367,10 +371,17 @@ function storyHeadline(story: LeadStory | DigestItem, className: string): string
   return `<a class="${className}" href="${escapeHtml(story.url)}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline;text-decoration-color:#9bb7af;text-underline-offset:4px">${headline} <span class="external-link" aria-hidden="true" style="color:#0d5c4b;font-weight:850;white-space:nowrap">↗</span></a>`;
 }
 
-function Header(digest: DailyDigest): string {
+function Header(digest: DailyDigest, absoluteMediaUrl = false): string {
+  const lead = digest.leadStories[0];
+  const headline = lead ? storyHeadline(lead, 'hero-link') : 'Daily Digest';
+  const meta = lead
+    ? `<div class="hero-story-meta story-meta" style="margin-top:11px;color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(lead.source, lead.publishedAt, lead.sourceLogoUrl, absoluteMediaUrl)}</div>`
+    : '';
+  const image = lead ? storyImage(lead, absoluteMediaUrl, true) : '';
   return `<header class="daily-newsletter-header" style="padding:34px 0 30px;border-bottom:1px solid #d8d5ce">` +
     `<div style="color:#0d5c4b;font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase">Daily Digest · ${escapeHtml(formatDateLabel(digest.date))}</div>` +
-    `<h1 style="margin:10px 0 0;color:#171916;font-family:Georgia,'Songti SC','SimSun',serif;font-size:42px;font-weight:700;line-height:1.05;letter-spacing:-.035em">Daily Digest</h1>` +
+    `<h1 style="margin:10px 0 0;color:#171916;font-family:Georgia,'Songti SC','SimSun',serif;font-size:42px;font-weight:700;line-height:1.15;letter-spacing:-.035em;overflow-wrap:anywhere">${headline}</h1>` +
+    meta + image +
     `<div style="max-width:560px;margin-top:15px;color:#3d423c;font-family:Georgia,'Songti SC','SimSun',serif;font-size:20px;line-height:1.55;overflow-wrap:anywhere">${marketText(digest.theme)}</div>` +
     '</header>';
 }
@@ -391,7 +402,7 @@ function AtAGlance(digest: DailyDigest): string {
   return Section('Today at a Glance', '今日速览', 'at-a-glance', `<ol style="margin:0;padding:0;list-style:none">${items}</ol>`, false);
 }
 
-function LeadStoryComponent(story: LeadStory, index: number, absoluteMediaUrl = false): string {
+function LeadStoryComponent(story: LeadStory, index: number, absoluteMediaUrl = false, heroExtracted = false): string {
   const fields: Array<[string, string, string]> = [
     ['What happened', '发生了什么', story.whatHappened],
     ['Why it matters', '为什么重要', story.whyItMatters],
@@ -402,9 +413,12 @@ function LeadStoryComponent(story: LeadStory, index: number, absoluteMediaUrl = 
     `<p style="margin:0;color:#333731;font-size:16px;line-height:1.72;overflow-wrap:anywhere">${marketText(value)}</p></div>`,
   ).join('');
   return `<article class="daily-lead-story" style="padding:${index === 1 ? '6px' : '32px'} 0 38px;${index > 1 ? 'border-top:1px solid #d8d5ce;' : ''}">` +
-    `<div style="color:#0d5c4b;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase">Lead ${String(index).padStart(2, '0')}</div>` +
-    `<h3 style="margin:8px 0;color:#171916;font-family:Georgia,'Songti SC','SimSun',serif;font-size:29px;line-height:1.28;letter-spacing:-.022em;overflow-wrap:anywhere">${storyHeadline(story, 'lead-link')}</h3>` +
-    `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(story.source, story.publishedAt, story.sourceLogoUrl, absoluteMediaUrl)}</div>${storyImage(story, absoluteMediaUrl)}${body}</article>`;
+    (heroExtracted
+      ? `<div class="lead-detail-kicker" style="color:#0d5c4b;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase">Lead ${String(index).padStart(2, '0')} · 详细解读</div>`
+      : `<div style="color:#0d5c4b;font-size:11px;font-weight:800;letter-spacing:.14em;text-transform:uppercase">Lead ${String(index).padStart(2, '0')}</div>` +
+        `<h3 style="margin:8px 0;color:#171916;font-family:Georgia,'Songti SC','SimSun',serif;font-size:29px;line-height:1.28;letter-spacing:-.022em;overflow-wrap:anywhere">${storyHeadline(story, 'lead-link')}</h3>` +
+        `<div class="story-meta" style="color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(story.source, story.publishedAt, story.sourceLogoUrl, absoluteMediaUrl)}</div>${storyImage(story, absoluteMediaUrl)}`) +
+    body + '</article>';
 }
 
 function DigestItemComponent(item: DigestItem, absoluteMediaUrl = false): string {
@@ -474,8 +488,8 @@ function Footer(detailUrl = ''): string {
 export function renderDailyDigest(digest: DailyDigest, detailUrl = '', options: { absoluteMediaUrls?: boolean } = {}): string {
   const absoluteMediaUrls = options.absoluteMediaUrls === true;
   return `<main class="daily-newsletter" style="width:100%;max-width:680px;margin:0 auto;border-top:5px solid #0d5c4b;background:#fff;color:#20221f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif">` +
-    `<div class="daily-newsletter-inner" style="padding:0 36px">${Header(digest)}${AtAGlance(digest)}` +
-    `${Section('Lead Story', '重点新闻', 'lead-story', digest.leadStories.map((story, index) => LeadStoryComponent(story, index + 1, absoluteMediaUrls)).join(''))}` +
+    `<div class="daily-newsletter-inner" style="padding:0 36px">${Header(digest, absoluteMediaUrls)}${AtAGlance(digest)}` +
+    `${Section('Lead Story', '重点新闻', 'lead-story', digest.leadStories.map((story, index) => LeadStoryComponent(story, index + 1, absoluteMediaUrls, index === 0)).join(''))}` +
     `${CategoryDigest(digest, absoluteMediaUrls)}${MailBriefings(digest, absoluteMediaUrls)}${MailTasks(digest, absoluteMediaUrls)}${WorthYourTime(digest, absoluteMediaUrls)}${Footer(detailUrl)}</div></main>`;
 }
 

@@ -112,6 +112,8 @@ test('Newsletter 渲染使用排版层级而不是卡片集合', () => {
   assert.match(html, /external-link/);
   assert.match(html, /story-image/);
   assert.match(html, /src="\/daily-report-media\/[a-f0-9]{64}\.(?:jpg|webp)"/);
+  assert.ok(html.indexOf('贸易摩擦开始进入企业经营数据') < html.indexOf('hero-image'));
+  assert.doesNotMatch(html, /<h3[^>]*>[\s\S]*贸易摩擦开始进入企业经营数据/);
   assert.doesNotMatch(html, /<img[^>]+https?:\/\//i);
   assert.doesNotMatch(html, /source-logo|favicon\.ico/i);
   assert.doesNotMatch(html, /media-strip|source-link|查看来源/);

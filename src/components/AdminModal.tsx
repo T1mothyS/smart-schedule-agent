@@ -651,24 +651,26 @@ function DebugLogsTab() {
               key={idx}
               className="admin-log-row"
             >
-              <span className="opacity-50 flex-shrink-0">{log.timestamp}</span>
-              <span
-                className="px-1 rounded text-white flex-shrink-0"
-                style={{ backgroundColor: getLevelColor(log.level) }}
-              >
-                {log.level.toUpperCase()}
-              </span>
-              <span
-                className="px-1 rounded text-white flex-shrink-0"
-                style={{ backgroundColor: getCategoryColor(log.category) }}
-              >
-                {log.category}
-              </span>
-              <span className="admin-log-message" style={{ color: 'var(--td-text-color-primary)' }}>{log.message}</span>
-              {log.data && (
-                <span className="admin-log-data opacity-60" style={{ color: 'var(--td-text-color-secondary)' }}>
-                  {JSON.stringify(log.data)}
+              <div className="admin-log-main">
+                <time className="admin-log-timestamp">{log.timestamp}</time>
+                <span
+                  className="admin-log-level px-1 rounded text-white"
+                  style={{ backgroundColor: getLevelColor(log.level) }}
+                >
+                  {log.level.toUpperCase()}
                 </span>
+                <span
+                  className="admin-log-category px-1 rounded text-white"
+                  style={{ backgroundColor: getCategoryColor(log.category) }}
+                >
+                  {log.category}
+                </span>
+                <span className="admin-log-message" style={{ color: 'var(--td-text-color-primary)' }}>{log.message}</span>
+              </div>
+              {log.data && (
+                <pre className="admin-log-data" style={{ color: 'var(--td-text-color-secondary)' }} aria-label="日志数据">
+                  {JSON.stringify(log.data, null, 2)}
+                </pre>
               )}
             </div>
           ))
