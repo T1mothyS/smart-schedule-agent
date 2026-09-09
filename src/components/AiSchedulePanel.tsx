@@ -123,7 +123,7 @@ function operationToForm(operation: AiPlanOperation): PlanOperationForm {
     location: operation.location || '',
     notes: operation.notes || '',
     anchorDate: operation.recurrence?.anchorDate || datePart(operation.startTime),
-    reminderTime: operation.recurrence?.reminderTime || '09:00',
+    reminderTime: operation.recurrence?.reminderTime || '12:00',
     actionGuide: operation.notes || '',
   };
 }

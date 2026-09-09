@@ -571,6 +571,7 @@ function DebugLogsTab() {
       case 'db': return '#10B981';
       case 'system': return '#6B7280';
       case 'reminder': return '#F59E0B';
+      case 'weather': return '#0EA5E9';
       case 'mail': return '#0EA5E9';
       case 'daily-report': return '#0284C7';
       case 'library': return '#0F766E';
@@ -622,7 +623,7 @@ function DebugLogsTab() {
         <div className="admin-log-filter-row" aria-label="日志功能筛选">
           <span className="admin-filter-label">功能</span>
           {[
-            ['all', '全部'], ['schedule', '日程'], ['reminder', '提醒'], ['ai', 'AI'], ['mail', '邮件'],
+            ['all', '全部'], ['schedule', '日程'], ['reminder', '提醒'], ['weather', '天气'], ['ai', 'AI'], ['mail', '邮件'],
             ['daily-report', '日报'], ['library', '知识库'], ['auth', '认证'], ['admin', '管理'], ['db', '数据库'], ['system', '系统'],
           ].map(([value, label]) => (
             <button key={value} type="button" onClick={() => setCategory(value)} className={`admin-filter-chip${category === value ? ' active' : ''}`}>

@@ -59,6 +59,10 @@ function weather(weatherCode: number, windSpeedMax = 18): DailyWeather {
     temperatureMin: 23,
     precipitationProbabilityMax: 70,
     windSpeedMax,
+    source: 'live',
+    isStale: false,
+    retrievedAt: '2026-08-24T00:00:00.000Z',
+    cacheAgeMs: 0,
   };
 }
 
@@ -100,6 +104,19 @@ test('每日提醒标题根据天气增加单一高优先级提示', () => {
   assert.equal(renderDailyReminderEmail({ ...base, weather: weather(95, 80) }).subject, '[雷暴预警] 太好了，今天没有安排日程');
   assert.equal(renderDailyReminderEmail({ ...base, weather: weather(3, 40) }).subject, '[大风提醒] 太好了，今天没有安排日程');
   assert.equal(renderDailyReminderEmail({ ...base, weatherError: 'timeout' }).subject, '太好了，今天没有安排日程');
+});
+
+test('缓存天气明确标注仅供参考且不生成天气主题前缀', () => {
+  const result = renderDailyReminderEmail({
+    date: '2026-08-24',
+    hour: 8,
+    schedules: [],
+    appUrl: 'https://example.com/today',
+    weather: { ...weather(61), source: 'cache', isStale: true, cacheAgeMs: 90 * 60_000 },
+  });
+  assert.equal(result.subject, '太好了，今天没有安排日程');
+  assert.match(result.html, /使用缓存，仅供参考/);
+  assert.match(result.html, /已缓存约 90 分钟/);
 });
 
 test('今日没有待处理安排时显示积压摘要，并限制每组最多十项', () => {

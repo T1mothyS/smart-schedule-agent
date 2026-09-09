@@ -29,7 +29,7 @@ import { pollEmailImports } from "./email-import-service.js";
 import { buildCodeBuddyEnv, normaliseCodeBuddyBaseUrl } from "./codebuddy-env.js";
 import { createModelService } from "./model-service.js";
 import { parseAiJson } from "./ai-json.js";
-import { extractWeatherLocationQuery, getDailyWeather, isWeatherQuestion, searchLocations, type WeatherLocation } from './weather-service.js';
+import { extractWeatherLocationQuery, getDailyWeather, getWeatherErrorKind, isWeatherQuestion, searchLocations, type WeatherLocation } from './weather-service.js';
 import { createReadableUserExport, createSchedulesCsv } from './export-service.js';
 import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
 import { getDailyReportView, listDailyReportViews, publishDailyReport, queueDailyReportEmail } from './daily-report-service.js';
@@ -58,6 +58,7 @@ import {
   updateAiPlanOperation,
   type PendingAiOperation,
 } from './ai-plan.js';
+import { AI_IMPORT_LINKAGE_RULES, AI_LINKAGE_GUIDE_VERSION, AI_LINKAGE_SYSTEM_RULES, getAiLinkageGuides } from './ai-linkage-guide.js';
 
 // 数据库实例（等待初始化后赋值）
 let db: typeof dbModule;
@@ -321,6 +322,10 @@ app.get("/api/logs/export", authenticate, requireAdmin, (req, res) => {
 // 健康检查
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+app.get('/api/ai-linkage-guides', authenticate, (_req, res) => {
+  res.json(getAiLinkageGuides());
 });
 
 // 日程 AI 模型配置按账号保存，避免一个用户修改后影响其他用户。
@@ -1542,7 +1547,12 @@ app.get('/api/weather/locations', authenticate, async (req, res) => {
     const locations = await searchLocations(query);
     res.json({ locations });
   } catch (error: any) {
-    res.status(String(error?.message || '').includes('超时') ? 504 : 502).json({ error: error?.message || '地点搜索暂时不可用' });
+    addLog('warn', 'weather', '天气地点搜索失败', {
+      event: 'weather_location_search_failed',
+      failureKind: getWeatherErrorKind(error),
+      queryLength: String(req.query.q || '').trim().length,
+    });
+    res.status(getWeatherErrorKind(error) === 'timeout' ? 504 : 502).json({ error: error?.message || '地点搜索暂时不可用' });
   }
 });
 
@@ -2101,7 +2111,7 @@ function normaliseReminderConfig(type: reminderStore.ReminderTaskType, input: an
       paymentDay,
       paymentMonthOffset,
       reminderOffsets: normaliseReminderOffsets(input?.reminderOffsets, 60, [15, 7, 1, 0]),
-      reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(input?.reminderTime) ? input.reminderTime : '09:00',
+      reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(input?.reminderTime) ? input.reminderTime : reminderStore.DEFAULT_CYCLE_REMINDER_TIME,
       priority: ['high', 'medium', 'low'].includes(input?.priority) ? input.priority : 'high',
     };
   }
@@ -2133,7 +2143,7 @@ function normaliseReminderConfig(type: reminderStore.ReminderTaskType, input: an
       templateKey,
       rule,
       reminderOffsets,
-      reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(input?.reminderTime) ? input.reminderTime : '09:00',
+      reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(input?.reminderTime) ? input.reminderTime : reminderStore.DEFAULT_CYCLE_REMINDER_TIME,
       actionGuide: String(input?.actionGuide || '完成本周期事务并登记证明').trim(),
       priority: ['high', 'medium', 'low'].includes(input?.priority) ? input.priority : 'medium',
     };
@@ -2151,7 +2161,7 @@ function normaliseReminderConfig(type: reminderStore.ReminderTaskType, input: an
     lastOperationDate: input.lastOperationDate,
     actionGuide: String(input?.actionGuide || '完成一次充值、消费、短信、通话或流量操作').trim(),
     reminderOffsets: normaliseReminderOffsets(input?.reminderOffsets, 180, [30, 15, 7, 1, 0]),
-    reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(input?.reminderTime) ? input.reminderTime : '09:00',
+    reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(input?.reminderTime) ? input.reminderTime : reminderStore.DEFAULT_CYCLE_REMINDER_TIME,
     priority: ['high', 'medium', 'low'].includes(input?.priority) ? input.priority : 'medium',
   };
 }
@@ -2194,7 +2204,7 @@ app.post("/api/cycle-reminders", authenticate, (req, res) => {
       userId,
       type,
       name: String(req.body.name || ''),
-      timezone: req.body.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai',
+      timezone: reminderStore.DEFAULT_CYCLE_REMINDER_TIMEZONE,
       config: normaliseReminderConfig(type, req.body.config),
     });
     reminderCalendarSync.syncReminderTaskToCalendar(task);
@@ -2213,7 +2223,9 @@ app.patch("/api/cycle-reminders/:id", authenticate, (req, res) => {
     const updates: any = {};
     if (req.body.name !== undefined) updates.name = String(req.body.name);
     if (req.body.enabled !== undefined) updates.enabled = !!req.body.enabled;
-    if (req.body.timezone !== undefined) updates.timezone = String(req.body.timezone);
+    if (req.body.timezone !== undefined) {
+      updates.timezone = reminderStore.DEFAULT_CYCLE_REMINDER_TIMEZONE;
+    }
     if (req.body.config !== undefined) updates.config = normaliseReminderConfig(current.type, req.body.config);
     const task = reminderStore.updateReminderTask(req.params.id, userId, updates);
     if (task) reminderCalendarSync.syncReminderTaskToCalendar(task);
@@ -2357,7 +2369,7 @@ app.post("/api/ai/imports/:id/confirm", authenticate, (req, res) => {
         userId,
         type: 'generic',
         name: draft.title,
-        timezone: process.env.APP_TIMEZONE || 'Asia/Shanghai',
+        timezone: reminderStore.DEFAULT_CYCLE_REMINDER_TIMEZONE,
         config: normaliseReminderConfig('generic', {
           templateKey: draft.templateKey,
           rule: {
@@ -2370,7 +2382,7 @@ app.post("/api/ai/imports/:id/confirm", authenticate, (req, res) => {
             advancePolicy: draft.recurrence?.advancePolicy || 'calendar',
           },
           reminderOffsets: draft.reminderOffsets,
-          reminderTime: draft.dueTime || '09:00',
+          reminderTime: draft.dueTime || reminderStore.DEFAULT_CYCLE_REMINDER_TIME,
           actionGuide: draft.actionGuide,
           priority: 'medium',
         }),
@@ -3156,7 +3168,10 @@ function formatWeatherReply(location: WeatherLocation, weather: Awaited<ReturnTy
     ? ''
     : `，最高降雨概率 ${Math.round(weather.precipitationProbabilityMax)}%`;
   const wind = weather.windSpeedMax == null ? '' : `，最大风速约 ${Math.round(weather.windSpeedMax)} km/h`;
-  return `${location.displayName} ${weather.date}：${weather.description}，${temperatures}${rain}${wind}。天气数据来自 Open-Meteo，出行前建议再关注临近预报。`;
+  const source = weather.source === 'cache'
+    ? `天气数据来自 Open-Meteo 缓存（${weather.retrievedAt} 获取，已缓存约 ${Math.max(1, Math.round(weather.cacheAgeMs / 60_000))} 分钟），仅供参考`
+    : '天气数据来自 Open-Meteo 实时请求';
+  return `${location.displayName} ${weather.date}：${weather.description}，${temperatures}${rain}${wind}。${source}，出行前建议再关注临近预报。`;
 }
 
 interface PendingAiSchedulePlan {
@@ -3320,7 +3335,7 @@ function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
           userId: plan.userId,
           type: 'generic',
           name: String(op.data.title).slice(0, 160),
-          timezone: db.getReminder(plan.userId)?.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai',
+          timezone: reminderStore.DEFAULT_CYCLE_REMINDER_TIMEZONE,
           config: normaliseReminderConfig('generic', {
             templateKey: 'custom',
             rule: {
@@ -3333,7 +3348,7 @@ function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
               month: recurrence.month,
             },
             reminderOffsets: recurrence.reminderOffsets || [1, 0],
-            reminderTime: recurrence.reminderTime || '09:00',
+            reminderTime: recurrence.reminderTime || reminderStore.DEFAULT_CYCLE_REMINDER_TIME,
             actionGuide: op.data.notes || '完成本周期事项并登记结果',
             priority: op.data.priority || 'medium',
           }),
@@ -3505,6 +3520,11 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
       const historyMessage = saveAiScheduleResponseHistory(userId, response);
       return res.json({ ...response, historyMessageId: historyMessage.id });
     } catch (error: any) {
+      addLog('warn', 'weather', 'AI 天气查询失败', {
+        event: 'ai_weather_query_failed',
+        userId,
+        failureKind: getWeatherErrorKind(error),
+      });
       const response = {
         success: true,
         intent: 'weather',
@@ -3635,6 +3655,9 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
 
 ${queryDateInfo}当前日期：${today}
 
+【受控联动规则版本：${AI_LINKAGE_GUIDE_VERSION}】
+${AI_LINKAGE_SYSTEM_RULES}
+
 【用户日程表数据】查询或修改日程时必须以这里的数据为准；普通常识、建议和闲聊不必强行依赖日程：
 ${scheduleList || '（暂无日程）'}
 
@@ -3664,7 +3687,7 @@ ${scheduleList || '（暂无日程）'}
     {
       "type": "create|create_recurring|update|delete",
       "scheduleId": "修改/删除时填写已有日程的完整UUID，必须从上面日程列表的 [ID:xxxx] 复制完整值！",
-      "recurrence": {"frequency":"interval|monthly|yearly","anchorDate":"YYYY-MM-DD","interval":1,"unit":"day|month|year","reminderOffsets":[1,0],"reminderTime":"09:00"},
+      "recurrence": {"frequency":"interval|monthly|yearly","anchorDate":"YYYY-MM-DD","interval":1,"unit":"day|month|year","reminderOffsets":[1,0],"reminderTime":"12:00"},
       "data": {
         "title": "日程标题",
         "start_time": "YYYY-MM-DDTHH:MM:00",
@@ -3722,7 +3745,7 @@ priority 识别：
     {
       "type": "create|create_recurring|update|delete",
       "scheduleId": "修改/删除时填写已有日程的id（从上面列表复制）",
-      "recurrence": {"frequency":"interval|monthly|yearly","anchorDate":"YYYY-MM-DD","interval":1,"unit":"day|month|year","reminderOffsets":[1,0],"reminderTime":"09:00"},
+      "recurrence": {"frequency":"interval|monthly|yearly","anchorDate":"YYYY-MM-DD","interval":1,"unit":"day|month|year","reminderOffsets":[1,0],"reminderTime":"12:00"},
       "data": {
         "title": "...",
         "start_time": "YYYY-MM-DDTHH:MM:00",
@@ -3754,7 +3777,7 @@ priority 识别：
 
 多事项与周期规则：
 - 先逐条拆分输入。每个可执行事项必须对应一个独立 operation，不能把地址、前置动作或不同日期合并丢失。
-- “每天/每周/每月/每年/每隔 N 天”必须使用 type: "create_recurring"，不能把周期事项降级成一次性日程；其 data 中照常填写标题、备注、优先级，另填 recurrence：{"frequency":"interval|monthly|yearly","anchorDate":"YYYY-MM-DD","interval":1,"unit":"day|month|year","reminderOffsets":[1,0],"reminderTime":"09:00"}。
+- “每天/每周/每月/每年/每隔 N 天”必须使用 type: "create_recurring"，不能把周期事项降级成一次性日程；其 data 中照常填写标题、备注、优先级，另填 recurrence：{"frequency":"interval|monthly|yearly","anchorDate":"YYYY-MM-DD","interval":1,"unit":"day|month|year","reminderOffsets":[1,0],"reminderTime":"12:00"}。未特别指定时，周期提醒使用 Asia/Shanghai 12:00，仍允许用户在确认前编辑。
 - 对于“周三前”“周内”“周五和下周一”等相对日期，必须以当前日期换算出确切 YYYY-MM-DD；“周三前完成”最晚安排在该周周三，不能向后顺延。
 - 信息有歧义、缺少日期或会影响执行时，不要编造；在顶层 warnings 数组中列出需要用户核对的问题。所有写入都会先展示计划并等待用户确认。`;
 

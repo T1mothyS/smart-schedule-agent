@@ -11,7 +11,7 @@ import { getSchedulesByDate } from './schedule-store.js';
 import { getActionCenter } from './action-center.js';
 import { renderDailyReminderEmail } from './daily-email-template.js';
 import { renderDailyDigestEmailPage, renderDailyDigestPlainText } from './daily-digest-template.js';
-import { getDailyWeather } from './weather-service.js';
+import { getDailyWeather, getWeatherErrorKind } from './weather-service.js';
 import { addLog } from './log-service.js';
 import { escapeHtml, renderMarkdown } from './markdown-renderer.js';
 
@@ -311,8 +311,22 @@ export async function sendDailyReminderEmail(to: string, userId: string, dateOve
         longitude: Number(preference.home_longitude),
         timezone: preference.home_timezone || timezone,
       }, dateStr);
+      if (weather.source === 'cache') {
+        addLog('info', 'weather', '每日邮件使用天气缓存', {
+          event: 'daily_weather_cache_fallback',
+          userId,
+          date: dateStr,
+          cacheAgeMs: weather.cacheAgeMs,
+        });
+      }
     } catch (error) {
       weatherError = error instanceof Error ? error.message : '天气服务暂不可用';
+      addLog('warn', 'weather', '每日邮件天气获取失败', {
+        event: 'daily_weather_fetch_failed',
+        userId,
+        date: dateStr,
+        failureKind: getWeatherErrorKind(error),
+      });
     }
   }
   const rendered = renderDailyReminderEmail({

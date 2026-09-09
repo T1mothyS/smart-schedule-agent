@@ -6,8 +6,8 @@ import {
 } from './reminder-store.js';
 import { enqueueUserNotificationDetailed, type NotificationLogger } from './notification-service.js';
 
-export async function processCycleReminders(log?: NotificationLogger): Promise<void> {
-  const dueReminders = getDueReminders();
+export async function processCycleReminders(log?: NotificationLogger, now = new Date()): Promise<void> {
+  const dueReminders = getDueReminders(now);
   for (const reminder of dueReminders) {
     if (!claimDelivery(reminder.id)) continue;
 
@@ -20,7 +20,7 @@ export async function processCycleReminders(log?: NotificationLogger): Promise<v
         instanceId: reminder.cycle.id,
         kind: reminder.reminderType,
         title: `【事务提醒】${reminder.task.name}`,
-        body: `截止日期：${reminder.cycle.dueDate}\n${config.actionGuide || '请完成本周期事务并登记。'}`,
+        body: `截止日期：${reminder.cycle.dueDate}${reminder.delayed ? '\n本提醒已延迟补发，请尽快处理。' : ''}\n${config.actionGuide || '请完成本周期事务并登记。'}`,
         dedupePrefix: `cycle:${reminder.cycle.id}:${reminder.reminderType}:${reminder.scheduledDate}`,
         log,
       });
@@ -32,6 +32,7 @@ export async function processCycleReminders(log?: NotificationLogger): Promise<v
         cycleId: reminder.cycle.id,
         reminderType: reminder.reminderType,
         scheduledDate: reminder.scheduledDate,
+        delayed: reminder.delayed,
         queuedCount: notifications.length,
         createdCount: notifications.filter(item => item.created).length,
         deduplicatedCount: notifications.filter(item => !item.created).length,
@@ -46,6 +47,7 @@ export async function processCycleReminders(log?: NotificationLogger): Promise<v
         cycleId: reminder.cycle.id,
         reminderType: reminder.reminderType,
         scheduledDate: reminder.scheduledDate,
+        delayed: reminder.delayed,
       });
     }
   }

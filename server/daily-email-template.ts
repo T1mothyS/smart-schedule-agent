@@ -46,14 +46,17 @@ function weatherLine(weather: DailyWeather | null, locationName?: string | null,
       ? ''
       : ` · ${Math.round(weather.temperatureMin)}～${Math.round(weather.temperatureMax)}℃`;
     const rain = weather.precipitationProbabilityMax == null ? '' : ` · 降雨概率最高 ${Math.round(weather.precipitationProbabilityMax)}%`;
-    return `${locationName ? escapeEmailHtml(locationName) + ' · ' : ''}${escapeEmailHtml(weather.description)}${temperature}${rain}`;
+    const cacheNote = weather.source === 'cache' || weather.isStale
+      ? ` · 使用缓存，仅供参考（已缓存约 ${Math.max(1, Math.round(weather.cacheAgeMs / 60_000))} 分钟）`
+      : '';
+    return `${locationName ? escapeEmailHtml(locationName) + ' · ' : ''}${escapeEmailHtml(weather.description)}${temperature}${rain}${cacheNote}`;
   }
   if (weatherError) return `${locationName ? escapeEmailHtml(locationName) + ' · ' : ''}天气暂不可用，不影响日程提醒`;
   return locationName ? `${escapeEmailHtml(locationName)} · 尚未取得天气信息` : '设置常驻城市或区县后，可在邮件中查看天气';
 }
 
 export function getDailyReminderWeatherSubjectPrefix(weather: DailyWeather | null | undefined): string {
-  if (!weather) return '';
+  if (!weather || weather.source === 'cache' || weather.isStale) return '';
   if ([95, 96, 99].includes(weather.weatherCode)) return '[雷暴预警]';
   if ([71, 73, 75, 77, 85, 86].includes(weather.weatherCode)) return '[今天有雪]';
   if ([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82].includes(weather.weatherCode)) return '[今天有雨]';

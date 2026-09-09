@@ -1,6 +1,7 @@
 import { query, type ImageMediaType, type UserMessage } from '@tencent-ai/agent-sdk';
 import { v4 as uuidv4 } from 'uuid';
 import { buildCodeBuddyEnv } from './codebuddy-env.js';
+import { AI_IMPORT_LINKAGE_RULES, AI_LINKAGE_GUIDE_VERSION } from './ai-linkage-guide.js';
 
 export interface AiImportImage {
   name: string;
@@ -88,6 +89,9 @@ async function* createPrompt(text: string, images: AiImportImage[]): AsyncGenera
       text: `请从以下文字和图片识别一项日程或周期事务。只输出 JSON，不要 Markdown。
 当前日期：${new Date().toISOString().slice(0, 10)}
 用户输入：${text || '请识别图片中的账单、到期日和周期'}
+
+联动规则版本：${AI_LINKAGE_GUIDE_VERSION}
+${AI_IMPORT_LINKAGE_RULES}
 
 JSON 格式：
 {

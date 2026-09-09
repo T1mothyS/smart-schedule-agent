@@ -104,7 +104,7 @@ export function previewAiPlanOperation(operation: PendingAiOperation, index = Nu
       unit: String(recurrence.unit || 'day'),
       anchorDate: recurrence.anchorDate || String(data.start_time || '').slice(0, 10) || null,
       reminderOffsets: Array.isArray(recurrence.reminderOffsets) ? recurrence.reminderOffsets.map(Number) : [1, 0],
-      reminderTime: String(recurrence.reminderTime || '09:00'),
+      reminderTime: String(recurrence.reminderTime || '12:00'),
     } : null,
   };
 }

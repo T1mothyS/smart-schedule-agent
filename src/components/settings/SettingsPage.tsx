@@ -2,6 +2,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { SettingsLayout } from './SettingsLayout';
 import { AccountSettings } from './sections/AccountSettings';
 import { AiSettings } from './sections/AiSettings';
+import { IntegrationGuideSettings } from './sections/IntegrationGuideSettings';
 import { NotificationSettings } from './sections/NotificationSettings';
 import { DailyReportSettings } from './sections/DailyReportSettings';
 import { LibraryIntegrationSettings } from './sections/LibraryIntegrationSettings';
@@ -18,6 +19,7 @@ export function SettingsPage({ onOpenAdmin }: { onOpenAdmin?: () => void }) {
     <SettingsLayout isAdmin={user.role === 'admin'}>
       <AccountSettings user={user} onLogout={logout} />
       <AiSettings authHeaders={authHeaders} />
+      <IntegrationGuideSettings authHeaders={authHeaders} />
       <NotificationSettings authHeaders={authHeaders} userEmail={user.email} />
       <DailyReportSettings authHeaders={authHeaders} />
       <LibraryIntegrationSettings authHeaders={authHeaders} />

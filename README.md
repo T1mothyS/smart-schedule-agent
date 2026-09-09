@@ -6,6 +6,8 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 跨项目结构、日报 V2 接口边界、任务路由和分层验收见 [`PROJECT-MAP.md`](PROJECT-MAP.md)。
 
+Knowledge Library V2 首次部署、令牌权限、分层验收和回滚见 [`docs/KNOWLEDGE-LIBRARY-FIRST-DEPLOYMENT.md`](docs/KNOWLEDGE-LIBRARY-FIRST-DEPLOYMENT.md)；本地 Knowledge Library 项目另有对应的 `docs/knowledge-library-first-deployment.md` 文档追踪入口。
+
 ## 1. 当前能力
 
 - 登录后默认进入 `/today` 今日行动中心。
@@ -42,7 +44,7 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 ### 1.1 版本与邮件链路
 
-- 当前版本：`0.15.0-260907.1922`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
+- 当前版本：`0.17.0-260909.1309`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
 - 每日摘要邮件链路：账号提醒设置 → 每日摘要调度器 → 持久化通知队列 → 固定发件邮箱；按账号、时区、日期和配置时间组成触发键幂等。
 - 高优先级邮件链路：高优先级事件/待办 → 开始前 1–15 分钟调度器 → 持久化通知队列 → 固定发件邮箱；不依赖每日提醒或邮件开关。
 - V2 日报链路：Validator 通过 → 本地下载/校验并上传 `daily-digest.v1` 图片与来源 logo → `PUT /api/integrations/daily-report/reports/:date` → 服务端确认本站媒体存在 → 账号日报记录 → 新内容版本进入日报邮件通知队列 → 固定发件邮箱；同一内容版本只自动入队一次，媒体失败不会进入最后的日报 PUT，详情页可对当前正文手动重新发送。

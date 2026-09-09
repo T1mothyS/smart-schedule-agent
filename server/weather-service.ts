@@ -20,14 +20,43 @@ export interface DailyWeather {
   temperatureMin: number | null;
   precipitationProbabilityMax: number | null;
   windSpeedMax: number | null;
+  source: 'live' | 'cache';
+  isStale: boolean;
+  retrievedAt: string;
+  cacheAgeMs: number;
 }
 
 type FetchLike = typeof fetch;
 
-const locationCache = new Map<string, { expiresAt: number; value: WeatherLocation[] }>();
-const weatherCache = new Map<string, { expiresAt: number; value: DailyWeather }>();
+export type WeatherFailureKind = 'timeout' | 'network' | 'http' | 'response';
+
+export class WeatherServiceError extends Error {
+  readonly kind: WeatherFailureKind;
+  readonly status?: number;
+
+  constructor(message: string, kind: WeatherFailureKind, status?: number) {
+    super(message);
+    this.name = 'WeatherServiceError';
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
+interface CacheEntry<T> {
+  expiresAt: number;
+  storedAt: number;
+  value: T;
+}
+
+const locationCache = new Map<string, CacheEntry<WeatherLocation[]>>();
+const weatherCache = new Map<string, CacheEntry<DailyWeather>>();
 const LOCATION_CACHE_MS = 12 * 60 * 60 * 1000;
 const WEATHER_CACHE_MS = 15 * 60 * 1000;
+const STALE_CACHE_MS = 6 * 60 * 60 * 1000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 4_000;
+const DEFAULT_TOTAL_TIMEOUT_MS = 8_500;
+const MAX_REQUEST_ATTEMPTS = 2;
+const RETRY_DELAY_MS = 150;
 const MAX_LOCATION_CACHE_ENTRIES = 500;
 const MAX_WEATHER_CACHE_ENTRIES = 1_000;
 
@@ -72,22 +101,77 @@ function weatherDescription(code: number): string {
   return '天气状况未知';
 }
 
+function asWeatherError(error: unknown): WeatherServiceError {
+  if (error instanceof WeatherServiceError) return error;
+  if (error instanceof Error && error.name === 'AbortError') {
+    return new WeatherServiceError('天气服务响应超时', 'timeout');
+  }
+  return new WeatherServiceError('天气服务网络请求失败', 'network');
+}
+
+export function getWeatherErrorKind(error: unknown): WeatherFailureKind {
+  return error instanceof WeatherServiceError ? error.kind : asWeatherError(error).kind;
+}
+
+function isRetryableWeatherError(error: WeatherServiceError): boolean {
+  return error.kind === 'timeout' || error.kind === 'network' || (error.kind === 'http' && (
+    error.status === 408 || error.status === 429 || (error.status != null && error.status >= 500 && error.status <= 599)
+  ));
+}
+
+async function waitForRetry(delayMs: number): Promise<void> {
+  await new Promise<void>(resolve => setTimeout(resolve, delayMs));
+}
+
 async function fetchJson(url: URL, fetcher: FetchLike, timeoutMs: number): Promise<any> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetcher(url, {
-      signal: controller.signal,
-      headers: { Accept: 'application/json', 'User-Agent': 'AI-Calendar/1.0' },
-    });
-    if (!response.ok) throw new Error(`天气服务返回 HTTP ${response.status}`);
-    return await response.json();
+    let response: Response;
+    try {
+      response = await fetcher(url, {
+        signal: controller.signal,
+        headers: { Accept: 'application/json', 'User-Agent': 'AI-Calendar/1.0' },
+      });
+    } catch (error) {
+      throw asWeatherError(error);
+    }
+    if (!response.ok) throw new WeatherServiceError(`天气服务返回 HTTP ${response.status}`, 'http', response.status);
+    try {
+      return await response.json();
+    } catch {
+      throw new WeatherServiceError('天气服务响应结构异常', 'response');
+    }
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') throw new Error('天气服务响应超时');
-    throw error;
+    throw asWeatherError(error);
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function fetchJsonWithRetry(
+  url: URL,
+  fetcher: FetchLike,
+  options: { timeoutMs?: number; totalTimeoutMs?: number } = {},
+): Promise<any> {
+  const attemptTimeoutMs = Math.max(1, options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+  const totalTimeoutMs = Math.max(attemptTimeoutMs, options.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS);
+  const startedAt = Date.now();
+  let lastError: WeatherServiceError | null = null;
+
+  for (let attempt = 0; attempt < MAX_REQUEST_ATTEMPTS; attempt += 1) {
+    const remainingMs = totalTimeoutMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) throw new WeatherServiceError('天气服务总耗时超限', 'timeout');
+    try {
+      return await fetchJson(url, fetcher, Math.min(attemptTimeoutMs, remainingMs));
+    } catch (error) {
+      lastError = asWeatherError(error);
+      if (attempt >= MAX_REQUEST_ATTEMPTS - 1 || !isRetryableWeatherError(lastError)) throw lastError;
+      const delayMs = Math.min(RETRY_DELAY_MS, Math.max(0, totalTimeoutMs - (Date.now() - startedAt)));
+      if (delayMs > 0) await waitForRetry(delayMs);
+    }
+  }
+  throw lastError || new WeatherServiceError('天气服务暂时不可用', 'network');
 }
 
 function cleanPart(value: unknown): string | null {
@@ -97,7 +181,7 @@ function cleanPart(value: unknown): string | null {
 
 export async function searchLocations(
   query: string,
-  options: { fetcher?: FetchLike; timeoutMs?: number; now?: number } = {},
+  options: { fetcher?: FetchLike; timeoutMs?: number; totalTimeoutMs?: number; now?: number } = {},
 ): Promise<WeatherLocation[]> {
   const normalized = query.trim();
   if (normalized.length < 2 || normalized.length > 80) return [];
@@ -111,47 +195,60 @@ export async function searchLocations(
   url.searchParams.set('count', '8');
   url.searchParams.set('language', 'zh');
   url.searchParams.set('format', 'json');
-  const payload = await fetchJson(url, options.fetcher || fetch, options.timeoutMs ?? 6_000);
-  const result: WeatherLocation[] = (Array.isArray(payload?.results) ? payload.results : [])
-    .map((item: any) => {
-      const name = cleanPart(item.name);
-      const latitude = Number(item.latitude);
-      const longitude = Number(item.longitude);
-      const timezone = cleanPart(item.timezone);
-      if (!name || !Number.isFinite(latitude) || !Number.isFinite(longitude) || !timezone) return null;
-      const admin1 = cleanPart(item.admin1);
-      const admin2 = cleanPart(item.admin2);
-      const country = cleanPart(item.country);
-      const parts = [name, admin2, admin1, country].filter((part, index, all) => part && all.indexOf(part) === index);
-      return {
-        id: Number(item.id),
-        name,
-        admin1,
-        admin2,
-        country,
-        countryCode: cleanPart(item.country_code),
-        latitude,
-        longitude,
-        timezone,
-        displayName: parts.join(' · '),
-      } satisfies WeatherLocation;
-    })
-    .filter((item: WeatherLocation | null): item is WeatherLocation => item !== null);
-  setBoundedCache(locationCache, cacheKey, { expiresAt: now + LOCATION_CACHE_MS, value: result }, MAX_LOCATION_CACHE_ENTRIES);
-  return result;
+  try {
+    const payload = await fetchJsonWithRetry(url, options.fetcher || fetch, options);
+    if (!Array.isArray(payload?.results)) throw new WeatherServiceError('地点搜索响应结构异常', 'response');
+    const result: WeatherLocation[] = payload.results
+      .map((item: any) => {
+        const name = cleanPart(item.name);
+        const latitude = Number(item.latitude);
+        const longitude = Number(item.longitude);
+        const timezone = cleanPart(item.timezone);
+        if (!name || !Number.isFinite(latitude) || !Number.isFinite(longitude) || !timezone) return null;
+        const admin1 = cleanPart(item.admin1);
+        const admin2 = cleanPart(item.admin2);
+        const country = cleanPart(item.country);
+        const parts = [name, admin2, admin1, country].filter((part, index, all) => part && all.indexOf(part) === index);
+        return {
+          id: Number(item.id),
+          name,
+          admin1,
+          admin2,
+          country,
+          countryCode: cleanPart(item.country_code),
+          latitude,
+          longitude,
+          timezone,
+          displayName: parts.join(' · '),
+        } satisfies WeatherLocation;
+      })
+      .filter((item: WeatherLocation | null): item is WeatherLocation => item !== null);
+    setBoundedCache(locationCache, cacheKey, { expiresAt: now + LOCATION_CACHE_MS, storedAt: now, value: result }, MAX_LOCATION_CACHE_ENTRIES);
+    return result;
+  } catch (error) {
+    if (cached && now >= cached.expiresAt && now - cached.expiresAt <= STALE_CACHE_MS) return cached.value;
+    throw error;
+  }
 }
 
 export async function getDailyWeather(
   location: Pick<WeatherLocation, 'latitude' | 'longitude' | 'timezone'>,
   date: string,
-  options: { fetcher?: FetchLike; timeoutMs?: number; now?: number } = {},
+  options: { fetcher?: FetchLike; timeoutMs?: number; totalTimeoutMs?: number; now?: number } = {},
 ): Promise<DailyWeather> {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('天气日期格式不正确');
   if (!Number.isFinite(location.latitude) || !Number.isFinite(location.longitude)) throw new Error('天气地点坐标不正确');
   const cacheKey = `${location.latitude.toFixed(4)}:${location.longitude.toFixed(4)}:${location.timezone}:${date}`;
   const now = options.now ?? Date.now();
   const cached = weatherCache.get(cacheKey);
-  if (cached && cached.expiresAt > now) return cached.value;
+  if (cached && cached.expiresAt > now) {
+    return {
+      ...cached.value,
+      source: 'live',
+      isStale: false,
+      cacheAgeMs: Math.max(0, now - cached.storedAt),
+    };
+  }
 
   const url = new URL('https://api.open-meteo.com/v1/forecast');
   url.searchParams.set('latitude', String(location.latitude));
@@ -160,22 +257,40 @@ export async function getDailyWeather(
   url.searchParams.set('start_date', date);
   url.searchParams.set('end_date', date);
   url.searchParams.set('daily', 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,wind_speed_10m_max');
-  const payload = await fetchJson(url, options.fetcher || fetch, options.timeoutMs ?? 6_000);
-  const weatherCode = Number(payload?.daily?.weather_code?.[0]);
-  if (!Number.isFinite(weatherCode) || payload?.daily?.time?.[0] !== date) throw new Error('天气服务未返回指定日期的数据');
-  const numberOrNull = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : null;
-  const result: DailyWeather = {
-    date,
-    timezone: cleanPart(payload.timezone) || location.timezone,
-    weatherCode,
-    description: weatherDescription(weatherCode),
-    temperatureMax: numberOrNull(payload.daily.temperature_2m_max?.[0]),
-    temperatureMin: numberOrNull(payload.daily.temperature_2m_min?.[0]),
-    precipitationProbabilityMax: numberOrNull(payload.daily.precipitation_probability_max?.[0]),
-    windSpeedMax: numberOrNull(payload.daily.wind_speed_10m_max?.[0]),
-  };
-  setBoundedCache(weatherCache, cacheKey, { expiresAt: now + WEATHER_CACHE_MS, value: result }, MAX_WEATHER_CACHE_ENTRIES);
-  return result;
+  try {
+    const payload = await fetchJsonWithRetry(url, options.fetcher || fetch, options);
+    const weatherCode = Number(payload?.daily?.weather_code?.[0]);
+    if (!Number.isFinite(weatherCode) || payload?.daily?.time?.[0] !== date) {
+      throw new WeatherServiceError('天气服务未返回指定日期的数据', 'response');
+    }
+    const numberOrNull = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : null;
+    const result: DailyWeather = {
+      date,
+      timezone: cleanPart(payload.timezone) || location.timezone,
+      weatherCode,
+      description: weatherDescription(weatherCode),
+      temperatureMax: numberOrNull(payload.daily.temperature_2m_max?.[0]),
+      temperatureMin: numberOrNull(payload.daily.temperature_2m_min?.[0]),
+      precipitationProbabilityMax: numberOrNull(payload.daily.precipitation_probability_max?.[0]),
+      windSpeedMax: numberOrNull(payload.daily.wind_speed_10m_max?.[0]),
+      source: 'live',
+      isStale: false,
+      retrievedAt: new Date(now).toISOString(),
+      cacheAgeMs: 0,
+    };
+    setBoundedCache(weatherCache, cacheKey, { expiresAt: now + WEATHER_CACHE_MS, storedAt: now, value: result }, MAX_WEATHER_CACHE_ENTRIES);
+    return result;
+  } catch (error) {
+    if (cached && now >= cached.expiresAt && now - cached.expiresAt <= STALE_CACHE_MS) {
+      return {
+        ...cached.value,
+        source: 'cache',
+        isStale: true,
+        cacheAgeMs: Math.max(0, now - cached.storedAt),
+      };
+    }
+    throw error;
+  }
 }
 
 export function clearWeatherCaches(): void {

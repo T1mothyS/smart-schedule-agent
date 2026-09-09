@@ -84,7 +84,7 @@ const initialForm: FormState = {
   intervalUnit: 'day',
   advancePolicy: 'calendar',
   reminderOffsets: '7,1',
-  reminderTime: '09:00',
+  reminderTime: '12:00',
   priority: 'medium',
 };
 
@@ -128,7 +128,7 @@ function configToForm(task: ReminderTask): FormState {
       paymentDay: String(config.paymentDay),
       paymentMonthOffset: String(config.paymentMonthOffset),
       reminderOffsets: (config.reminderOffsets || [15, 7, 1, 0]).join(','),
-      reminderTime: config.reminderTime || '09:00',
+      reminderTime: config.reminderTime || '12:00',
       priority: config.priority || 'high',
     };
   }
@@ -145,7 +145,7 @@ function configToForm(task: ReminderTask): FormState {
       lastOperationDate: config.lastOperationDate,
       actionGuide: config.actionGuide,
       reminderOffsets: (config.reminderOffsets || [30, 15, 7, 1, 0]).join(','),
-      reminderTime: config.reminderTime || '09:00',
+      reminderTime: config.reminderTime || '12:00',
       priority: config.priority || 'medium',
     };
   }

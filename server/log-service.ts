@@ -6,7 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export type LogLevel = 'info' | 'warn' | 'error' | 'debug';
-export type LogCategory = 'schedule' | 'ai' | 'db' | 'system' | 'reminder' | 'mail' | 'daily-report' | 'library' | 'auth' | 'admin';
+export type LogCategory = 'schedule' | 'ai' | 'db' | 'system' | 'reminder' | 'weather' | 'mail' | 'daily-report' | 'library' | 'auth' | 'admin';
 
 export interface LogEntry {
   timestamp: string;

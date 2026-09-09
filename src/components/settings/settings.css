@@ -77,6 +77,25 @@
 .settings-note { margin-top: 12px; padding: 12px; background: var(--td-bg-color-component); border-radius: 8px; }
 .settings-help a { color: var(--td-brand-color); text-decoration: underline; }
 .settings-field-label { font-size: 12px; color: var(--td-text-color-secondary); }
+.settings-guide-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; margin-bottom: 14px; padding: 12px; border: 1px solid var(--td-component-stroke); border-radius: 8px; background: var(--td-bg-color-component); font-size: 12px; overflow-wrap: anywhere; }
+.settings-guide-meta span { color: var(--td-text-color-secondary); font-family: ui-monospace, Consolas, monospace; }
+.settings-guide-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.settings-guide-card { min-width: 0; padding: 14px; border: 1px solid var(--td-component-stroke); border-radius: 10px; background: var(--td-bg-color-container); overflow-wrap: anywhere; }
+.settings-guide-card h3 { margin: 0 0 8px; font-size: 14px; line-height: 1.5; }
+.settings-guide-card p, .settings-guide-card li, .settings-guide-rules p, .settings-guide-example p { margin: 6px 0 0; color: var(--td-text-color-secondary); font-size: 12px; line-height: 1.7; }
+.settings-guide-block { margin-top: 10px; padding: 9px 10px; border-radius: 7px; background: var(--td-bg-color-component); }
+.settings-guide-block > strong { font-size: 12px; }
+.settings-guide-block ol, .settings-guide-block ul { margin: 5px 0 0; padding-left: 19px; }
+.settings-guide-boundary { margin-top: 10px !important; padding-top: 9px; border-top: 1px solid var(--td-component-stroke); }
+.settings-guide-rules, .settings-guide-examples { display: flex; flex-direction: column; gap: 10px; width: 100%; min-width: 0; }
+.settings-guide-rules-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; color: var(--td-text-color-secondary); font-size: 12px; }
+.settings-guide-rules > div { min-width: 0; padding: 10px; border-left: 3px solid var(--td-brand-color); border-radius: 6px; background: var(--td-bg-color-component); overflow-wrap: anywhere; }
+.settings-guide-rules > .settings-guide-rules-head { padding: 0; border-left: 0; background: transparent; }
+.settings-guide-rules p { margin-top: 4px; }
+.settings-guide-example { min-width: 0; padding: 10px; border: 1px solid var(--td-component-stroke); border-radius: 8px; overflow: hidden; }
+.settings-guide-example-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.settings-guide-example pre { margin: 9px 0 0; padding: 10px; border-radius: 6px; background: var(--td-bg-color-page); white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: auto; }
+.settings-guide-example code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.65; }
 .settings-account { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .settings-account strong { min-width: 0; max-width: 100%; font-size: 14px; overflow-wrap: anywhere; }
 .settings-badge { flex: 0 0 auto; padding: 2px 8px; border-radius: 5px; background: var(--td-brand-color-light); color: var(--td-brand-color); font-size: 12px; }
@@ -113,6 +132,7 @@
   .settings-nav { padding-inline: 8px; }
   .settings-scroll { padding: 20px; }
   .setting-row { grid-template-columns: minmax(120px, 140px) minmax(0, 1fr); gap: 12px; }
+  .settings-guide-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 640px) {
   .settings-dialog .t-dialog__position { padding: 0; }

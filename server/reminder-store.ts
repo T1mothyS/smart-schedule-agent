@@ -50,6 +50,10 @@ export interface GenericReminderConfig {
 
 export type ReminderConfig = CreditCardConfig | SimConfig | GenericReminderConfig;
 
+export const DEFAULT_CYCLE_REMINDER_TIME = '12:00';
+export const DEFAULT_CYCLE_REMINDER_TIMEZONE = 'Asia/Shanghai';
+export const CYCLE_REMINDER_DEFAULTS_MIGRATION = 'cycle-reminder-defaults-asia-shanghai-12-v1';
+
 export interface ReminderTask {
   id: string;
   userId: string;
@@ -98,6 +102,7 @@ export interface ReminderTaskSummary extends ReminderTask {
 export interface DueReminder extends ReminderDelivery {
   task: ReminderTask;
   cycle: ReminderCycle;
+  delayed: boolean;
 }
 
 let db: SqlJsDatabase;
@@ -171,6 +176,31 @@ export function todayInTimezone(timezone = process.env.APP_TIMEZONE || 'Asia/Sha
   return dateFromParts(Number(values.year), Number(values.month), Number(values.day));
 }
 
+export function timeInTimezone(timezone = DEFAULT_CYCLE_REMINDER_TIMEZONE, date = new Date()): { hour: number; minute: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return { hour: Number(values.hour), minute: Number(values.minute) };
+}
+
+function reminderTimeMinutes(value: unknown): number {
+  const text = String(value || '');
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(text)) {
+    return 12 * 60;
+  }
+  const [hour, minute] = text.split(':').map(Number);
+  return hour * 60 + minute;
+}
+
+function isReminderTimeDue(task: ReminderTask, date: Date): boolean {
+  const current = timeInTimezone(task.timezone, date);
+  return current.hour * 60 + current.minute >= reminderTimeMinutes((task.config as { reminderTime?: string }).reminderTime);
+}
+
 function queryAll<T>(sql: string, params: unknown[] = []): T[] {
   const statement = db.prepare(sql);
   statement.bind(params.map(value => value === undefined ? null : value));
@@ -193,6 +223,62 @@ function run(sql: string, params: unknown[] = []): number {
   const changes = db.getRowsModified();
   persist();
   return changes;
+}
+
+export function applyCycleReminderDefaultsMigration(): boolean {
+  const marker = queryOne<{ migration_id: string }>(
+    'SELECT migration_id FROM reminder_migrations WHERE migration_id = ?',
+    [CYCLE_REMINDER_DEFAULTS_MIGRATION],
+  );
+  if (marker) return false;
+
+  const taskRows = queryAll<{ id: string; timezone: string; config: string }>(
+    'SELECT id, timezone, config FROM reminder_tasks',
+  );
+  const updates: Array<{ id: string; timezone: string; config: string }> = [];
+  for (const row of taskRows) {
+    let parsedConfig: unknown;
+    try {
+      parsedConfig = JSON.parse(row.config);
+    } catch (error) {
+      throw new Error(`周期提醒 ${row.id} 配置无法迁移：${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (!parsedConfig || typeof parsedConfig !== 'object' || Array.isArray(parsedConfig)) {
+      throw new Error(`周期提醒 ${row.id} 配置无法迁移：配置不是对象`);
+    }
+    const config = { ...(parsedConfig as Record<string, unknown>), reminderTime: DEFAULT_CYCLE_REMINDER_TIME };
+    if (row.timezone !== DEFAULT_CYCLE_REMINDER_TIMEZONE || JSON.stringify(config) !== row.config) {
+      updates.push({ id: row.id, timezone: DEFAULT_CYCLE_REMINDER_TIMEZONE, config: JSON.stringify(config) });
+    }
+  }
+
+  if (fs.existsSync(DB_PATH)) {
+    const backupDir = path.join(DATA_DIR, 'migration-backups');
+    fs.mkdirSync(backupDir, { recursive: true });
+    const backupName = `reminder-cycle-defaults-${new Date().toISOString().replace(/[:.]/g, '-')}.db`;
+    fs.copyFileSync(DB_PATH, path.join(backupDir, backupName));
+  }
+
+  const updatedAt = nowIso();
+  db.run('BEGIN TRANSACTION');
+  try {
+    for (const update of updates) {
+      db.run(
+        'UPDATE reminder_tasks SET timezone = ?, config = ?, updated_at = ? WHERE id = ?',
+        [update.timezone, update.config, updatedAt, update.id],
+      );
+    }
+    db.run(
+      'INSERT INTO reminder_migrations (migration_id, applied_at) VALUES (?, ?)',
+      [CYCLE_REMINDER_DEFAULTS_MIGRATION, updatedAt],
+    );
+    db.run('COMMIT');
+  } catch (error) {
+    try { db.run('ROLLBACK'); } catch {}
+    throw error;
+  }
+  persist();
+  return true;
 }
 
 function rowToTask(row: any): ReminderTask {
@@ -309,6 +395,10 @@ export async function initReminderDb(): Promise<void> {
       updated_at TEXT NOT NULL,
       UNIQUE(cycle_id, reminder_type, scheduled_date)
     );
+    CREATE TABLE IF NOT EXISTS reminder_migrations (
+      migration_id TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS reminder_audit_logs (
       id TEXT PRIMARY KEY,
       task_id TEXT NOT NULL,
@@ -321,6 +411,8 @@ export async function initReminderDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_reminder_cycles_task ON reminder_cycles(task_id, created_at);
     CREATE INDEX IF NOT EXISTS idx_reminder_deliveries_due ON reminder_deliveries(status, scheduled_date);
   `);
+
+  applyCycleReminderDefaultsMigration();
 
   // 服务中断时，上一进程可能停留在 sending，启动后允许它重试。
   db.run(`UPDATE reminder_deliveries SET status = 'failed', next_retry_at = ? WHERE status = 'sending'`, [nowIso()]);
@@ -386,12 +478,18 @@ function nextGenericCycle(config: GenericReminderConfig, cycle: ReminderCycle, c
   return { key: due, start: base, due };
 }
 
-function createCycle(task: ReminderTask, cycleKey: string, periodStart: string, dueDate: string): ReminderCycle {
+function createCycle(
+  task: ReminderTask,
+  cycleKey: string,
+  periodStart: string,
+  dueDate: string,
+  today = todayInTimezone(task.timezone),
+): ReminderCycle {
   const existing = queryOne<any>('SELECT * FROM reminder_cycles WHERE task_id = ? AND cycle_key = ?', [task.id, cycleKey]);
   if (existing) return rowToCycle(existing);
 
   const now = nowIso();
-  const status: ReminderCycleStatus = dueDate < todayInTimezone(task.timezone) ? 'expired' : 'pending';
+  const status: ReminderCycleStatus = dueDate < today ? 'expired' : 'pending';
   const cycle: ReminderCycle = {
     id: uuidv4(),
     taskId: task.id,
@@ -480,20 +578,20 @@ function ensureCurrentCycle(task: ReminderTask, today = todayInTimezone(task.tim
   if (task.type === 'sim') {
     const sim = task.config as SimConfig;
     const dueDate = addDays(sim.lastOperationDate, sim.intervalDays);
-    return createCycle(task, `${sim.lastOperationDate}:${dueDate}`, sim.lastOperationDate, dueDate);
+    return createCycle(task, `${sim.lastOperationDate}:${dueDate}`, sim.lastOperationDate, dueDate, today);
   }
 
 
   if (task.type === 'generic') {
     const generic = task.config as GenericReminderConfig;
     const next = genericInitialCycle(generic);
-    return createCycle(task, next.key, next.start, next.due);
+    return createCycle(task, next.key, next.start, next.due, today);
   }
 
   const card = task.config as CreditCardConfig;
   const [year, month] = today.split('-').map(Number);
   const dates = creditCardCycleDates(year, month - 1, card);
-  return createCycle(task, `${year}-${String(month).padStart(2, '0')}`, dates.periodStart, dates.dueDate);
+  return createCycle(task, `${year}-${String(month).padStart(2, '0')}`, dates.periodStart, dates.dueDate, today);
 }
 
 export function listReminderTasks(userId: string): ReminderTaskSummary[] {
@@ -541,14 +639,21 @@ export function createReminderTask(input: {
   config: ReminderConfig;
 }): ReminderTaskSummary {
   const now = nowIso();
+  const inputConfig = input.config as ReminderConfig & { reminderTime?: string };
+  const config = {
+    ...inputConfig,
+    reminderTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(inputConfig.reminderTime || '')
+      ? inputConfig.reminderTime
+      : DEFAULT_CYCLE_REMINDER_TIME,
+  } as ReminderConfig;
   const task: ReminderTask = {
     id: uuidv4(),
     userId: input.userId,
     type: input.type,
     name: input.name.trim(),
     enabled: true,
-    timezone: input.timezone || 'Asia/Shanghai',
-    config: input.config,
+    timezone: input.timezone || DEFAULT_CYCLE_REMINDER_TIMEZONE,
+    config,
     createdAt: now,
     updatedAt: now,
   };
@@ -679,26 +784,30 @@ export function getReminderHistory(taskId: string, userId: string): ReminderCycl
   return queryAll<any>('SELECT * FROM reminder_cycles WHERE task_id = ? ORDER BY period_start DESC', [taskId]).map(rowToCycle);
 }
 
-export function getDueReminders(): DueReminder[] {
+export function getDueReminders(now = new Date()): DueReminder[] {
   const tasks = queryAll<any>(`SELECT * FROM reminder_tasks WHERE enabled = 1`).map(rowToTask);
   const result: DueReminder[] = [];
-  const now = new Date();
   for (const task of tasks) {
-    const today = todayInTimezone(task.timezone);
+    const today = todayInTimezone(task.timezone, now);
     const cycle = ensureCurrentCycle(task, today);
     if (cycle.status === 'pending' && cycle.dueDate < today) {
       run('UPDATE reminder_cycles SET status = \'expired\', updated_at = ? WHERE id = ?', [nowIso(), cycle.id]);
-      continue;
+      cycle.status = 'expired';
     }
-    if (cycle.status !== 'pending') continue;
+    if (cycle.status !== 'pending' && cycle.status !== 'expired') continue;
     const rows = queryAll<any>(
       `SELECT * FROM reminder_deliveries
-       WHERE cycle_id = ? AND scheduled_date BETWEEN ? AND ?
+       WHERE cycle_id = ? AND scheduled_date <= ?
        AND status IN ('pending', 'failed') AND (next_retry_at IS NULL OR next_retry_at <= ?)
        AND attempts < 3 ORDER BY scheduled_date ASC`,
-      [cycle.id, addDays(today, -2), today, now.toISOString()],
+      [cycle.id, today, now.toISOString()],
     );
-    for (const row of rows) result.push({ ...rowToDelivery(row), task, cycle });
+    for (const row of rows) {
+      const delivery = rowToDelivery(row);
+      const scheduledToday = delivery.scheduledDate === today;
+      if (scheduledToday && !isReminderTimeDue(task, now)) continue;
+      result.push({ ...delivery, task, cycle, delayed: delivery.scheduledDate < today });
+    }
   }
   return result;
 }
