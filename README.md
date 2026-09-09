@@ -532,7 +532,7 @@ npm run build
 
 “设置”中的“日报邮箱（QQ）”用于按个人账号保存 QQ 邮箱账号和客户端授权码。授权码在服务端以独立密钥加密保存，测试读取和日报接口只返回未读邮件摘要，不返回授权码，也不影响 AI Calendar 固定的 163 发件邮箱。
 
-云端候选链路通过 OAuth Authorization Code + PKCE 和 `/mcp` 接口供 ChatGPT Work 使用。Work 连接只接触当前账号的结构化输入和服务端生成的日报，不读取本地 `日报-v2` worktree；服务端负责媒体托管、日报幂等和邮件入队。Cloud Context 通过登录态 `/api/daily-report/cloud-context` 维护，MCP 对 Context 和活动证据只读。该链路目前只完成接口与本地隔离验收，尚未创建 Work 定时任务，也没有停用现有本地 `v2-chatgpt` 任务；正式切换须按 [`docs/CHATGPT-WORK-CLOUD.md`](docs/CHATGPT-WORK-CLOUD.md) 的 shadow 和收件箱证据门槛执行。
+云端候选链路通过 OAuth Authorization Code + PKCE 和 `/mcp` 接口供 ChatGPT Work 使用。Work 连接只接触当前账号的结构化输入和服务端生成的日报，不读取本地 `日报-v2` worktree；服务端负责媒体托管、日报幂等和邮件入队。Cloud Context 通过登录态 `/api/daily-report/cloud-context` 维护，MCP 对 Context 和活动证据只读。当前生产候选发布为 `workspace-20260909-cloud-mcp-11`，已完成 Work 连接、脱敏 Context `v1` 导入和一次返回 `VALIDATED_NOT_PUBLISHED` 的 shadow dry-run；Work 中已创建并启用每日 `16:40`（`Asia/Shanghai`）的 `日报 V2 Cloud Shadow`。现有本地 `v2-chatgpt` 任务未停用，正式切换须按 [`docs/CHATGPT-WORK-CLOUD.md`](docs/CHATGPT-WORK-CLOUD.md) 的连续 shadow、故障对照、通知分层和收件箱证据门槛执行。
 
 ## 10. API 模块概览
 

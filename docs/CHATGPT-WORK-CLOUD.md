@@ -1,6 +1,6 @@
 # ChatGPT Work Cloud 日报候选链路
 
-本文档描述把日报 V2 迁移到 ChatGPT Work Cloud 的并行实现。当前代码已提供 OAuth/MCP 和 Cloud Context 边界，但不会自动创建 Work 定时任务，也不会停用现有本地日报任务。
+本文档描述把日报 V2 迁移到 ChatGPT Work Cloud 的并行实现。当前代码已提供 OAuth/MCP 和 Cloud Context 边界；生产候选服务已经部署并完成一次 Work shadow 验收，Work 中已启用每日 16:40（Asia/Shanghai）的 shadow 定时任务。正式发布和本地链路切换仍未执行。
 
 这里的“云端”指 ChatGPT Work 的后台任务运行环境；它不能直接读取本机 `日报-v2` worktree 或本地令牌。当前分支中的 Skill、结构化校验器和渲染器是待打包的源材料，尚未安装为 Work 可用的插件/Skill 资源，因此现在还不能仅凭本地文件路径创建可运行的 Work 定时任务。
 
@@ -82,10 +82,19 @@ Work 必须先生成 `daily-digest.v1` JSON，再调用已经随 Work Skill 提�
 
 dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。任何媒体失败都会阻断云端发布，不会降级成不完整日报。正式返回的 `PUBLISHED` 只代表日报已写入服务端；`QUEUED` 只代表邮件已入队，不代表 SMTP accepted 或收件箱到达。
 
+## 当前运行证据（2026-09-09）
+
+- 生产候选服务：`gotimothy.online` 当前发布标识为 `workspace-20260909-cloud-mcp-11`，基于 Calendar 候选分支的 `fb77c8a`；公网 health、OAuth metadata、保护资源和未授权 `/mcp` 已完成状态检查。
+- Work 连接：已完成 OAuth 授权并确认 Daily Report Cloud 工具可调用；脱敏 Cloud Context 已通过设置页导入，云端显示版本 `v1`。本地临时导出文件已删除，原始本地 Context 仍是编辑源。
+- Shadow：2026-09-09 的 Calendar、Mail、Context、History 和公开新闻输入均返回可用；首轮缺少固定标题被服务端拒绝，修正为逐字包含 `# Daily Digest`、`<!-- daily-digest.v1 -->`、`## Today at a Glance` 后，`daily_report.publish(dry_run=true)` 返回 `VALIDATED_NOT_PUBLISHED`，媒体数量为 `0`，未写入日报或邮件队列。
+- Work 调度：已创建并启用 `日报 V2 Cloud Shadow`，任务编辑器显示每天 `16:40`，提示词固定使用 `Asia/Shanghai`，并明确禁止 `dry_run=false`、正式发布、发邮件和修改本地链路。
+- 并行边界：本地 `v2-chatgpt` 任务和本地采集/发布链路未修改，生产服务保留部署前备份和 rollback 目录。
+
 ## 目前未做的事情
 
-- 没有在 Work 账号中创建或启用定时任务；这需要登录 Work 官方界面、确认 workspace/admin 连接策略和实际授权。
-- 没有部署新分支到生产域名；因此 `.well-known`、OAuth 和 `/mcp` 尚未有公网实测证据。
+- 尚未完成至少 3 个日期的连续 shadow，也未覆盖 Calendar 无数据/不可用、邮箱部分失败或不可用和公开新闻源异常的对照测试。
+- 没有执行云端正式 `PUBLISHED`，也没有验证通知队列、SMTP/provider 或收件箱最终到达；当前任务仅用于 shadow dry-run。
+- 尚未证明 Work 侧已安装可执行的 `cloud_digest.py` 等打包资源；当前任务提示词已固化结构和安全边界，因此仍按候选 shadow 处理，不把一次 `VALIDATED_NOT_PUBLISHED` 当作迁移完成。
 - 没有暂停、改写或删除现有 `v2-chatgpt` 本地任务。
 - 没有把本地公开资料采集器强行改成云端 prompt；Work 运行时需要按 Skill 使用云端网络重新核实新闻、市场和图片。
 
