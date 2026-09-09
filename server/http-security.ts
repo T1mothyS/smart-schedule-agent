@@ -86,7 +86,9 @@ export function securityHeaders(isProduction: boolean): RequestHandler {
         "default-src 'self'",
         "base-uri 'self'",
         "frame-ancestors 'none'",
-        "form-action 'self'",
+        // OAuth consent is posted locally and then redirected to ChatGPT's
+        // connector callback. Keep the allowlist narrow to the callback origin.
+        "form-action 'self' https://chatgpt.com",
         "object-src 'none'",
         "script-src 'self'",
         "style-src 'self' 'unsafe-inline'",

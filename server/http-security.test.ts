@@ -40,5 +40,6 @@ test('生产日报 CSP 只允许本站和内联图片来源', () => {
   assert.equal(nextCalled, true);
   const policy = headers.get('Content-Security-Policy') || '';
   assert.match(policy, /img-src 'self' data: blob:/);
+  assert.match(policy, /form-action 'self' https:\/\/chatgpt\.com/);
   assert.doesNotMatch(policy, /img-src[^;]*https:/);
 });
