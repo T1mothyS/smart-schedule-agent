@@ -35,73 +35,8 @@ interface McpTool {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  securitySchemes: Array<{ type: 'oauth2'; scopes: string[] }>;
 }
-
-const toolDefinitions: McpTool[] = [
-  {
-    name: 'daily_report.read_inputs',
-    description: '读取指定日期的日报输入：日程、未读邮件摘要、云端 Context、活动证据和最近日报去重摘要。邮箱授权码永远不会返回；新闻与市场公开资料由 Work 任务通过网络获取。',
-    inputSchema: {
-      type: 'object',
-      properties: { date: { type: 'string', description: 'YYYY-MM-DD；默认使用服务端 Asia/Shanghai 日期' } },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'daily_report.read_calendar',
-    description: '读取当前账号指定日期的日程，不包含未安排占位项。',
-    inputSchema: {
-      type: 'object',
-      properties: { date: { type: 'string', description: 'YYYY-MM-DD' } },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'daily_report.read_mail',
-    description: '读取当前账号 QQ 邮箱的未读摘要，只返回主题、发件人、时间和正文摘要，不返回邮箱授权码。',
-    inputSchema: {
-      type: 'object',
-      properties: { limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'daily_report.read_context',
-    description: '读取当前账号已经确认的最小化日报 Context 与活动证据。',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        fromDate: { type: 'string', description: 'YYYY-MM-DD' },
-        toDate: { type: 'string', description: 'YYYY-MM-DD' },
-        limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'daily_report.read_history',
-    description: '读取最近日报的日期、摘要、内容哈希和更新时间，用于避免重复选题。',
-    inputSchema: {
-      type: 'object',
-      properties: { limit: { type: 'integer', minimum: 1, maximum: 30, default: 7 } },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'daily_report.publish',
-    description: '在服务端校验并发布日报；服务端负责媒体下载、哈希化、托管和按账号设置排队邮件。先使用 dry_run=true 验证，确认结构和媒体后再正式发布。',
-    inputSchema: {
-      type: 'object',
-      required: ['date', 'markdown'],
-      properties: {
-        date: { type: 'string', description: 'YYYY-MM-DD' },
-        markdown: { type: 'string', description: '包含 daily-digest.v1 标记的清洗后 Markdown' },
-        dry_run: { type: 'boolean', default: false },
-      },
-      additionalProperties: false,
-    },
-  },
-];
 
 const TOOL_SCOPES: Record<string, DailyReportCloudScope[]> = {
   'daily_report.read_inputs': [
@@ -116,6 +51,89 @@ const TOOL_SCOPES: Record<string, DailyReportCloudScope[]> = {
   'daily_report.read_history': ['daily_report:read_history'],
   'daily_report.publish': ['daily_report:publish'],
 };
+
+function oauthSecurity(toolName: string): Array<{ type: 'oauth2'; scopes: string[] }> {
+  return [{ type: 'oauth2', scopes: [...(TOOL_SCOPES[toolName] || [])] }];
+}
+
+const toolDefinitions: McpTool[] = [
+  {
+    name: 'daily_report.read_inputs',
+    securitySchemes: oauthSecurity('daily_report.read_inputs'),
+    description: '读取指定日期的日报输入：日程、未读邮件摘要、云端 Context、活动证据和最近日报去重摘要。邮箱授权码永远不会返回；新闻与市场公开资料由 Work 任务通过网络获取。',
+    inputSchema: {
+      type: 'object',
+      properties: { date: { type: 'string', description: 'YYYY-MM-DD；默认使用服务端 Asia/Shanghai 日期' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'daily_report.read_calendar',
+    securitySchemes: oauthSecurity('daily_report.read_calendar'),
+    description: '读取当前账号指定日期的日程，不包含未安排占位项。',
+    inputSchema: {
+      type: 'object',
+      properties: { date: { type: 'string', description: 'YYYY-MM-DD' } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'daily_report.read_mail',
+    securitySchemes: oauthSecurity('daily_report.read_mail'),
+    description: '读取当前账号 QQ 邮箱的未读摘要，只返回主题、发件人、时间和正文摘要，不返回邮箱授权码。',
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'daily_report.read_context',
+    securitySchemes: oauthSecurity('daily_report.read_context'),
+    description: '读取当前账号已经确认的最小化日报 Context 与活动证据。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fromDate: { type: 'string', description: 'YYYY-MM-DD' },
+        toDate: { type: 'string', description: 'YYYY-MM-DD' },
+        limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'daily_report.read_history',
+    securitySchemes: oauthSecurity('daily_report.read_history'),
+    description: '读取最近日报的日期、摘要、内容哈希和更新时间，用于避免重复选题。',
+    inputSchema: {
+      type: 'object',
+      properties: { limit: { type: 'integer', minimum: 1, maximum: 30, default: 7 } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'daily_report.publish',
+    securitySchemes: oauthSecurity('daily_report.publish'),
+    description: '在服务端校验并发布日报；服务端负责媒体下载、哈希化、托管和按账号设置排队邮件。先使用 dry_run=true 验证，确认结构和媒体后再正式发布。',
+    inputSchema: {
+      type: 'object',
+      required: ['date', 'markdown'],
+      properties: {
+        date: { type: 'string', description: 'YYYY-MM-DD' },
+        markdown: { type: 'string', description: '包含 daily-digest.v1 标记的清洗后 Markdown' },
+        dry_run: { type: 'boolean', default: false },
+      },
+      additionalProperties: false,
+    },
+  },
+];
+
+class DailyReportCloudMcpAuthError extends Error {
+  constructor(readonly scopes: readonly DailyReportCloudScope[]) {
+    super('当前连接没有该工具所需的 scope');
+    this.name = 'DailyReportCloudMcpAuthError';
+  }
+}
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -198,7 +216,7 @@ function toolScopeAllowed(auth: OAuthBearerContext, toolName: string): boolean {
 }
 
 async function callTool(auth: OAuthBearerContext, name: string, rawArguments: unknown): Promise<Record<string, unknown>> {
-  if (!toolScopeAllowed(auth, name)) throw new Error('当前连接没有该工具所需的 scope');
+  if (!toolScopeAllowed(auth, name)) throw new DailyReportCloudMcpAuthError(TOOL_SCOPES[name] || []);
   const args = objectValue(rawArguments);
   if (name === 'daily_report.read_calendar') {
     const timezone = db.getReminder(auth.userId)?.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai';
@@ -283,9 +301,24 @@ function authorisedContext(req: express.Request, res: express.Response, scopes: 
   const token = extractBearerToken(req.header('authorization'));
   const auth = authenticateDailyReportCloudAccessToken(token, scopes);
   if (auth) return auth;
-  res.setHeader('WWW-Authenticate', `Bearer realm="daily-report", resource_metadata="${dailyReportCloudIssuer()}/.well-known/oauth-protected-resource/mcp"`);
+  res.setHeader('WWW-Authenticate', mcpWwwAuthenticate());
   res.status(401).json({ error: 'OAuth access token 无效、已过期或 scope 不足' });
   return null;
+}
+
+function mcpWwwAuthenticate(
+  scopes: readonly DailyReportCloudScope[] = [],
+  error?: string,
+  errorDescription?: string,
+): string {
+  const values = [
+    'Bearer realm="daily-report"',
+    `resource_metadata="${dailyReportCloudIssuer()}/.well-known/oauth-protected-resource/mcp"`,
+  ];
+  if (scopes.length) values.push(`scope="${scopes.join(' ')}"`);
+  if (error) values.push(`error="${error}"`);
+  if (errorDescription) values.push(`error_description="${errorDescription.replaceAll('"', '\\"')}"`);
+  return values.join(', ');
 }
 
 async function handleJsonRpc(request: JsonRpcRequest, auth: OAuthBearerContext): Promise<Record<string, unknown> | null> {
@@ -330,6 +363,15 @@ async function handleJsonRpc(request: JsonRpcRequest, auth: OAuthBearerContext):
         result: {
           content: [{ type: 'text', text: message }],
           isError: true,
+          ...(error instanceof DailyReportCloudMcpAuthError
+            ? {
+                _meta: {
+                  'mcp/www_authenticate': [
+                    mcpWwwAuthenticate(error.scopes, 'insufficient_scope', '需要重新授权以获得该工具权限'),
+                  ],
+                },
+              }
+            : {}),
         },
       };
     }
@@ -353,4 +395,4 @@ export function createDailyReportCloudMcpRouter(): express.Router {
   return router;
 }
 
-export { toolDefinitions, callTool };
+export { toolDefinitions, callTool, handleJsonRpc };

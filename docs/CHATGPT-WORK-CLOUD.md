@@ -35,6 +35,8 @@ OAuth 元数据和动态注册：
 
 MCP 地址为 `APP_URL` 的 origin 加 `/mcp`。生产环境必须使用 HTTPS；把地址交给 Work 前，先人工确认服务实际域名和两个 `.well-known` 响应，不要从历史记录猜测域名。
 
+兼容性要求：`tools/list` 为每个工具声明 `securitySchemes: [{ type: "oauth2", scopes: [...] }]`；如果工具调用因缺少 scope 被拒绝，MCP 结果必须带 `isError: true` 和 `_meta["mcp/www_authenticate"]`（数组中的 challenge 至少包含 `error` 与 `error_description`）。这两层都存在时，Work 才能在工具级别显示重新授权入口；本候选分支的 API 测试覆盖了这条契约。
+
 MCP 工具如下：
 
 | 工具 | 权限 | 说明 |

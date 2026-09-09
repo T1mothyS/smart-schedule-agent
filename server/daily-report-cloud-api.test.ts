@@ -177,7 +177,24 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
       body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }),
     });
     assert.equal(tools.status, 200);
-    assert.equal((await tools.json() as any).result.tools.length, 6);
+    const toolsBody = await tools.json() as any;
+    assert.equal(toolsBody.result.tools.length, 6);
+    const toolScopes: Record<string, string[]> = {
+      'daily_report.read_inputs': [
+        'daily_report:read_calendar',
+        'daily_report:read_mail',
+        'daily_report:read_context',
+        'daily_report:read_history',
+      ],
+      'daily_report.read_calendar': ['daily_report:read_calendar'],
+      'daily_report.read_mail': ['daily_report:read_mail'],
+      'daily_report.read_context': ['daily_report:read_context'],
+      'daily_report.read_history': ['daily_report:read_history'],
+      'daily_report.publish': ['daily_report:publish'],
+    };
+    for (const tool of toolsBody.result.tools as Array<any>) {
+      assert.deepEqual(tool.securitySchemes, [{ type: 'oauth2', scopes: toolScopes[tool.name] }]);
+    }
 
     const contextCall = await request('/mcp', {
       method: 'POST',
@@ -187,6 +204,36 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     assert.equal(contextCall.status, 200);
     const contextBody = await contextCall.json() as any;
     assert.equal(contextBody.result.structuredContent.context.context.profile.name, 'Cloud test');
+
+    const limitedAccessToken = crypto.randomBytes(32).toString('base64url');
+    db.createOAuthAccessToken({
+      token_hash: crypto.createHash('sha256').update(limitedAccessToken, 'utf8').digest('hex'),
+      client_id: client.client_id,
+      user_id: userId,
+      scope: 'daily_report:read_history',
+      resource: 'http://127.0.0.1:0/mcp',
+      expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      created_at: new Date().toISOString(),
+      last_used_at: null,
+      revoked_at: null,
+    });
+    const limitedPublish = await request('/mcp', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${limitedAccessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 35, method: 'tools/call', params: {
+        name: 'daily_report.publish',
+        arguments: { date: '2026-09-09', markdown: '# Daily Digest\n<!-- daily-digest.v1 -->\n## Today at a Glance\n- should not publish' },
+      } }),
+    });
+    assert.equal(limitedPublish.status, 200);
+    const limitedPublishBody = await limitedPublish.json() as any;
+    assert.equal(limitedPublishBody.result.isError, true);
+    assert.ok(Array.isArray(limitedPublishBody.result._meta['mcp/www_authenticate']));
+    assert.match(limitedPublishBody.result._meta['mcp/www_authenticate'][0], /scope="daily_report:publish"/);
+    assert.match(limitedPublishBody.result._meta['mcp/www_authenticate'][0], /error="insufficient_scope"/);
+    assert.match(limitedPublishBody.result._meta['mcp/www_authenticate'][0], /error_description="/);
+
+    const historyBeforeDryRun = cloudStore.listDailyReportCloudHistory(userId, 30).length;
 
     const dryRun = await request('/mcp', {
       method: 'POST',
@@ -198,6 +245,22 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     });
     assert.equal(dryRun.status, 200);
     assert.equal((await dryRun.json() as any).result.structuredContent.status, 'VALIDATED_NOT_PUBLISHED');
+    assert.equal(cloudStore.listDailyReportCloudHistory(userId, 30).length, historyBeforeDryRun);
+
+    const failedPublish = await request('/mcp', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 40, method: 'tools/call', params: {
+        name: 'daily_report.publish',
+        arguments: {
+          date: '2026-09-09',
+          markdown: '# Daily Digest\n<!-- daily-digest.v1 -->\n## Today at a Glance\n图片：http://127.0.0.1/internal.png',
+        },
+      } }),
+    });
+    assert.equal(failedPublish.status, 200);
+    assert.equal((await failedPublish.json() as any).result.isError, true);
+    assert.equal(cloudStore.listDailyReportCloudHistory(userId, 30).length, historyBeforeDryRun);
 
     const published = await request('/mcp', {
       method: 'POST',
