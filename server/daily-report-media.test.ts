@@ -46,6 +46,40 @@ test('日报图片只下载一次，校验签名后以哈希文件保存并替�
   assert.equal((localized.match(new RegExp(expectedPath.replaceAll('/', '\\/'), 'g')) || []).length, 2);
   assert.equal(fs.readFileSync(path.join(mediaRoot, `${sha256}.png`)).equals(onePixelPng), true);
   assert.equal(dailyReportMediaPath(expectedPath), expectedPath);
+  assert.doesNotThrow(() => assertHostedDailyReportMedia(localized, mediaRoot, 'https://gotimothy.online'));
+});
+
+test('云端严格媒体模式同时托管来源 logo，并在任一媒体失败时阻止发布', async () => {
+  const mediaRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aicalendar-daily-report-media-cloud-'));
+  const calls: string[] = [];
+  const localized = await localizeDailyDigestImages(
+    '# Daily Digest\n<!-- daily-digest.v1 -->\n## Lead Story\n### BBC headline\n来源：BBC\n时间：2026-09-09\n链接：https://news.example/story\n图片：https://images.example/news.png',
+    {
+      mediaRoot,
+      publicOrigin: 'https://gotimothy.online',
+      lookup: publicLookup,
+      requireAllMedia: true,
+      inferSourceLogos: true,
+      fetcher: async input => {
+        calls.push(String(input));
+        return new Response(onePixelPng, { status: 200, headers: { 'content-type': 'image/png' } });
+      },
+    },
+  );
+  assert.equal(calls.length, 2);
+  assert.match(localized, /图片：https:\/\/gotimothy\.online\/daily-report-media\/[a-f0-9]{64}\.png/);
+  assert.match(localized, /来源图标：https:\/\/gotimothy\.online\/daily-report-media\/[a-f0-9]{64}\.png/);
+
+  await assert.rejects(
+    () => localizeDailyDigestImages(markdownFor('https://images.example/unavailable.png'), {
+      mediaRoot,
+      publicOrigin: 'https://gotimothy.online',
+      lookup: publicLookup,
+      requireAllMedia: true,
+      fetcher: async () => new Response('unavailable', { status: 503 }),
+    }),
+    /无法全部托管/,
+  );
 });
 
 test('HTTP 403、HTML 响应和错误图片内容都降级为无图，不把上游地址写入日报', async () => {

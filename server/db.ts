@@ -208,6 +208,116 @@ async function initDb(): Promise<void> {
     )
   `);
 
+  // ChatGPT Work Cloud 的日报连接使用独立 OAuth 记录；只保存哈希和最小授权元数据。
+  db.run(`
+    CREATE TABLE IF NOT EXISTS daily_report_cloud_contexts (
+      user_id TEXT PRIMARY KEY,
+      version INTEGER NOT NULL DEFAULT 1,
+      context_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS daily_report_cloud_activity (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      activity_date TEXT NOT NULL,
+      title TEXT NOT NULL,
+      evidence TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+      client_id TEXT PRIMARY KEY,
+      client_name TEXT NOT NULL,
+      redirect_uris_json TEXT NOT NULL,
+      grant_types_json TEXT NOT NULL,
+      response_types_json TEXT NOT NULL,
+      token_endpoint_auth_method TEXT NOT NULL DEFAULT 'none',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS oauth_authorization_requests (
+      id TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      redirect_uri TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      state TEXT,
+      code_challenge TEXT NOT NULL,
+      code_challenge_method TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      csrf_hash TEXT NOT NULL,
+      user_id TEXT,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+      code_hash TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      redirect_uri TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      code_challenge TEXT NOT NULL,
+      code_challenge_method TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      used_at TEXT,
+      FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+      token_hash TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT,
+      FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+      token_hash TEXT PRIMARY KEY,
+      family_id TEXT NOT NULL,
+      client_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      scope TEXT NOT NULL,
+      resource TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      last_used_at TEXT,
+      revoked_at TEXT,
+      rotated_at TEXT,
+      FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
   db.run(`
     CREATE TABLE IF NOT EXISTS user_mail_accounts (
       id TEXT PRIMARY KEY,
@@ -349,6 +459,11 @@ async function initDb(): Promise<void> {
   db.run('CREATE INDEX IF NOT EXISTS idx_ai_schedule_messages_user_created ON ai_schedule_messages(user_id, created_at)');
   db.run('CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email)');
   db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_report_token_hash ON daily_report_tokens(token_hash)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_daily_report_cloud_activity_user_date ON daily_report_cloud_activity(user_id, activity_date DESC, updated_at DESC)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_oauth_authorization_requests_expires ON oauth_authorization_requests(expires_at)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_expires ON oauth_authorization_codes(expires_at)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_user ON oauth_access_tokens(user_id, revoked_at, expires_at)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_family ON oauth_refresh_tokens(family_id, revoked_at)');
   db.run('CREATE INDEX IF NOT EXISTS idx_note_items_user_updated ON note_items(user_id, updated_at)');
   db.run('CREATE INDEX IF NOT EXISTS idx_library_entries_user_updated ON library_entries(user_id, updated_at)');
   db.run('CREATE INDEX IF NOT EXISTS idx_library_entries_user_kind ON library_entries(user_id, kind, status)');
@@ -513,6 +628,91 @@ export interface DbDailyReportToken {
   created_at: string;
   last_used_at: string | null;
   revoked_at: string | null;
+}
+
+export interface DbDailyReportCloudContext {
+  user_id: string;
+  version: number;
+  context_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbDailyReportCloudActivity {
+  id: string;
+  user_id: string;
+  activity_date: string;
+  title: string;
+  evidence: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbOAuthClient {
+  client_id: string;
+  client_name: string;
+  redirect_uris_json: string;
+  grant_types_json: string;
+  response_types_json: string;
+  token_endpoint_auth_method: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbOAuthAuthorizationRequest {
+  id: string;
+  client_id: string;
+  redirect_uri: string;
+  scope: string;
+  state: string | null;
+  code_challenge: string;
+  code_challenge_method: string;
+  resource: string;
+  csrf_hash: string;
+  user_id: string | null;
+  expires_at: string;
+  created_at: string;
+}
+
+export interface DbOAuthAuthorizationCode {
+  code_hash: string;
+  client_id: string;
+  user_id: string;
+  redirect_uri: string;
+  scope: string;
+  code_challenge: string;
+  code_challenge_method: string;
+  resource: string;
+  expires_at: string;
+  created_at: string;
+  used_at: string | null;
+}
+
+export interface DbOAuthAccessToken {
+  token_hash: string;
+  client_id: string;
+  user_id: string;
+  scope: string;
+  resource: string;
+  expires_at: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface DbOAuthRefreshToken {
+  token_hash: string;
+  family_id: string;
+  client_id: string;
+  user_id: string;
+  scope: string;
+  resource: string;
+  expires_at: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+  rotated_at: string | null;
 }
 
 export interface DbUserMailAccount {
@@ -1686,9 +1886,280 @@ export function markDailyReportTokenUsed(id: string, usedAt = new Date().toISOSt
   run('UPDATE daily_report_tokens SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL', [usedAt, id]);
 }
 
+// ============= ChatGPT Work Cloud 日报数据 =============
+
+export function getDailyReportCloudContext(userId: string): DbDailyReportCloudContext | undefined {
+  return queryOne<DbDailyReportCloudContext>(
+    'SELECT * FROM daily_report_cloud_contexts WHERE user_id = ?',
+    [userId],
+  );
+}
+
+export function upsertDailyReportCloudContext(
+  userId: string,
+  contextJson: string,
+  now = new Date().toISOString(),
+): DbDailyReportCloudContext {
+  const existing = getDailyReportCloudContext(userId);
+  const version = existing ? existing.version + 1 : 1;
+  if (existing) {
+    run(
+      'UPDATE daily_report_cloud_contexts SET version = ?, context_json = ?, updated_at = ? WHERE user_id = ?',
+      [version, contextJson, now, userId],
+    );
+  } else {
+    run(
+      `INSERT INTO daily_report_cloud_contexts
+       (user_id, version, context_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      [userId, version, contextJson, now, now],
+    );
+  }
+  return getDailyReportCloudContext(userId)!;
+}
+
+export function listDailyReportCloudActivity(
+  userId: string,
+  fromDate?: string,
+  toDate?: string,
+  limit = 100,
+): DbDailyReportCloudActivity[] {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 500);
+  const clauses = ['user_id = ?'];
+  const params: any[] = [userId];
+  if (fromDate) {
+    clauses.push('activity_date >= ?');
+    params.push(fromDate);
+  }
+  if (toDate) {
+    clauses.push('activity_date <= ?');
+    params.push(toDate);
+  }
+  params.push(safeLimit);
+  return queryAll<DbDailyReportCloudActivity>(
+    `SELECT * FROM daily_report_cloud_activity
+     WHERE ${clauses.join(' AND ')}
+     ORDER BY activity_date DESC, updated_at DESC
+     LIMIT ?`,
+    params,
+  );
+}
+
+export function createDailyReportCloudActivity(input: DbDailyReportCloudActivity): DbDailyReportCloudActivity {
+  run(
+    `INSERT INTO daily_report_cloud_activity
+     (id, user_id, activity_date, title, evidence, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [input.id, input.user_id, input.activity_date, input.title, input.evidence, input.source, input.created_at, input.updated_at],
+  );
+  return input;
+}
+
+// ============= OAuth 2.1 / MCP 授权记录 =============
+
+export function createOAuthClient(client: DbOAuthClient): DbOAuthClient {
+  run(
+    `INSERT INTO oauth_clients
+     (client_id, client_name, redirect_uris_json, grant_types_json, response_types_json,
+      token_endpoint_auth_method, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      client.client_id,
+      client.client_name,
+      client.redirect_uris_json,
+      client.grant_types_json,
+      client.response_types_json,
+      client.token_endpoint_auth_method,
+      client.created_at,
+      client.updated_at,
+    ],
+  );
+  return client;
+}
+
+export function getOAuthClient(clientId: string): DbOAuthClient | undefined {
+  return queryOne<DbOAuthClient>('SELECT * FROM oauth_clients WHERE client_id = ?', [clientId]);
+}
+
+export function createOAuthAuthorizationRequest(request: DbOAuthAuthorizationRequest): DbOAuthAuthorizationRequest {
+  run(
+    `INSERT INTO oauth_authorization_requests
+     (id, client_id, redirect_uri, scope, state, code_challenge, code_challenge_method,
+      resource, csrf_hash, user_id, expires_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      request.id,
+      request.client_id,
+      request.redirect_uri,
+      request.scope,
+      request.state,
+      request.code_challenge,
+      request.code_challenge_method,
+      request.resource,
+      request.csrf_hash,
+      request.user_id,
+      request.expires_at,
+      request.created_at,
+    ],
+  );
+  return request;
+}
+
+export function getOAuthAuthorizationRequest(id: string): DbOAuthAuthorizationRequest | undefined {
+  return queryOne<DbOAuthAuthorizationRequest>('SELECT * FROM oauth_authorization_requests WHERE id = ?', [id]);
+}
+
+export function setOAuthAuthorizationRequestUser(id: string, userId: string): boolean {
+  return run('UPDATE oauth_authorization_requests SET user_id = ? WHERE id = ?', [userId, id]).changes > 0;
+}
+
+export function deleteOAuthAuthorizationRequest(id: string): boolean {
+  return run('DELETE FROM oauth_authorization_requests WHERE id = ?', [id]).changes > 0;
+}
+
+export function createOAuthAuthorizationCode(code: DbOAuthAuthorizationCode): DbOAuthAuthorizationCode {
+  run(
+    `INSERT INTO oauth_authorization_codes
+     (code_hash, client_id, user_id, redirect_uri, scope, code_challenge,
+      code_challenge_method, resource, expires_at, created_at, used_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      code.code_hash,
+      code.client_id,
+      code.user_id,
+      code.redirect_uri,
+      code.scope,
+      code.code_challenge,
+      code.code_challenge_method,
+      code.resource,
+      code.expires_at,
+      code.created_at,
+      code.used_at,
+    ],
+  );
+  return code;
+}
+
+export function getOAuthAuthorizationCode(codeHash: string): DbOAuthAuthorizationCode | undefined {
+  return queryOne<DbOAuthAuthorizationCode>('SELECT * FROM oauth_authorization_codes WHERE code_hash = ?', [codeHash]);
+}
+
+export function markOAuthAuthorizationCodeUsed(codeHash: string, usedAt = new Date().toISOString()): boolean {
+  return run(
+    'UPDATE oauth_authorization_codes SET used_at = ? WHERE code_hash = ? AND used_at IS NULL',
+    [usedAt, codeHash],
+  ).changes > 0;
+}
+
+export function createOAuthAccessToken(token: DbOAuthAccessToken): DbOAuthAccessToken {
+  run(
+    `INSERT INTO oauth_access_tokens
+     (token_hash, client_id, user_id, scope, resource, expires_at, created_at, last_used_at, revoked_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [token.token_hash, token.client_id, token.user_id, token.scope, token.resource, token.expires_at, token.created_at, token.last_used_at, token.revoked_at],
+  );
+  return token;
+}
+
+export function getActiveOAuthAccessToken(tokenHash: string): DbOAuthAccessToken | undefined {
+  return queryOne<DbOAuthAccessToken>(
+    `SELECT t.* FROM oauth_access_tokens t
+     JOIN users u ON u.id = t.user_id
+     WHERE t.token_hash = ? AND t.revoked_at IS NULL AND u.disabled = 0`,
+    [tokenHash],
+  );
+}
+
+export function markOAuthAccessTokenUsed(tokenHash: string, usedAt = new Date().toISOString()): void {
+  run(
+    'UPDATE oauth_access_tokens SET last_used_at = ? WHERE token_hash = ? AND revoked_at IS NULL',
+    [usedAt, tokenHash],
+  );
+}
+
+export function revokeOAuthAccessToken(tokenHash: string, revokedAt = new Date().toISOString()): boolean {
+  return run(
+    'UPDATE oauth_access_tokens SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL',
+    [revokedAt, tokenHash],
+  ).changes > 0;
+}
+
+export function createOAuthRefreshToken(token: DbOAuthRefreshToken): DbOAuthRefreshToken {
+  run(
+    `INSERT INTO oauth_refresh_tokens
+     (token_hash, family_id, client_id, user_id, scope, resource, expires_at, created_at,
+      last_used_at, revoked_at, rotated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      token.token_hash,
+      token.family_id,
+      token.client_id,
+      token.user_id,
+      token.scope,
+      token.resource,
+      token.expires_at,
+      token.created_at,
+      token.last_used_at,
+      token.revoked_at,
+      token.rotated_at,
+    ],
+  );
+  return token;
+}
+
+export function getActiveOAuthRefreshToken(tokenHash: string): DbOAuthRefreshToken | undefined {
+  return queryOne<DbOAuthRefreshToken>(
+    `SELECT t.* FROM oauth_refresh_tokens t
+     JOIN users u ON u.id = t.user_id
+     WHERE t.token_hash = ? AND t.revoked_at IS NULL AND u.disabled = 0`,
+    [tokenHash],
+  );
+}
+
+export function getOAuthRefreshToken(tokenHash: string): DbOAuthRefreshToken | undefined {
+  return queryOne<DbOAuthRefreshToken>('SELECT * FROM oauth_refresh_tokens WHERE token_hash = ?', [tokenHash]);
+}
+
+export function rotateOAuthRefreshToken(tokenHash: string, rotatedAt = new Date().toISOString()): boolean {
+  return run(
+    `UPDATE oauth_refresh_tokens
+     SET revoked_at = ?, rotated_at = ?, last_used_at = ?
+     WHERE token_hash = ? AND revoked_at IS NULL`,
+    [rotatedAt, rotatedAt, rotatedAt, tokenHash],
+  ).changes > 0;
+}
+
+export function revokeOAuthRefreshFamily(familyId: string, revokedAt = new Date().toISOString()): number {
+  return run(
+    'UPDATE oauth_refresh_tokens SET revoked_at = ? WHERE family_id = ? AND revoked_at IS NULL',
+    [revokedAt, familyId],
+  ).changes;
+}
+
+export function revokeOAuthRefreshToken(tokenHash: string, revokedAt = new Date().toISOString()): boolean {
+  return run(
+    'UPDATE oauth_refresh_tokens SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL',
+    [revokedAt, tokenHash],
+  ).changes > 0;
+}
+
+export function deleteDailyReportCloudData(userId: string): void {
+  run('DELETE FROM daily_report_cloud_contexts WHERE user_id = ?', [userId]);
+  run('DELETE FROM daily_report_cloud_activity WHERE user_id = ?', [userId]);
+}
+
+export function deleteOAuthUserData(userId: string): void {
+  run('DELETE FROM oauth_authorization_requests WHERE user_id = ?', [userId]);
+  run('DELETE FROM oauth_authorization_codes WHERE user_id = ?', [userId]);
+  run('DELETE FROM oauth_access_tokens WHERE user_id = ?', [userId]);
+  run('DELETE FROM oauth_refresh_tokens WHERE user_id = ?', [userId]);
+}
+
 export function deleteUser(userId: string): boolean {
   try {
     run('DELETE FROM daily_report_tokens WHERE user_id = ?', [userId]);
+    deleteDailyReportCloudData(userId);
+    deleteOAuthUserData(userId);
     run('DELETE FROM library_publish_tokens WHERE user_id = ?', [userId]);
     run('DELETE FROM library_comments WHERE user_id = ?', [userId]);
     run('DELETE FROM library_entry_versions WHERE user_id = ?', [userId]);
@@ -1715,6 +2186,8 @@ export function clearUserData(userId: string): { schedules: number; sessions: nu
   try {
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
     run('DELETE FROM user_mail_accounts WHERE user_id = ?', [userId]);
+    deleteDailyReportCloudData(userId);
+    deleteOAuthUserData(userId);
     run('DELETE FROM library_publish_tokens WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
     run('DELETE FROM ai_schedule_messages WHERE user_id = ?', [userId]);

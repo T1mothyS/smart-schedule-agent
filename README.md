@@ -26,6 +26,7 @@ Knowledge Library V2 首次部署、令牌权限、分层验收和回滚见 [`do
 - 每日邮件摘要包含天气、进度、分类日程和完整明细，不与单项提醒混用。
 - 日报页面按日期保存当前账号的个人情报日报；新版 `daily-digest.v1` 内容由固定 Newsletter 模板渲染，发布前由 V2 在本地下载、校验并上传新闻图片与来源 logo，服务端按内容哈希保存并在入库前确认 Markdown 只引用本站媒体；未读邮箱默认生成独立的邮件简报，明确动作另列为邮件待办；旧日报继续使用受限 Markdown 兼容路径，并严格按账号隔离。
 - 日报由外部 V2 程序在 Validator 通过后通过专用接口发布；“日报邮件”是独立于每日摘要的设置，首次发布和后续内容更新都会为新的内容版本入队，同一内容版本保持幂等；每一天的日报详情都支持手动重新发送。
+- 日报云端候选链路已提供 OAuth 2.1 风格 PKCE、持久化 Cloud Context 和无状态 MCP 接口；它与现有本地日报令牌接口并行，未自动创建或启用 Work 定时任务，未改变当前本地生产/回滚链路。详细边界见 [`docs/CHATGPT-WORK-CLOUD.md`](docs/CHATGPT-WORK-CLOUD.md)。
 - 每日摘要按账号保存的时、分和时区入队；同一配置时间的重复扫描保持幂等，修改当天提醒时间后允许再次触发，不与单项提醒混用。
 - 高优先级、未完成且有明确开始时间的事件/待办，在开始前 15 分钟内发送固定邮件提醒；它不受邮件开关、免打扰和日报开关影响。
 - 可生成仅展示一次的只读日报令牌，供独立日报程序按日期读取当前账号日程；服务端只保存令牌哈希。
@@ -410,6 +411,9 @@ cp .env.example .env
 | `server/library-publish-token-service.ts` | 独立知识库发布令牌的哈希保存、轮换、撤销和鉴权 |
 | `C:\Users\Elysia\Documents\Codex_Knowledge_Library\scripts\publish-library.ps1` | V2 批次唯一发布脚本：强制操作选择、校验、干跑、生命周期操作、上传和脱敏报告 |
 | `server/daily-report-token-service.ts` | 只读日报令牌生成、哈希保存、轮换、吊销和鉴权 |
+| `server/daily-report-cloud-auth.ts` | OAuth PKCE 客户端注册、授权码、刷新轮换、撤销和 MCP bearer 鉴权 |
+| `server/daily-report-cloud-mcp.ts` | ChatGPT Work Cloud 的无状态 MCP 工具：读取日报输入、Context/历史和服务端媒体发布 |
+| `server/daily-report-cloud-store.ts` | 脱敏 Cloud Context、活动证据和日报历史摘要的账号隔离存储 |
 | `server/daily-report*.test.ts` | 日报服务、HTTP API 和 V2 假 SMTP 隔离端到端测试 |
 | `server/http-security.ts` | 安全响应头、请求体限制和分接口频率限制 |
 | `server/email-import-service.ts` | 可选 IMAP 邮箱轮询、令牌匹配和 Message-ID 去重 |
@@ -528,6 +532,8 @@ npm run build
 
 “设置”中的“日报邮箱（QQ）”用于按个人账号保存 QQ 邮箱账号和客户端授权码。授权码在服务端以独立密钥加密保存，测试读取和日报接口只返回未读邮件摘要，不返回授权码，也不影响 AI Calendar 固定的 163 发件邮箱。
 
+云端候选链路通过 OAuth Authorization Code + PKCE 和 `/mcp` 接口供 ChatGPT Work 使用。Work 连接只接触当前账号的结构化输入和服务端生成的日报，不读取本地 `日报-v2` worktree；服务端负责媒体托管、日报幂等和邮件入队。Cloud Context 通过登录态 `/api/daily-report/cloud-context` 维护，MCP 对 Context 和活动证据只读。该链路目前只完成接口与本地隔离验收，尚未创建 Work 定时任务，也没有停用现有本地 `v2-chatgpt` 任务；正式切换须按 [`docs/CHATGPT-WORK-CLOUD.md`](docs/CHATGPT-WORK-CLOUD.md) 的 shadow 和收件箱证据门槛执行。
+
 ## 10. API 模块概览
 
 后端 API 统一以 `/api` 开头，主要模块为：
@@ -547,6 +553,9 @@ npm run build
 - `/api/integrations/daily-report/mail`：日报令牌读取当前账号的 QQ 未读摘要，不返回授权码。
 - `/api/integrations/daily-report/reports/:date/media/:filename`：V2 使用日报令牌上传本地已校验的新闻图片或来源 logo；文件名必须是内容 SHA256，服务端不会从该请求访问外站。
 - `/api/integrations/daily-report/reports/:date`：V2 使用日报令牌发布或幂等更新日报；`daily-digest.v1` 必须只引用已经上传的本站 `/daily-report-media/` 地址，发布正文不写入日志，邮件状态由账号设置和通知队列决定。
+- `/api/daily-report/cloud-context`、`/api/daily-report/cloud-activity`：登录态维护云端日报 Context 和主动提供的活动证据；写入前拒绝凭据字段/值，MCP 只读。
+- `/.well-known/oauth-protected-resource`、`/.well-known/oauth-authorization-server`、`/oauth/*`：ChatGPT Work Cloud 的 OAuth 2.1 风格 PKCE 元数据、动态客户端注册、授权、令牌刷新和撤销。
+- `/mcp`：无状态 Streamable HTTP MCP；工具按 scope 读取 Calendar、QQ 未读摘要、Context、历史，或在服务端完成媒体托管后发布日报。
 - `/daily-report-media/:filename`：公开读取服务端已校验的日报媒体；文件名为内容哈希，供登录后网页和邮件共同使用。
 - `/api/backups`、`/api/admin/backups`：用户备份和全站灾备。
 - `/api/ai-chat`：普通问答、天气问答和待确认日程建议；历史专用 `sourceNoteId`/`requestedAction=create_todo` 参数会明确拒绝。

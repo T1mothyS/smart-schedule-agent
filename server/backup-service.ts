@@ -10,6 +10,7 @@ import * as reminderStore from './reminder-store.js';
 import * as activityStore from './activity-store.js';
 import * as attachmentService from './attachment-service.js';
 import { dailyReportMediaRoot } from './daily-report-media-service.js';
+import * as dailyReportCloudStore from './daily-report-cloud-store.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,6 +28,7 @@ interface UserBackupPayload {
   reminder: ReturnType<typeof reminderStore.exportUserReminderData>;
   noteItems?: ReturnType<typeof db.exportUserNoteItems>;
   libraryEntries?: ReturnType<typeof db.exportUserLibraryEntries>;
+  dailyReportCloudContext?: ReturnType<typeof dailyReportCloudStore.getDailyReportCloudContext>;
   activity: ReturnType<typeof activityStore.exportUserActivity>;
   files: Array<{
     completionId: string | null;
@@ -218,6 +220,7 @@ export function createUserBackup(userId: string, password: string): Buffer {
     reminder: reminderStore.exportUserReminderData(userId),
     noteItems: db.exportUserNoteItems(userId),
     libraryEntries: db.exportUserLibraryEntries(userId),
+    dailyReportCloudContext: dailyReportCloudStore.getDailyReportCloudContext(userId),
     activity,
     files,
   };
@@ -229,6 +232,15 @@ function validateUserPayload(payload: UserBackupPayload): void {
   if (!payload.schedule || !payload.reminder || !payload.activity || !Array.isArray(payload.files)) throw new Error('备份内容不完整');
   if (payload.noteItems !== undefined && !Array.isArray(payload.noteItems)) throw new Error('备份记事内容不完整');
   if (payload.libraryEntries !== undefined && !Array.isArray(payload.libraryEntries)) throw new Error('备份知识库内容不完整');
+  if (payload.dailyReportCloudContext !== undefined) {
+    const context = payload.dailyReportCloudContext as unknown as Record<string, unknown>;
+    if (!context || typeof context !== 'object' || Array.isArray(context)
+      || !Number.isInteger(context.version) || Number(context.version) < 0
+      || !('context' in context)) {
+      throw new Error('备份日报云端 Context 内容不完整');
+    }
+    dailyReportCloudStore.normalizeDailyReportCloudContext(context.context);
+  }
 }
 
 export function inspectUserBackup(buffer: Buffer, password: string): Record<string, unknown> {
@@ -250,6 +262,7 @@ export function inspectUserBackup(buffer: Buffer, password: string): Record<stri
       dailyReports: (payload.activity.dailyReports || []).length,
       noteItems: (payload.noteItems || []).length,
       libraryEntries: (payload.libraryEntries || []).length,
+      dailyReportCloudContext: payload.dailyReportCloudContext && payload.dailyReportCloudContext.version > 0 ? 1 : 0,
     },
   };
 }
@@ -270,6 +283,9 @@ export function restoreUserBackup(userId: string, buffer: Buffer, password: stri
   const noteItems = db.restoreUserNoteItems(userId, payload.noteItems || [], mode);
   const libraryEntries = db.restoreUserLibraryEntries(userId, payload.libraryEntries || [], mode);
   const activity = activityStore.restoreUserActivity(userId, payload.activity, mode);
+  if (payload.dailyReportCloudContext !== undefined) {
+    dailyReportCloudStore.replaceDailyReportCloudContext(userId, payload.dailyReportCloudContext.context);
+  }
   if (mode === 'replace') attachmentService.deleteUserAttachmentFiles(oldAttachments);
   const preference = payload.account.reminder as any;
   if (preference) {
@@ -300,7 +316,17 @@ export function restoreUserBackup(userId: string, buffer: Buffer, password: stri
       // 单个损坏附件不会使结构化数据恢复失败，结果中会体现数量差异。
     }
   }
-  return { schedule, reminder, noteItems, libraryEntries, activity, attachments, mode, idsRemapped: isForeignAccount };
+  return {
+    schedule,
+    reminder,
+    noteItems,
+    libraryEntries,
+    activity,
+    attachments,
+    dailyReportCloudContext: payload.dailyReportCloudContext !== undefined,
+    mode,
+    idsRemapped: isForeignAccount,
+  };
 }
 
 function collectFiles(root: string): Array<{ relativePath: string; base64: string }> {

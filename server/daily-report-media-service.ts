@@ -19,6 +19,22 @@ const DAILY_REPORT_MEDIA_MAX_REDIRECTS = 3;
 const DAILY_REPORT_MEDIA_CONCURRENCY = 4;
 const STORED_MEDIA_FILENAME = /^[a-f0-9]{64}\.(?:jpg|png|webp|ico|svg)$/;
 const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/svg+xml']);
+const SOURCE_ICON_URLS: Record<string, string> = {
+  BBC: 'https://www.bbc.com/favicon.ico',
+  新华社: 'https://www.xinhuanet.com/favicon.ico',
+  人民网: 'https://www.people.com.cn/favicon.ico',
+  央视新闻: 'https://news.cctv.com/favicon.ico',
+  光明网: 'https://www.gmw.cn/favicon.ico',
+  财新: 'https://www.caixin.com/favicon.ico',
+  新浪新闻: 'https://news.sina.com.cn/favicon.ico',
+  网易新闻: 'https://news.163.com/favicon.ico',
+  'Federal Reserve': 'https://www.federalreserve.gov/favicon.ico',
+  SEC: 'https://www.sec.gov/favicon.ico',
+  OpenAI: 'https://svgl.app/library/openai.svg',
+  'Google AI': 'https://www.google.com/favicon.ico',
+  'Yahoo Finance': 'https://finance.yahoo.com/favicon.ico',
+  'Yahoo Finance chart': 'https://finance.yahoo.com/favicon.ico',
+};
 
 type FetchLike = typeof fetch;
 type LookupAddress = { address: string; family: 4 | 6 };
@@ -31,6 +47,8 @@ export interface DailyReportMediaOptions {
   publicOrigin?: string;
   timeoutMs?: number;
   requireHostedMedia?: boolean;
+  requireAllMedia?: boolean;
+  inferSourceLogos?: boolean;
 }
 
 export interface StoredMedia {
@@ -310,13 +328,14 @@ function mediaFilePath(mediaPath: string, mediaRoot: string): string {
   return target;
 }
 
-export function assertHostedDailyReportMedia(markdown: string, mediaRoot = ROOT): void {
+export function assertHostedDailyReportMedia(markdown: string, mediaRoot = ROOT, publicOrigin = configuredPublicOrigin()): void {
   const references = reportMediaReferences(markdown);
   const unique = new Set(references.map(reference => reference.value));
   if (unique.size > DAILY_REPORT_MEDIA_MAX_COUNT) throw new Error(`日报媒体数量超过上限 ${DAILY_REPORT_MEDIA_MAX_COUNT}`);
   for (const reference of references) {
     const mediaPath = dailyReportMediaPath(reference.value);
-    if (!mediaPath || !reference.value.startsWith(`${DAILY_REPORT_MEDIA_ROUTE}/`)) {
+    const hostedUrl = mediaPath ? existingMediaUrl(reference.value, publicOrigin) : null;
+    if (!mediaPath || !hostedUrl) {
       throw new Error(`${reference.label}必须先在本地上传并使用本站媒体地址`);
     }
     if (!fs.existsSync(mediaFilePath(mediaPath, mediaRoot))) {
@@ -347,14 +366,34 @@ function existingMediaUrl(value: string, publicOrigin: string): string | null {
   }
 }
 
-function imageValues(markdown: string): string[] {
-  const values: string[] = [];
-  const pattern = /^[^\S\r\n]*图片：([^\s\r\n]+)[^\S\r\n]*$/gm;
-  for (const match of markdown.matchAll(pattern)) {
-    const value = match[1]?.trim() || '';
-    if (value && value !== '—') values.push(value);
+function allMediaValues(markdown: string): string[] {
+  return reportMediaReferences(markdown).map(reference => reference.value);
+}
+
+function inferDailyDigestSourceLogos(markdown: string): string {
+  const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
+  const output: string[] = [];
+  let section = '';
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index];
+    const line = rawLine.trim();
+    if (line.startsWith('## ')) section = line;
+    output.push(rawLine);
+    if (!['## Lead Story', '## Category Digest', '## Worth Your Time'].includes(section) || !line.startsWith('来源：')) continue;
+    const source = line.slice('来源：'.length).trim();
+    const logoUrl = SOURCE_ICON_URLS[source];
+    if (!logoUrl) continue;
+    const next = lines[index + 1]?.trim() || '';
+    if (next.startsWith('来源图标：')) {
+      const existingLogo = next.slice('来源图标：'.length).trim();
+      output.push(existingLogo && existingLogo !== '—' ? lines[index + 1] : `来源图标：${logoUrl}`);
+      index += 1;
+      continue;
+    } else {
+      output.push(`来源图标：${logoUrl}`);
+    }
   }
-  return values;
+  return output.join('\n');
 }
 
 async function mapWithConcurrency(items: string[], concurrency: number, worker: (item: string) => Promise<void>): Promise<void> {
@@ -371,25 +410,31 @@ async function mapWithConcurrency(items: string[], concurrency: number, worker: 
 
 export async function localizeDailyDigestImages(markdown: string, options: DailyReportMediaOptions = {}): Promise<string> {
   if (!markdown.includes('<!-- daily-digest.v1 -->')) return markdown;
+  const sourceMarkdown = options.inferSourceLogos ? inferDailyDigestSourceLogos(markdown) : markdown;
   const publicOrigin = options.publicOrigin || configuredPublicOrigin();
   const mediaRoot = options.mediaRoot || ROOT;
   if (options.requireHostedMedia) {
-    assertHostedDailyReportMedia(markdown, mediaRoot);
-    return markdown;
+    assertHostedDailyReportMedia(sourceMarkdown, mediaRoot, publicOrigin);
+    return sourceMarkdown;
   }
   const fetcher = options.fetcher || fetch;
   const lookup = options.lookup || defaultLookup;
   const timeoutMs = options.timeoutMs || DAILY_REPORT_MEDIA_TIMEOUT_MS;
-  const values = [...new Set(imageValues(markdown))];
+  const values = [...new Set(allMediaValues(sourceMarkdown))];
   const replacements = new Map<string, string>();
   const pending: string[] = [];
+  let overLimit = false;
   for (const value of values) {
     const existing = existingMediaUrl(value, publicOrigin);
     if (existing) replacements.set(value, existing);
     else if (pending.length < DAILY_REPORT_MEDIA_MAX_COUNT) pending.push(value);
-    else replacements.set(value, '—');
+    else {
+      replacements.set(value, '—');
+      overLimit = true;
+    }
   }
 
+  const failures: string[] = [];
   await mapWithConcurrency(pending, DAILY_REPORT_MEDIA_CONCURRENCY, async value => {
     try {
       const stored = await downloadAndStoreImage(value, { fetcher, lookup, mediaRoot, timeoutMs });
@@ -397,10 +442,15 @@ export async function localizeDailyDigestImages(markdown: string, options: Daily
     } catch {
       // 单张图片失败不应阻断整份日报；失败项明确降级为空图片位。
       replacements.set(value, '—');
+      failures.push(value);
     }
   });
 
-  return markdown.replace(/^([^\S\r\n]*图片：)([^\s\r\n]+)([^\S\r\n]*)$/gm, (line, prefix: string, value: string, suffix: string) => {
+  if (options.requireAllMedia && (overLimit || failures.length > 0)) {
+    throw new Error('日报媒体无法全部托管，未进入发布');
+  }
+
+  return sourceMarkdown.replace(/^([^\S\r\n]*(?:图片|来源图标)：)([^\s\r\n]+)([^\S\r\n]*)$/gm, (line, prefix: string, value: string, suffix: string) => {
     if (!value || value === '—') return line;
     return `${prefix}${replacements.get(value) || '—'}${suffix}`;
   });

@@ -24,6 +24,11 @@ const rules: RateRule[] = [
   { name: 'daily-report', limit: 120, windowMs: 60_000, matches: req => ['/api/integrations/daily-report/agenda', '/api/integrations/daily-report/mail', '/api/integrations/daily-report/reports'].includes(req.path) || req.path.startsWith('/api/integrations/daily-report/reports/') },
   { name: 'daily-report-manual-send', limit: 5, windowMs: 60 * 60_000, matches: req => req.method === 'POST' && /^\/api\/daily-reports\/\d{4}-\d{2}-\d{2}\/send$/.test(req.path) },
   { name: 'user-mail-account', limit: 20, windowMs: 60 * 60_000, matches: req => req.path.startsWith('/api/user-mail-account') },
+  { name: 'oauth-registration', limit: 20, windowMs: 60 * 60_000, matches: req => req.method === 'POST' && req.path === '/oauth/register' },
+  { name: 'oauth-token', limit: 60, windowMs: 15 * 60_000, matches: req => req.method === 'POST' && req.path === '/oauth/token' },
+  { name: 'oauth-authorization-login', limit: 20, windowMs: 15 * 60_000, matches: req => req.method === 'POST' && req.path === '/oauth/authorize/login' },
+  { name: 'oauth-revoke', limit: 60, windowMs: 60 * 60_000, matches: req => req.method === 'POST' && req.path === '/oauth/revoke' },
+  { name: 'daily-report-cloud-mcp', limit: 120, windowMs: 60_000, matches: req => req.method === 'POST' && req.path === '/mcp' },
 ];
 
 export class InMemoryRateLimitStore {

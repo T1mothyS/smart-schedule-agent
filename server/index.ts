@@ -50,6 +50,9 @@ import { shiftScheduleDateValue } from './schedule-actions.js';
 import { assertNoLegacyCodeBuddyConfig } from './codebuddy-config.js';
 import { addLog, allLogs, clearLogs, listLogs, type LogCategory } from './log-service.js';
 import { SEARCH_SCOPES, searchAll } from './search-service.js';
+import { createDailyReportCloudMcpRouter } from './daily-report-cloud-mcp.js';
+import { createDailyReportCloudOAuthRouter } from './daily-report-cloud-auth.js';
+import * as dailyReportCloudStore from './daily-report-cloud-store.js';
 import {
   buildAiPlanSnapshot,
   normaliseAiPlanOperations,
@@ -177,6 +180,11 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '1mb' }));
+
+// ChatGPT Work Cloud 的 OAuth 元数据、授权端点和无状态 MCP 端点不依赖本地日报工作树。
+// 现有 /api/integrations/daily-report/* 令牌链路保持不变，供本地日报继续使用。
+app.use(createDailyReportCloudOAuthRouter());
+app.use('/mcp', createDailyReportCloudMcpRouter());
 
 // 【新增】数据库初始化检查中间件
 app.use('/api', (req, res, next) => {
@@ -1828,6 +1836,51 @@ app.post('/api/user-mail-account/test', authenticate, async (req, res) => {
   const result = await readUserMail(userId, 1);
   res.setHeader('Cache-Control', 'no-store');
   res.json({ result });
+});
+
+// 日报云端 Context 由账号登录态维护；MCP 只读，避免模型自行改写长期偏好。
+app.get('/api/daily-report/cloud-context', authenticate, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ context: dailyReportCloudStore.getDailyReportCloudContext((req as any).user.userId) });
+});
+
+app.put('/api/daily-report/cloud-context', authenticate, (req, res) => {
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body) || Object.keys(req.body).some(key => key !== 'context')) {
+    return res.status(400).json({ error: '请求正文只允许包含 context 字段' });
+  }
+  try {
+    const context = dailyReportCloudStore.replaceDailyReportCloudContext((req as any).user.userId, req.body.context);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ context });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '保存日报云端 Context 失败' });
+  }
+});
+
+app.get('/api/daily-report/cloud-activity', authenticate, (req, res) => {
+  try {
+    const activity = dailyReportCloudStore.listDailyReportCloudActivity((req as any).user.userId, {
+      fromDate: req.query.fromDate ? String(req.query.fromDate) : undefined,
+      toDate: req.query.toDate ? String(req.query.toDate) : undefined,
+      limit: req.query.limit === undefined ? 100 : Number(req.query.limit),
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ activity });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '读取日报云端活动证据失败' });
+  }
+});
+
+app.post('/api/daily-report/cloud-activity', authenticate, (req, res) => {
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    return res.status(400).json({ error: '请求正文必须是对象' });
+  }
+  try {
+    const activity = dailyReportCloudStore.createDailyReportCloudActivity((req as any).user.userId, req.body);
+    res.status(201).setHeader('Cache-Control', 'no-store').json({ activity });
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '保存日报云端活动证据失败' });
+  }
 });
 
 // 登录后的日报页面只允许读取当前账号的数据。
