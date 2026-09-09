@@ -127,6 +127,11 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     const csrf = loginPage.match(/name="csrf" value="([^"]+)"/)?.[1];
     assert.ok(requestId);
     assert.ok(csrf);
+    const pendingRequest = db.getOAuthAuthorizationRequest(requestId!);
+    assert.ok(pendingRequest);
+    const pendingTtlMs = Date.parse(pendingRequest.expires_at) - Date.now();
+    assert.ok(pendingTtlMs > (cloudAuth.DAILY_REPORT_CLOUD_AUTHORIZATION_REQUEST_TTL_SECONDS - 2) * 1000);
+    assert.ok(pendingTtlMs <= cloudAuth.DAILY_REPORT_CLOUD_AUTHORIZATION_REQUEST_TTL_SECONDS * 1000);
 
     const login = await request('/oauth/authorize/login', formBody({
       request_id: requestId!,

@@ -14,12 +14,14 @@ export const DAILY_REPORT_CLOUD_SCOPES = [
   'offline_access',
 ] as const;
 
+// 人工登录和权限审阅可能跨越多个页面；请求本身不产生令牌，完成后仍需短时授权码交换。
+export const DAILY_REPORT_CLOUD_AUTHORIZATION_REQUEST_TTL_SECONDS = 30 * 60;
+
 export type DailyReportCloudScope = typeof DAILY_REPORT_CLOUD_SCOPES[number];
 
 const AUTHORIZATION_CODE_TTL_SECONDS = 5 * 60;
 const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
-const AUTHORIZATION_REQUEST_TTL_SECONDS = 10 * 60;
 const CLIENT_NAME_MAX_LENGTH = 100;
 const MAX_REDIRECT_URIS = 10;
 const TOKEN_VALUE_PATTERN = /^[A-Za-z0-9._~-]{16,512}$/;
@@ -321,7 +323,7 @@ export function createDailyReportCloudAuthorizationRequest(input: unknown): {
     resource: normalized.resource,
     csrf_hash: hashValue(csrfToken),
     user_id: null,
-    expires_at: isoAfter(AUTHORIZATION_REQUEST_TTL_SECONDS),
+    expires_at: isoAfter(DAILY_REPORT_CLOUD_AUTHORIZATION_REQUEST_TTL_SECONDS),
     created_at: now,
   });
   return {

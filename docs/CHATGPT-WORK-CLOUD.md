@@ -59,7 +59,7 @@ daily_report:publish
 offline_access
 ```
 
-OAuth 令牌只保存在数据库的 SHA-256 哈希；访问令牌 15 分钟过期，刷新令牌轮换并支持撤销。授权码一次性使用，客户端为公开 PKCE 客户端，不使用 `client_secret`。账号禁用会立即阻止新的 MCP bearer 请求。
+OAuth 令牌只保存在数据库的 SHA-256 哈希；人工登录/权限审阅请求有效 30 分钟，授权码一次性使用且 5 分钟过期，访问令牌 15 分钟过期，刷新令牌轮换并支持撤销。客户端为公开 PKCE 客户端，不使用 `client_secret`。账号禁用会立即阻止新的 MCP bearer 请求。
 
 ## Cloud Context 导入
 
