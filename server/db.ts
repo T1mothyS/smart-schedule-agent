@@ -1093,7 +1093,7 @@ export function updateUserDisabled(id: string, disabled: number): boolean {
 
 export function updateUserAdminApiSharing(id: string, enabled: number): boolean {
   const result = run(
-    'UPDATE users SET admin_shared_api_enabled = ?, updated_at = ? WHERE id = ? AND role = \'user\'',
+    'UPDATE users SET admin_shared_api_enabled = ?, updated_at = ? WHERE id = ? AND role IN (\'admin\', \'user\')',
     [enabled ? 1 : 0, new Date().toISOString(), id],
   );
   return result.changes > 0;

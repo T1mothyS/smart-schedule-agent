@@ -5,7 +5,7 @@ import { enqueueUserEmailNotificationDetailed } from './notification-service.js'
 import { renderMarkdown } from './markdown-renderer.js';
 import { addLog } from './log-service.js';
 import { dailyReportMediaPath, localizeDailyDigestImages, type DailyReportMediaOptions } from './daily-report-media-service.js';
-import { parseDailyDigestMarkdown } from './daily-digest-template.js';
+import { parseDailyDigestMarkdown, selectDailyDigestFeaturedStory } from './daily-digest-template.js';
 
 export const DAILY_REPORT_SOURCE_TYPE = 'daily_report';
 export const DAILY_REPORT_KIND = 'daily_report';
@@ -137,12 +137,12 @@ function legacyExcerpt(markdown: string): string {
 function reportPresentation(markdown: string): { headline: string | null; heroImageUrl: string | null; excerpt: string } {
   const digest = parseDailyDigestMarkdown(markdown);
   if (digest) {
-    const lead = digest.leadStories[0] || null;
+    const featured = selectDailyDigestFeaturedStory(digest);
     const overview = digest.atAGlance.slice(0, 3).join('；');
     return {
-      headline: lead?.headline || null,
-      heroImageUrl: lead?.imageUrl ? dailyReportMediaPath(lead.imageUrl) : null,
-      excerpt: `${PREVIEW_FALLBACK}${overview ? `：${overview}` : ''}`.slice(0, 240),
+      headline: featured?.headline || null,
+      heroImageUrl: featured?.imageUrl ? dailyReportMediaPath(featured.imageUrl) : null,
+      excerpt: `${PREVIEW_FALLBACK}${featured?.summary ? `：${featured.summary}` : overview ? `：${overview}` : ''}`.slice(0, 240),
     };
   }
   return { headline: null, heroImageUrl: null, excerpt: legacyExcerpt(markdown) };
@@ -167,6 +167,11 @@ export function toDailyReportView(record: activityStore.DailyReportRecord, inclu
 
 export function listDailyReportViews(userId: string, limit = 100): DailyReportView[] {
   return activityStore.listDailyReports(userId, limit).map(record => toDailyReportView(record, false));
+}
+
+export function listDailyReportViewsPage(userId: string, limit = 100, offset = 0): { reports: DailyReportView[]; total: number } {
+  const result = activityStore.listDailyReportsPage(userId, limit, offset);
+  return { reports: result.reports.map(record => toDailyReportView(record, false)), total: result.total };
 }
 
 export function getDailyReportView(userId: string, reportDate: string): DailyReportView | null {

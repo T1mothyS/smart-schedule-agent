@@ -548,6 +548,17 @@ export function listDailyReports(userId: string, limit = 100): DailyReportRecord
   ).map(rowToDailyReport);
 }
 
+export function listDailyReportsPage(userId: string, limit = 100, offset = 0): { reports: DailyReportRecord[]; total: number } {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 500);
+  const safeOffset = Math.max(Math.trunc(offset) || 0, 0);
+  const count = queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM daily_reports WHERE user_id = ?', [userId]);
+  const reports = queryAll<any>(
+    'SELECT * FROM daily_reports WHERE user_id = ? ORDER BY report_date DESC, updated_at DESC LIMIT ? OFFSET ?',
+    [userId, safeLimit, safeOffset],
+  ).map(rowToDailyReport);
+  return { reports, total: Number(count?.count || 0) };
+}
+
 function escapeSearchLike(value: string): string {
   return value.replace(/[\\%_]/gu, character => `\\${character}`);
 }

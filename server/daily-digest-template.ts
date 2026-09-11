@@ -29,6 +29,17 @@ interface DigestItem extends StoryMeta {
   summary: string;
 }
 
+export interface DailyDigestFeaturedStory {
+  headline: string;
+  source: string;
+  sourceLogoUrl: string;
+  publishedAt: string;
+  url: string;
+  imageUrl: string;
+  summary: string;
+  kind: 'lead' | 'category';
+}
+
 interface DigestCategory {
   name: string;
   items: DigestItem[];
@@ -71,6 +82,16 @@ export interface DailyDigest {
   mailTasks: MailTask[];
   worthYourTime: WorthLink[];
 }
+
+const MARKET_DATA_SOURCES = new Set(['yahoo finance chart', 'yahoo finance']);
+const NON_NEWS_CATEGORIES = new Set(['明日安排', '工作与行动', '今日行动']);
+export const DAILY_DIGEST_QUALITY_LIMITS = {
+  minOrdinaryNews: 5,
+  maxOrdinaryNews: 10,
+  minSources: 3,
+  minCategories: 3,
+  minImages: 3,
+} as const;
 
 function escapeHtml(value: string): string {
   return value
@@ -155,8 +176,8 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
   const normalized = markdown.replace(/\r\n?/g, '\n').trim();
   if (!isDailyDigestMarkdown(normalized)) return null;
   const lines = normalized.split('\n').map(line => line.trim());
-  const date = field(lines[2], '日期：');
-  const theme = field(lines[3], '今日主题：');
+  const date = field(lines.find(line => line.startsWith('日期：')), '日期：');
+  const theme = field(lines.find(line => line.startsWith('今日主题：')), '今日主题：');
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
   const cleanTheme = theme === null ? null : normalizedText(theme, 8, 90);
   if (!cleanTheme) return null;
@@ -300,6 +321,100 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
   };
 }
 
+function isMarketDataStory(story: StoryMeta): boolean {
+  return MARKET_DATA_SOURCES.has(story.source.trim().toLowerCase());
+}
+
+type DigestStory = LeadStory | DigestItem;
+
+function ordinaryNewsStories(digest: DailyDigest): { story: DigestStory; category: string | null }[] {
+  const stories: { story: DigestStory; category: string | null }[] = [];
+  for (const story of digest.leadStories) {
+    if (!isMarketDataStory(story)) stories.push({ story, category: null });
+  }
+  for (const category of digest.categories) {
+    if (NON_NEWS_CATEGORIES.has(category.name)) continue;
+    for (const story of category.items) {
+      if (!isMarketDataStory(story)) stories.push({ story, category: category.name });
+    }
+  }
+  const seen = new Set<string>();
+  return stories.filter(({ story }) => {
+    const key = story.url.trim() ? `url:${story.url.trim()}` : `text:${story.source.trim()}:${story.headline.trim()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+export function selectDailyDigestFeaturedStory(digest: DailyDigest): DailyDigestFeaturedStory | null {
+  const ordinary = ordinaryNewsStories(digest);
+  const lead = ordinary.find(({ story, category }) => category === null && Boolean(story.imageUrl.trim()));
+  const candidate = lead || ordinary.find(({ story }) => Boolean(story.imageUrl.trim()));
+  if (!candidate) return null;
+  const story = candidate.story;
+  return {
+    headline: story.headline,
+    source: story.source,
+    sourceLogoUrl: story.sourceLogoUrl,
+    publishedAt: story.publishedAt,
+    url: story.url,
+    imageUrl: story.imageUrl,
+    summary: 'summary' in story ? story.summary : story.whatHappened,
+    kind: candidate.category === null ? 'lead' : 'category',
+  };
+}
+
+export interface DailyDigestQuality {
+  ordinaryNewsCount: number;
+  sourceCount: number;
+  categoryCount: number;
+  imageCount: number;
+  featured: DailyDigestFeaturedStory;
+}
+
+export function validateDailyDigestQuality(
+  digest: DailyDigest,
+  options: { requireHostedImages?: boolean } = {},
+): DailyDigestQuality {
+  const ordinary = ordinaryNewsStories(digest);
+  const limits = DAILY_DIGEST_QUALITY_LIMITS;
+  const sourceCount = new Set(ordinary.map(({ story }) => story.source.trim()).filter(Boolean)).size;
+  const categoryCount = new Set(ordinary.map(({ category }) => category).filter((value): value is string => Boolean(value))).size;
+  const imageStories = ordinary.filter(({ story }) => Boolean(story.imageUrl.trim()));
+  const imageCount = new Set(imageStories.map(({ story }) => story.imageUrl.trim())).size;
+  if (ordinary.length < limits.minOrdinaryNews || ordinary.length > limits.maxOrdinaryNews) {
+    throw new Error(`普通新闻数量必须为 ${limits.minOrdinaryNews}–${limits.maxOrdinaryNews} 条（当前 ${ordinary.length} 条；市场数据不计入）`);
+  }
+  if (sourceCount < limits.minSources) {
+    throw new Error(`普通新闻至少需要 ${limits.minSources} 个不同来源（当前 ${sourceCount} 个）`);
+  }
+  if (categoryCount < limits.minCategories) {
+    throw new Error(`普通新闻至少需要 ${limits.minCategories} 个不同分类/角度（当前 ${categoryCount} 个）`);
+  }
+  if (imageCount < limits.minImages) {
+    throw new Error(`普通新闻至少需要 ${limits.minImages} 张可靠图片（当前 ${imageCount} 张）`);
+  }
+  if (options.requireHostedImages && imageStories.some(({ story }) => !dailyReportMediaPath(story.imageUrl))) {
+    throw new Error('普通新闻图片必须全部使用本站已托管媒体地址');
+  }
+  const featured = selectDailyDigestFeaturedStory(digest);
+  if (!featured) throw new Error('日报必须包含带有可靠图片的重点新闻或普通新闻作为头版');
+  if (options.requireHostedImages && !dailyReportMediaPath(featured.imageUrl)) {
+    throw new Error('头版新闻必须使用本站已托管媒体地址');
+  }
+  return { ordinaryNewsCount: ordinary.length, sourceCount, categoryCount, imageCount, featured };
+}
+
+export function validateDailyDigestMarkdown(
+  markdown: string,
+  options: { requireHostedImages?: boolean } = {},
+): { digest: DailyDigest; quality: DailyDigestQuality } {
+  const digest = parseDailyDigestMarkdown(markdown);
+  if (!digest) throw new Error('日报正文无法解析为 daily-digest.v1 结构');
+  return { digest, quality: validateDailyDigestQuality(digest, options) };
+}
+
 function formatDateLabel(value: string): string {
   const parsed = new Date(`${value}T00:00:00.000Z`);
   if (Number.isNaN(parsed.getTime())) return value;
@@ -353,7 +468,7 @@ function renderMeta(source: string, publishedAt: string, sourceLogoUrl = '', abs
   return pieces.length ? pieces.join(' · ') : '来源与时间待核验';
 }
 
-function storyImage(story: LeadStory | DigestItem, absoluteMediaUrl = false, hero = false): string {
+function storyImage(story: StoryMeta, absoluteMediaUrl = false, hero = false): string {
   if (!story.imageUrl) return '';
   const mediaPath = dailyReportMediaPath(story.imageUrl);
   if (!mediaPath) return '';
@@ -365,24 +480,24 @@ function storyImage(story: LeadStory | DigestItem, absoluteMediaUrl = false, her
   return `<img class="${className}" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(story.headline)}" width="608" style="${style}">`;
 }
 
-function storyHeadline(story: LeadStory | DigestItem, className: string): string {
+function storyHeadline(story: StoryMeta, className: string): string {
   const headline = marketText(story.headline);
   if (!story.url) return headline;
   return `<a class="${className}" href="${escapeHtml(story.url)}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline;text-decoration-color:#9bb7af;text-underline-offset:4px">${headline} <span class="external-link" aria-hidden="true" style="color:#0d5c4b;font-weight:850;white-space:nowrap">↗</span></a>`;
 }
 
 function Header(digest: DailyDigest, absoluteMediaUrl = false): string {
-  const lead = digest.leadStories[0];
-  const headline = lead ? storyHeadline(lead, 'hero-link') : 'Daily Digest';
-  const meta = lead
-    ? `<div class="hero-story-meta story-meta" style="margin-top:11px;color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(lead.source, lead.publishedAt, lead.sourceLogoUrl, absoluteMediaUrl)}</div>`
+  const featured = selectDailyDigestFeaturedStory(digest);
+  const headline = featured ? storyHeadline(featured, 'hero-link') : 'Daily Digest';
+  const meta = featured
+    ? `<div class="hero-story-meta story-meta" style="margin-top:11px;color:#777b74;font-size:11px;font-weight:650;line-height:1.55;letter-spacing:.035em;overflow-wrap:anywhere">${renderMeta(featured.source, featured.publishedAt, featured.sourceLogoUrl, absoluteMediaUrl)}</div>`
     : '';
-  const image = lead ? storyImage(lead, absoluteMediaUrl, true) : '';
+  const image = featured ? storyImage(featured, absoluteMediaUrl, true) : '';
   return `<header class="daily-newsletter-header" style="padding:34px 0 30px;border-bottom:1px solid #d8d5ce">` +
     `<div style="color:#0d5c4b;font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase">Daily Digest · ${escapeHtml(formatDateLabel(digest.date))}</div>` +
     `<h1 style="margin:10px 0 0;color:#171916;font-family:Georgia,'Songti SC','SimSun',serif;font-size:42px;font-weight:700;line-height:1.15;letter-spacing:-.035em;overflow-wrap:anywhere">${headline}</h1>` +
     meta + image +
-    `<div style="max-width:560px;margin-top:15px;color:#3d423c;font-family:Georgia,'Songti SC','SimSun',serif;font-size:20px;line-height:1.55;overflow-wrap:anywhere">${marketText(digest.theme)}</div>` +
+    `<div style="max-width:560px;margin-top:15px;color:#3d423c;font-family:Georgia,'Songti SC','SimSun',serif;font-size:20px;line-height:1.55;overflow-wrap:anywhere">${marketText(featured?.summary || digest.theme)}</div>` +
     '</header>';
 }
 
@@ -432,10 +547,13 @@ function DigestItemComponent(item: DigestItem, absoluteMediaUrl = false): string
 }
 
 function CategoryDigest(digest: DailyDigest, absoluteMediaUrl = false): string {
+  const featured = selectDailyDigestFeaturedStory(digest);
+  const isFeatured = (item: DigestItem): boolean => featured?.kind === 'category'
+    && Boolean(featured.url && item.url && featured.url === item.url || !featured.url && !item.url && featured.headline === item.headline && featured.source === item.source);
   const categories = digest.categories.map((category, index) =>
     `<div style="padding:${index ? '30px' : '0'} 0 30px;${index ? 'border-top:1px solid #d8d5ce;' : ''}">` +
     `<h3 style="margin:0 0 6px;color:#1d201c;font-family:Georgia,'Songti SC','SimSun',serif;font-size:22px;line-height:1.35">${escapeHtml(category.name)}</h3>` +
-    `${category.items.map(item => DigestItemComponent(item, absoluteMediaUrl)).join('')}</div>`,
+    `${category.items.filter(item => !isFeatured(item)).map(item => DigestItemComponent(item, absoluteMediaUrl)).join('')}</div>`,
   ).join('');
   return Section('Category Digest', '分类简报', 'category-digest', categories);
 }
@@ -487,9 +605,10 @@ function Footer(detailUrl = ''): string {
 
 export function renderDailyDigest(digest: DailyDigest, detailUrl = '', options: { absoluteMediaUrls?: boolean } = {}): string {
   const absoluteMediaUrls = options.absoluteMediaUrls === true;
+  const featured = selectDailyDigestFeaturedStory(digest);
   return `<main class="daily-newsletter" style="width:100%;max-width:680px;margin:0 auto;border-top:5px solid #0d5c4b;background:#fff;color:#20221f;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei','PingFang SC',sans-serif">` +
     `<div class="daily-newsletter-inner" style="padding:0 36px">${Header(digest, absoluteMediaUrls)}${AtAGlance(digest)}` +
-    `${Section('Lead Story', '重点新闻', 'lead-story', digest.leadStories.map((story, index) => LeadStoryComponent(story, index + 1, absoluteMediaUrls, index === 0)).join(''))}` +
+    `${Section('Lead Story', '重点新闻', 'lead-story', digest.leadStories.map((story, index) => LeadStoryComponent(story, index + 1, absoluteMediaUrls, featured?.kind === 'lead' && featured.headline === story.headline && featured.source === story.source)).join(''))}` +
     `${CategoryDigest(digest, absoluteMediaUrls)}${MailBriefings(digest, absoluteMediaUrls)}${MailTasks(digest, absoluteMediaUrls)}${WorthYourTime(digest, absoluteMediaUrls)}${Footer(detailUrl)}</div></main>`;
 }
 

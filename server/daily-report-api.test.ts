@@ -128,7 +128,19 @@ test('日报 HTTP API 使用令牌发布、账号隔离并支持更新后重发�
 
     const list = await request('/api/daily-reports', { headers: { Authorization: `Bearer ${userToken}` } });
     assert.equal(list.status, 200);
-    assert.equal((await list.json()).reports.length, 1);
+    const listPayload = await list.json();
+    assert.equal(listPayload.reports.length, 1);
+    assert.equal(listPayload.total, 1);
+    assert.equal(listPayload.offset, 0);
+    assert.equal(listPayload.hasMore, false);
+
+    const emptyPage = await request('/api/daily-reports?limit=1&offset=1', { headers: { Authorization: `Bearer ${userToken}` } });
+    assert.equal(emptyPage.status, 200);
+    const emptyPagePayload = await emptyPage.json();
+    assert.equal(emptyPagePayload.reports.length, 0);
+    assert.equal(emptyPagePayload.total, 1);
+    assert.equal(emptyPagePayload.offset, 1);
+    assert.equal(emptyPagePayload.hasMore, false);
 
     const otherList = await request('/api/daily-reports', { headers: { Authorization: `Bearer ${otherToken}` } });
     assert.equal((await otherList.json()).reports.length, 0);

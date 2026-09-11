@@ -1,8 +1,8 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
-import { Bot, Send, Loader2, CheckCircle2, Edit3, Eye, EyeOff, MapPin, Clock, RotateCcw, Save, X, StickyNote } from 'lucide-react';
+import { forwardRef, useState, useRef, useCallback, useEffect, useImperativeHandle } from 'react';
+import { Bot, Send, Loader2, CheckCircle2, Edit3, MapPin, Clock, Save, X, StickyNote } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { SCHEDULE_CATEGORY_COLORS, SCHEDULE_CATEGORY_LABELS } from '../utils/scheduleCategories';
-import { NoteBoard, type NoteItem } from './NoteBoard';
+import type { NoteItem } from './NoteBoard';
 
 // ==================== 类型 ====================
 
@@ -71,7 +71,13 @@ interface AiSchedulePanelProps {
   onOpenScheduleMenu?: (id: string, x: number, y: number) => void;
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
-  initialNoteId?: string;
+  onSaveNote: (content: string) => Promise<void>;
+  onChatStateChange?: (state: { hasMessages: boolean; busy: boolean }) => void;
+}
+
+export interface AiSchedulePanelHandle {
+  resetHistory: () => Promise<void>;
+  sendNoteToAi: (note: NoteItem) => void;
 }
 
 // ==================== 常量 ====================
@@ -467,34 +473,31 @@ function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan,
 
 // ==================== 主组件 ====================
 
-export function AiSchedulePanel({
+export const AiSchedulePanel = forwardRef<AiSchedulePanelHandle, AiSchedulePanelProps>(function AiSchedulePanel({
   onSchedulesCreated,
   onOpenSchedule,
   onOpenScheduleMenu,
   collapsed = false,
-  onToggleCollapsed,
-  initialNoteId,
-}: AiSchedulePanelProps) {
+  onSaveNote,
+  onChatStateChange,
+}, ref) {
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [confirmingPlanId, setConfirmingPlanId] = useState<string | null>(null);
   const [savingPlanOperationKey, setSavingPlanOperationKey] = useState<string | null>(null);
-  const [noteItems, setNoteItems] = useState<NoteItem[]>([]);
-  const [notesLoading, setNotesLoading] = useState(false);
-  const [notesError, setNotesError] = useState<string | null>(null);
-  const [noteDrawerOpen, setNoteDrawerOpen] = useState(false);
   const [noteMode, setNoteMode] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
 
-  useEffect(() => {
-    if (initialNoteId) setNoteDrawerOpen(true);
-  }, [initialNoteId]);
-  const { isAuthenticated, token, authHeaders } = useAuth();
+  const { isAuthenticated, authHeaders } = useAuth();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const retryRequestIdsRef = useRef(new Map<string, { requestId: string; expiresAt: number }>());
   const inputRevisionRef = useRef(0);
+
+  useEffect(() => {
+    onChatStateChange?.({ hasMessages: messages.length > 0, busy: isLoading });
+  }, [isLoading, messages.length, onChatStateChange]);
 
   // 加载历史消息
   useEffect(() => {
@@ -519,27 +522,6 @@ export function AiSchedulePanel({
       .catch(() => {});
   }, [isAuthenticated, authHeaders]);
 
-  const loadNoteItems = useCallback(async () => {
-    if (!isAuthenticated) return;
-    setNotesLoading(true);
-    try {
-      const response = await fetch('/api/note-items', { headers: authHeaders() });
-      const data = await readJsonResponse(response);
-      if (!response.ok) throw new Error(data.error || '获取记事失败');
-      setNoteItems(Array.isArray(data.items) ? data.items : []);
-      setNotesError(null);
-    } catch (error) {
-      setNotesError(error instanceof Error ? error.message : '获取记事失败');
-    } finally {
-      setNotesLoading(false);
-    }
-  }, [authHeaders, isAuthenticated]);
-
-  useEffect(() => {
-    if (isAuthenticated) void loadNoteItems();
-    else setNoteItems([]);
-  }, [isAuthenticated, loadNoteItems]);
-
   // 自动滚到底部
   useEffect(() => {
     const container = messagesContainerRef.current;
@@ -550,9 +532,9 @@ export function AiSchedulePanel({
     const textarea = textareaRef.current;
     if (!textarea) return;
     textarea.style.height = 'auto';
-    const nextHeight = Math.min(textarea.scrollHeight, 96);
-    textarea.style.height = `${Math.max(nextHeight, 38)}px`;
-    textarea.style.overflowY = textarea.scrollHeight > 96 ? 'auto' : 'hidden';
+    const nextHeight = Math.min(textarea.scrollHeight, 144);
+    textarea.style.height = `${Math.max(nextHeight, 48)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 144 ? 'auto' : 'hidden';
   }, [inputText, collapsed]);
 
   const handleUpdatePlanOperation = useCallback(async (planId: string, key: string, patch: Record<string, unknown>) => {
@@ -675,87 +657,29 @@ export function AiSchedulePanel({
     void submitMessage(inputText, { clearComposer: true });
   }, [inputText, submitMessage]);
 
-  const updateNoteFromApi = useCallback(async (id: string, body: Record<string, unknown>) => {
-    const response = await fetch(`/api/note-items/${encodeURIComponent(id)}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(body),
-    });
-    const data = await readJsonResponse(response);
-    if (!response.ok || !data.item) throw new Error(data.error || '更新记事失败');
-    setNoteItems(previous => previous.map(item => item.id === id ? data.item : item));
-    setNotesError(null);
-  }, [authHeaders]);
-
-  const handleToggleNote = useCallback(async (note: NoteItem) => {
-    try {
-      await updateNoteFromApi(note.id, { completed: !note.completed });
-    } catch (error) {
-      setNotesError(error instanceof Error ? error.message : '更新记事失败');
-      throw error;
-    }
-  }, [updateNoteFromApi]);
-
-  const handleEditNote = useCallback(async (note: NoteItem, content: string) => {
-    try {
-      await updateNoteFromApi(note.id, { content });
-    } catch (error) {
-      setNotesError(error instanceof Error ? error.message : '更新记事失败');
-      throw error;
-    }
-  }, [updateNoteFromApi]);
-
-  const handleColorChange = useCallback(async (note: NoteItem, color: NoteItem['color']) => {
-    try {
-      await updateNoteFromApi(note.id, { color });
-    } catch (error) {
-      setNotesError(error instanceof Error ? error.message : '更新记事颜色失败');
-      throw error;
-    }
-  }, [updateNoteFromApi]);
-
-  const handleDeleteNote = useCallback(async (note: NoteItem) => {
-    try {
-      const response = await fetch(`/api/note-items/${encodeURIComponent(note.id)}`, {
-        method: 'DELETE',
-        headers: authHeaders(),
-      });
-      const data = await readJsonResponse(response);
-      if (!response.ok || !data.success) throw new Error(data.error || '删除记事失败');
-      setNoteItems(previous => previous.filter(item => item.id !== note.id));
-      setNotesError(null);
-    } catch (error) {
-      setNotesError(error instanceof Error ? error.message : '删除记事失败');
-      throw error;
-    }
-  }, [authHeaders]);
-
   const handleSaveNotes = useCallback(async () => {
     if (isLoading || savingNotes || !inputText.trim()) return;
     const draftRevision = inputRevisionRef.current;
     setSavingNotes(true);
-    setNotesError(null);
     try {
-      const response = await fetch('/api/note-items', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify({ content: inputText }),
-      });
-      const data = await readJsonResponse(response);
-      if (!response.ok) throw new Error(data.error || '保存记事失败');
-      const created = Array.isArray(data.items) ? data.items as NoteItem[] : [];
-      setNoteItems(previous => [...created, ...previous]);
+      await onSaveNote(inputText);
       if (inputRevisionRef.current === draftRevision) {
         inputRevisionRef.current += 1;
         setInputText('');
       }
     } catch (error) {
-      setNotesError(error instanceof Error ? error.message : '保存记事失败');
+      setMessages(previous => [...previous, {
+        id: (Date.now() + 3).toString(),
+        role: 'assistant',
+        type: 'error',
+        text: error instanceof Error ? error.message : '保存记事失败',
+        timestamp: new Date().toISOString(),
+      }]);
     } finally {
       setSavingNotes(false);
       textareaRef.current?.focus();
     }
-  }, [authHeaders, inputText, isLoading, savingNotes]);
+  }, [inputText, isLoading, onSaveNote, savingNotes]);
 
   const handleSendNoteToAi = useCallback((note: NoteItem) => {
     void submitMessage(note.content, { clearComposer: false });
@@ -841,13 +765,27 @@ export function AiSchedulePanel({
     }
   };
 
-  const clearHistory = async () => {
+  const clearHistory = useCallback(async () => {
     try {
-      await fetch('/api/ai-schedule/history', { method: 'DELETE', headers: authHeaders() });
-    } finally {
+      const response = await fetch('/api/ai-schedule/history', { method: 'DELETE', headers: authHeaders() });
+      const data = await readJsonResponse(response);
+      if (!response.ok) throw new Error(data.error || '重置对话失败');
       setMessages([]);
+    } catch (error) {
+      setMessages(previous => [...previous, {
+        id: (Date.now() + 4).toString(),
+        role: 'assistant',
+        type: 'error',
+        text: error instanceof Error ? error.message : '重置对话失败',
+        timestamp: new Date().toISOString(),
+      }]);
     }
-  };
+  }, [authHeaders]);
+
+  useImperativeHandle(ref, () => ({
+    resetHistory: clearHistory,
+    sendNoteToAi: handleSendNoteToAi,
+  }), [clearHistory, handleSendNoteToAi]);
 
   const EXAMPLES = [
     '今天上午去车站接人，下午两点开会，晚上约朋友吃饭',
@@ -856,53 +794,9 @@ export function AiSchedulePanel({
     '北京明天天气怎么样？',
     '帮我分析一下如何安排深度工作时间',
   ];
-  const pendingNoteCount = noteItems.filter(item => !item.completed).length;
-
   return (
     <div className="ai-assistant-workspace">
       <div className="flex flex-col h-full schedule-ai-panel" style={{ backgroundColor: 'var(--td-bg-color-container)' }}>
-      {/* 工具栏：保持简洁，主要内容留给对话和记事板。 */}
-      <div className="schedule-ai-toolbar" style={{ borderBottom: '1px solid var(--td-component-stroke)' }}>
-        <div className="schedule-ai-toolbar-left">
-          {!collapsed && messages.length > 0 && (
-            <button type="button" className="schedule-ai-toolbar-button" onClick={clearHistory} title="重置对话" aria-label="重置对话">
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>重置</span>
-            </button>
-          )}
-        </div>
-        <div className="schedule-ai-heading-actions">
-          <button
-            type="button"
-            className="note-board-trigger"
-            onClick={() => setNoteDrawerOpen(open => !open)}
-            aria-expanded={noteDrawerOpen}
-            aria-controls="ai-note-board"
-            title="打开 AI 记事板"
-          >
-            <span className="note-board-trigger-icon"><StickyNote size={18} aria-hidden="true" /></span>
-            <span className="note-board-trigger-label">记事板</span>
-            {pendingNoteCount > 0 && <em aria-label={`${pendingNoteCount} 条未完成记事`}>{pendingNoteCount}</em>}
-          </button>
-          {onToggleCollapsed && (
-            <button
-              type="button"
-              onClick={onToggleCollapsed}
-              className="p-1.5 rounded-lg hover:opacity-70 transition-opacity"
-              style={{
-                color: 'var(--td-text-color-secondary)',
-                backgroundColor: 'transparent',
-                border: 'none',
-              }}
-              aria-label={collapsed ? '展开 AI 日程助手' : '隐藏 AI 日程助手'}
-              title={collapsed ? '展开 AI 日程助手' : '隐藏 AI 日程助手'}
-            >
-              {collapsed ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-            </button>
-          )}
-        </div>
-      </div>
-
       {!collapsed && (
         <>
           {/* 对话区域 */}
@@ -1040,21 +934,6 @@ export function AiSchedulePanel({
         </>
       )}
       </div>
-      <NoteBoard
-        id="ai-note-board"
-        notes={noteItems}
-        loading={notesLoading}
-        error={notesError}
-        aiBusy={isLoading}
-        drawerOpen={noteDrawerOpen}
-        onCloseDrawer={() => setNoteDrawerOpen(false)}
-        onToggleCompleted={handleToggleNote}
-        onEdit={handleEditNote}
-        onColorChange={handleColorChange}
-        onDelete={handleDeleteNote}
-        onSendToAi={handleSendNoteToAi}
-      />
-      {noteDrawerOpen && <button type="button" className="note-board-scrim" onClick={() => setNoteDrawerOpen(false)} aria-label="关闭记事板" />}
     </div>
   );
-}
+});

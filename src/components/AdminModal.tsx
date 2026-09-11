@@ -40,7 +40,7 @@ const PRODUCTION_INVITE_COMMAND = `$sshKey = 'C:\\Users\\Elysia\\.ssh\\gotimothy
 
 // ==================== 用户管理表格 ====================
 function UserManagementTab({ onClose }: { onClose?: () => void }) {
-  const { authHeaders } = useAuth();
+  const { authHeaders, user: currentUser } = useAuth();
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
   const [total, setTotal] = useState(0);
@@ -48,6 +48,8 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [showInviteHelp, setShowInviteHelp] = useState(false);
   const [inviteCommandCopied, setInviteCommandCopied] = useState(false);
 
@@ -57,17 +59,19 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetch(`/api/admin/users?page=${page}&pageSize=${pageSize}&search=${encodeURIComponent(searchText)}`, {
         headers: authHeadersRef.current(),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setUsers(data.users || []);
-        setTotal(data.total || 0);
-      }
-    } catch {
-      MessagePlugin.error('加载用户列表失败');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '加载用户列表失败');
+      setUsers(data.users || []);
+      setTotal(data.total || 0);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '加载用户列表失败';
+      setLoadError(message);
+      MessagePlugin.error(message);
     } finally {
       setLoading(false);
     }
@@ -77,52 +81,61 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
     loadUsers();
   }, [loadUsers]);
 
+  const isCurrentAccount = (target: User) => currentUser?.id === target.id;
+  const isDangerousActionProtected = (target: User) => isCurrentAccount(target) || target.role === 'admin';
+  const actionFailure = (error: unknown, fallback: string) => {
+    const message = error instanceof Error ? error.message : fallback;
+    setActionError(message);
+    MessagePlugin.error(message);
+  };
+
   const handleRoleChange = async (userId: string, newRole: 'admin' | 'user') => {
-    setLoadingAction(userId);
+    const actionKey = `${userId}:role`;
+    setActionError(null);
+    setLoadingAction(actionKey);
     try {
       const res = await fetch(`/api/admin/users/${userId}/role`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...authHeadersRef.current() },
         body: JSON.stringify({ role: newRole }),
       });
-      if (res.ok) {
-        MessagePlugin.success('角色已更新');
-        loadUsers();
-      } else {
-        const d = await res.json();
-        MessagePlugin.error(d.error || '设置失败');
-      }
-    } catch {
-      MessagePlugin.error('设置失败');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '设置失败');
+      MessagePlugin.success('角色已更新');
+      await loadUsers();
+    } catch (error) {
+      actionFailure(error, '设置失败');
     } finally {
       setLoadingAction(null);
     }
   };
 
   const handleToggleDisabled = async (userId: string, disabled: boolean) => {
-    setLoadingAction(userId);
+    const actionKey = `${userId}:disabled`;
+    setActionError(null);
+    setLoadingAction(actionKey);
     try {
       const res = await fetch(`/api/admin/users/${userId}/disabled`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', ...authHeadersRef.current() },
         body: JSON.stringify({ disabled }),
       });
-      if (res.ok) {
-        MessagePlugin.success(disabled ? '已禁用' : '已启用');
-        loadUsers();
-      }
-    } catch {
-      MessagePlugin.error('操作失败');
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '操作失败');
+      MessagePlugin.success(disabled ? '已禁用' : '已启用');
+      await loadUsers();
+    } catch (error) {
+      actionFailure(error, '操作失败');
     } finally {
       setLoadingAction(null);
     }
   };
 
   const handleToggleAdminApiSharing = async (user: User) => {
-    if (user.role === 'admin') return;
     const previous = Boolean(user.admin_shared_api_enabled);
     const enabled = !previous;
     const actionKey = `${user.id}:api-share`;
+    setActionError(null);
     setUsers(current => current.map(row => row.id === user.id ? { ...row, admin_shared_api_enabled: enabled } : row));
     setLoadingAction(actionKey);
     try {
@@ -142,7 +155,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
       }
     } catch (error) {
       setUsers(current => current.map(row => row.id === user.id ? { ...row, admin_shared_api_enabled: previous } : row));
-      MessagePlugin.error(error instanceof Error ? error.message : '共享 API 权限更新失败');
+      actionFailure(error, '共享 API 权限更新失败');
     } finally {
       setLoadingAction(null);
     }
@@ -162,6 +175,9 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
   const handleClearData = async (user: User) => {
     if (!window.confirm(`确定要清空用户 ${user.email} 的所有数据吗？\n包括：日程、待办、AI对话历史、API Key 等。\n该用户的账号和密码将保留。`)) return;
 
+    const actionKey = `${user.id}:clear`;
+    setActionError(null);
+    setLoadingAction(actionKey);
     try {
       const res = await fetch(`/api/admin/users/${user.id}/clear-data`, {
         method: 'POST',
@@ -171,20 +187,24 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
       
       if (res.ok) {
         MessagePlugin.success(`已清空 ${user.email} 的数据`);
-        loadUsers();
       } else {
-        const d = await res.json();
-        MessagePlugin.error(d.error || '操作失败');
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || '操作失败');
       }
-    } catch (e) {
-      console.error('[Admin] Clear data error:', e);
-      MessagePlugin.error('清空失败，请查看控制台');
+      await loadUsers();
+    } catch (error) {
+      actionFailure(error, '清空失败');
+    } finally {
+      setLoadingAction(null);
     }
   };
 
   const handleDeleteUser = async (user: User) => {
     if (!window.confirm(`⚠️ 危险操作！\n\n确定要删除用户 ${user.email} 吗？\n\n此操作将：\n- 删除该用户的所有日程和待办\n- 删除 AI 对话历史\n- 删除 API Key\n- 删除用户账号\n\n此操作不可恢复！`)) return;
 
+    const actionKey = `${user.id}:delete`;
+    setActionError(null);
+    setLoadingAction(actionKey);
     try {
       const res = await fetch(`/api/admin/users/${user.id}`, {
         method: 'DELETE',
@@ -194,14 +214,15 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
       
       if (res.ok) {
         MessagePlugin.success(`已删除用户 ${user.email}`);
-        loadUsers();
       } else {
-        const d = await res.json();
-        MessagePlugin.error(d.error || '删除失败');
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || '删除失败');
       }
-    } catch (e) {
-      console.error('[Admin] Delete user error:', e);
-      MessagePlugin.error('删除失败，请查看控制台');
+      await loadUsers();
+    } catch (error) {
+      actionFailure(error, '删除失败');
+    } finally {
+      setLoadingAction(null);
     }
   };
 
@@ -230,7 +251,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             color: row.role === 'admin' ? '#6D28D9' : '#1D4ED8',
           }}
         >
-          {row.role === 'admin' ? '管理员' : '用户'}
+          {row.role === 'admin' ? '管理员' : '用户'}{isCurrentAccount(row) ? ' · 当前账户' : ''}
         </span>
       ),
     },
@@ -275,7 +296,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
       title: '操作',
       width: 420,
       cell: ({ row }: { row: User }) => (
-        <div className="flex items-center gap-1 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap" title={isCurrentAccount(row) ? '当前账户：不能修改自己的管理员身份、禁用、清空或删除' : row.role === 'admin' ? '其他管理员：请先降级为普通用户后再进行危险操作' : undefined}>
           {/* 角色切换 */}
           <Select
             size="small"
@@ -286,8 +307,10 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
               { label: '管理员', value: 'admin' },
               { label: '用户', value: 'user' },
             ]}
-            disabled={row.role === 'admin'}
+            loading={loadingAction === `${row.id}:role`}
+            disabled={isCurrentAccount(row)}
           />
+          {row.role === 'admin' && !isCurrentAccount(row) && <span className="admin-action-hint">先降级后操作</span>}
           {/* 管理员 API 共享 */}
           <Button
             size="small"
@@ -295,9 +318,8 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             theme={row.admin_shared_api_enabled ? 'primary' : 'default'}
             onClick={() => handleToggleAdminApiSharing(row)}
             loading={loadingAction === `${row.id}:api-share`}
-            disabled={row.role === 'admin'}
           >
-            {row.role === 'admin' ? '管理员账号' : row.admin_shared_api_enabled ? '取消共享' : '共享 API'}
+            {row.admin_shared_api_enabled ? '取消共享' : '共享 API'}
           </Button>
           <span
             className="text-xs px-2 py-0.5 rounded-full"
@@ -313,8 +335,8 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             size="small"
             variant="outline"
             onClick={() => handleToggleDisabled(row.id, !row.disabled)}
-            loading={loadingAction === row.id}
-            disabled={row.role === 'admin'}
+            loading={loadingAction === `${row.id}:disabled`}
+            disabled={isDangerousActionProtected(row)}
           >
             {row.disabled ? '启用' : '禁用'}
           </Button>
@@ -323,8 +345,8 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             size="small"
             variant="outline"
             onClick={() => handleClearData(row)}
-            loading={loadingAction === row.id}
-            disabled={row.role === 'admin'}
+            loading={loadingAction === `${row.id}:clear`}
+            disabled={isDangerousActionProtected(row)}
           >
             清空数据
           </Button>
@@ -334,8 +356,8 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
             variant="outline"
             theme="danger"
             onClick={() => handleDeleteUser(row)}
-            loading={loadingAction === row.id}
-            disabled={row.role === 'admin'}
+            loading={loadingAction === `${row.id}:delete`}
+            disabled={isDangerousActionProtected(row)}
           >
             删除
           </Button>
@@ -401,6 +423,11 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
           共 {total} 个用户
         </span>
       </div>
+      {(loadError || actionError) && (
+        <div className="admin-action-error mb-3" role="alert">
+          {loadError || actionError}
+        </div>
+      )}
 
       {/* 表格 */}
       <div className="admin-user-table-wrap">
@@ -429,7 +456,7 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
                   color: user.role === 'admin' ? '#6D28D9' : '#1D4ED8',
                 }}
               >
-                {user.role === 'admin' ? '管理员' : '用户'}
+                {user.role === 'admin' ? '管理员' : '用户'}{isCurrentAccount(user) ? ' · 当前账户' : ''}
               </span>
             </div>
             <div className="admin-user-card-meta">
@@ -442,7 +469,8 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
                 value={user.role}
                 onChange={(value) => handleRoleChange(user.id, value as 'admin' | 'user')}
                 options={[{ label: '管理员', value: 'admin' }, { label: '用户', value: 'user' }]}
-                disabled={user.role === 'admin'}
+                loading={loadingAction === `${user.id}:role`}
+                disabled={isCurrentAccount(user)}
               />
               <Button
                 size="small"
@@ -450,22 +478,23 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
                 theme={user.admin_shared_api_enabled ? 'primary' : 'default'}
                 onClick={() => handleToggleAdminApiSharing(user)}
                 loading={loadingAction === `${user.id}:api-share`}
-                disabled={user.role === 'admin'}
               >
-                {user.role === 'admin' ? '管理员账号' : user.admin_shared_api_enabled ? '取消共享' : '共享 API'}
+                {user.admin_shared_api_enabled ? '取消共享' : '共享 API'}
               </Button>
               <Button
                 size="small"
                 variant="outline"
                 onClick={() => handleToggleDisabled(user.id, !user.disabled)}
-                loading={loadingAction === user.id}
-                disabled={user.role === 'admin'}
+                loading={loadingAction === `${user.id}:disabled`}
+                disabled={isDangerousActionProtected(user)}
+                title={isCurrentAccount(user) ? '不能禁用自己的账号' : user.role === 'admin' ? '请先降级为普通用户' : undefined}
               >
                 {user.disabled ? '启用' : '禁用'}
               </Button>
-              <Button size="small" variant="outline" onClick={() => handleClearData(user)} disabled={user.role === 'admin'}>清空数据</Button>
-              <Button size="small" variant="outline" theme="danger" onClick={() => handleDeleteUser(user)} disabled={user.role === 'admin'}>删除</Button>
+              <Button size="small" variant="outline" onClick={() => handleClearData(user)} loading={loadingAction === `${user.id}:clear`} disabled={isDangerousActionProtected(user)}>清空数据</Button>
+              <Button size="small" variant="outline" theme="danger" onClick={() => handleDeleteUser(user)} loading={loadingAction === `${user.id}:delete`} disabled={isDangerousActionProtected(user)}>删除</Button>
             </div>
+            {user.role === 'admin' && !isCurrentAccount(user) && <div className="admin-user-card-hint">先降级为普通用户后可禁用、清空或删除</div>}
           </article>
         ))}
       </div>

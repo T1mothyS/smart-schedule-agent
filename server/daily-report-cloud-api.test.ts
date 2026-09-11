@@ -16,6 +16,7 @@ process.env.APP_URL = 'http://127.0.0.1:0';
 
 const api = await import('./index.js');
 const db = await import('./db.js');
+const activity = await import('./activity-store.js');
 const cloudAuth = await import('./daily-report-cloud-auth.js');
 const cloudStore = await import('./daily-report-cloud-store.js');
 const backups = await import('./backup-service.js');
@@ -48,6 +49,74 @@ cloudStore.replaceDailyReportCloudContext(userId, {
   profile: { name: 'Cloud test' },
   preferences: { focus: ['security'] },
 });
+
+const cloudMediaRoot = path.join(tempDir, 'daily-report-media');
+fs.mkdirSync(cloudMediaRoot, { recursive: true });
+const cloudMediaUrls = ['a', 'b', 'c', 'd', 'e'].map(letter => `/daily-report-media/${letter.repeat(64)}.jpg`);
+for (const [index, letter] of ['a', 'b', 'c', 'd', 'e'].entries()) {
+  fs.writeFileSync(path.join(cloudMediaRoot, `${letter.repeat(64)}.jpg`), `cloud-media-${index}`);
+}
+const cloudMarkdown = [
+  '# Daily Digest',
+  '<!-- daily-digest.v1 -->',
+  '## Today at a Glance',
+  '1. 第一条公开资料重点足够清楚',
+  '2. 第二条公开资料重点足够清楚',
+  '3. 第三条公开资料重点足够清楚',
+  '',
+  '日期：2026-09-09',
+  '今日主题：五条普通新闻组成三个以上可核验角度',
+  '',
+  '## Lead Story',
+  '### Lead headline',
+  '来源：Source One',
+  '时间：2026-09-09',
+  '链接：https://example.com/lead',
+  `图片：${cloudMediaUrls[0]}`,
+  '#### What happened / 发生了什么',
+  '内容：公开资料记录了这条新闻的事实变化，并保留了必要的核验边界。',
+  '#### Why it matters / 为什么重要',
+  '内容：这会影响后续判断顺序，需要继续核对经营和风险信号。',
+  '#### What to watch / 接下来关注什么',
+  '内容：继续关注下一项可核验指标和明确时间节点。',
+  '',
+  '## Category Digest',
+  '### Angle One',
+  '#### Category headline one',
+  '来源：Source Two',
+  '时间：2026-09-09',
+  '链接：https://example.com/one',
+  `图片：${cloudMediaUrls[1]}`,
+  '摘要：这条普通新闻提供了一个独立且可核验的观察角度。',
+  '',
+  '### Angle Two',
+  '#### Category headline two',
+  '来源：Source Three',
+  '时间：2026-09-09',
+  '链接：https://example.com/two',
+  `图片：${cloudMediaUrls[2]}`,
+  '摘要：这条普通新闻补充了第二个独立且可核验的观察角度。',
+  '',
+  '### Angle Three',
+  '#### Category headline three',
+  '来源：Source Four',
+  '时间：2026-09-09',
+  '链接：https://example.com/three',
+  `图片：${cloudMediaUrls[3]}`,
+  '摘要：这条普通新闻补充了第三个独立且可核验的观察角度。',
+  '',
+  '### Angle Four',
+  '#### Category headline four',
+  '来源：Source Five',
+  '时间：2026-09-09',
+  '链接：https://example.com/four',
+  `图片：${cloudMediaUrls[4]}`,
+  '摘要：这条普通新闻补充了第四个独立且可核验的观察角度。',
+  '',
+  '## Worth Your Time',
+  '## Footer',
+  '由日报 V2 自动整理。',
+].join('\n');
 
 test('日报云端 Context 会进入加密用户备份，但不备份 OAuth 令牌', () => {
   const password = 'cloud-context-backup-password';
@@ -239,18 +308,61 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     assert.match(limitedPublishBody.result._meta['mcp/www_authenticate'][0], /error_description="/);
 
     const historyBeforeDryRun = cloudStore.listDailyReportCloudHistory(userId, 30).length;
+    const notificationsBeforeDryRun = activity.listNotifications(userId).length;
 
     const dryRun = await request('/mcp', {
       method: 'POST',
       headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: {
         name: 'daily_report.publish',
-        arguments: { date: '2026-09-09', markdown: '# Daily Digest\n<!-- daily-digest.v1 -->\n## Today at a Glance\n- cloud test', dry_run: true },
+        arguments: { date: '2026-09-09', markdown: cloudMarkdown, dry_run: true },
       } }),
     });
     assert.equal(dryRun.status, 200);
-    assert.equal((await dryRun.json() as any).result.structuredContent.status, 'VALIDATED_NOT_PUBLISHED');
+    const dryRunBody = await dryRun.json() as any;
+    assert.equal(dryRunBody.result.structuredContent.status, 'VALIDATED_NOT_PUBLISHED');
+    assert.equal(dryRunBody.result.structuredContent.imageCount, 5);
+    assert.equal(dryRunBody.result.structuredContent.mediaCount, 5);
+    assert.equal(dryRunBody.result.structuredContent.featuredHeadline, 'Lead headline');
+    assert.equal(dryRunBody.result.structuredContent.featuredImageUrl, `http://127.0.0.1:0${cloudMediaUrls[0]}`);
     assert.equal(cloudStore.listDailyReportCloudHistory(userId, 30).length, historyBeforeDryRun);
+    assert.equal(activity.listNotifications(userId).length, notificationsBeforeDryRun);
+
+    const twoImageMarkdown = cloudMarkdown
+      .replaceAll(cloudMediaUrls[2], cloudMediaUrls[0])
+      .replaceAll(cloudMediaUrls[3], cloudMediaUrls[0])
+      .replaceAll(cloudMediaUrls[4], cloudMediaUrls[1]);
+    const twoImageRun = await request('/mcp', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 42, method: 'tools/call', params: {
+        name: 'daily_report.publish',
+        arguments: { date: '2026-09-09', markdown: twoImageMarkdown, dry_run: true },
+      } }),
+    });
+    assert.equal(twoImageRun.status, 200);
+    const twoImageBody = await twoImageRun.json() as any;
+    assert.equal(twoImageBody.result.isError, true);
+    assert.match(twoImageBody.result.content?.[0]?.text || '', /至少需要 3 张可靠图片/);
+    assert.equal(activity.listNotifications(userId).length, notificationsBeforeDryRun);
+
+    const missingMediaMarkdown = cloudMarkdown.replace(
+      cloudMediaUrls[4],
+      `/daily-report-media/${'f'.repeat(64)}.jpg`,
+    );
+    const missingMediaRun = await request('/mcp', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 43, method: 'tools/call', params: {
+        name: 'daily_report.publish',
+        arguments: { date: '2026-09-09', markdown: missingMediaMarkdown, dry_run: true },
+      } }),
+    });
+    assert.equal(missingMediaRun.status, 200);
+    const missingMediaBody = await missingMediaRun.json() as any;
+    assert.equal(missingMediaBody.result.isError, true);
+    assert.match(missingMediaBody.result.content?.[0]?.text || '', /尚未上传/);
+    assert.equal(activity.listNotifications(userId).length, notificationsBeforeDryRun);
 
     const failedPublish = await request('/mcp', {
       method: 'POST',
@@ -272,7 +384,7 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
       headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 41, method: 'tools/call', params: {
         name: 'daily_report.publish',
-        arguments: { date: '2026-09-09', markdown: '# Daily Digest\n<!-- daily-digest.v1 -->\n## Today at a Glance\n- cloud test', dry_run: false },
+        arguments: { date: '2026-09-09', markdown: cloudMarkdown, dry_run: false },
       } }),
     });
     assert.equal(published.status, 200);

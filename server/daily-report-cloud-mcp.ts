@@ -17,7 +17,8 @@ import {
 } from './daily-report-cloud-store.js';
 import { getSchedulesByDate } from './schedule-store.js';
 import { readUserMail } from './user-mail-service.js';
-import { localizeDailyDigestImages, summarizeDailyReportMedia } from './daily-report-media-service.js';
+import { assertHostedDailyReportMedia, localizeDailyDigestImages, summarizeDailyReportMedia } from './daily-report-media-service.js';
+import { validateDailyDigestMarkdown } from './daily-digest-template.js';
 
 const MAX_MCP_BODY_BYTES = 1_000_000;
 const CLOUD_MARKER = '<!-- daily-digest.v1 -->';
@@ -256,12 +257,16 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
   if (name === 'daily_report.publish') {
     const date = stringValue(args.date);
     assertCloudMarkdown(date, args.markdown);
+    // 先验证新闻数量、来源、分类角度、图片覆盖和头版候选，再进入媒体下载。
+    validateDailyDigestMarkdown(args.markdown);
     // dry-run 也在服务端完成媒体下载、签名校验和哈希缓存，保证正式调用不会才发现云端无法托管图片/logo。
     const localizedMarkdown = await localizeDailyDigestImages(args.markdown, {
       requireHostedMedia: false,
       requireAllMedia: true,
       inferSourceLogos: true,
     });
+    assertHostedDailyReportMedia(localizedMarkdown);
+    const validated = validateDailyDigestMarkdown(localizedMarkdown, { requireHostedImages: true });
     const media = summarizeDailyReportMedia(localizedMarkdown);
     if (args.dry_run === true) {
       return {
@@ -270,6 +275,8 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
         mediaCount: media.mediaCount,
         imageCount: media.imageCount,
         logoCount: media.logoCount,
+        featuredHeadline: validated.quality.featured.headline,
+        featuredImageUrl: validated.quality.featured.imageUrl,
       };
     }
     const result = await publishDailyReport(auth.userId, date, localizedMarkdown, { requireHostedMedia: true });
@@ -282,6 +289,8 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
       mediaCount: media.mediaCount,
       imageCount: media.imageCount,
       logoCount: media.logoCount,
+      featuredHeadline: validated.quality.featured.headline,
+      featuredImageUrl: validated.quality.featured.imageUrl,
       report: {
         headline: result.report.headline,
         excerpt: result.report.excerpt,

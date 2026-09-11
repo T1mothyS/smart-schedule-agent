@@ -23,6 +23,9 @@ interface DailyReport extends DailyReportSummary {
   html: string;
 }
 
+const INITIAL_REPORT_LIMIT = 8;
+const HISTORY_PAGE_SIZE = 7;
+
 const emailStatusLabel: Record<EmailStatus, string> = {
   DISABLED: '邮件未启用',
   QUEUED: '邮件排队中',
@@ -66,24 +69,43 @@ export function DailyReportsPage() {
   const navigate = useNavigate();
   const [reports, setReports] = useState<DailyReportSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    setReports([]);
     try {
-      const response = await fetch('/api/daily-reports', { headers: authHeaders() });
+      const response = await fetch(`/api/daily-reports?limit=${INITIAL_REPORT_LIMIT}&offset=0`, { headers: authHeaders() });
       if (!response.ok) throw await readError(response, '日报加载失败');
       const result = await response.json();
       setReports(result.reports || []);
+      setHasMore(Boolean(result.hasMore));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '日报加载失败');
     } finally {
       setLoading(false);
     }
   }, [authHeaders]);
+
+  const loadMore = async () => {
+    if (loadingMore || loading || !hasMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/daily-reports?limit=${HISTORY_PAGE_SIZE}&offset=${reports.length}`, { headers: authHeaders() });
+      if (!response.ok) throw await readError(response, '更多日报加载失败');
+      const result = await response.json();
+      setReports(current => [...current, ...(result.reports || [])]);
+      setHasMore(Boolean(result.hasMore));
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : '更多日报加载失败');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   useEffect(() => { void load(); }, [load]);
 
@@ -137,45 +159,96 @@ export function DailyReportsPage() {
           <span>请使用上方“重试”重新读取。</span>
         </div>
       ) : reports.length > 0 ? (
-        <div className="daily-reports-grid">
-          {reports.map(item => (
-            <article className="daily-report-card" key={item.id}>
-              <button
-                type="button"
-                className="daily-report-card-open"
-                onClick={() => navigate(`/reports/${item.date}`)}
-                aria-label={`打开 ${formatReportDate(item.date)} 日报`}
-              >
-                {item.heroImageUrl && <img className="daily-report-card-hero" src={item.heroImageUrl} alt="" aria-hidden="true" />}
-                <div className="daily-report-card-body">
-                <div className="daily-report-card-topline">
-                  <span className="daily-report-card-date">{formatReportDate(item.date)}</span>
-                  <span className={`daily-report-email-status ${item.emailStatus.toLowerCase()}`}>
-                    <Mail size={13} /> {emailStatusLabel[item.emailStatus]}
-                  </span>
-                </div>
-                {item.headline && <h2 className="daily-report-card-headline">{item.headline}</h2>}
-                <p>{item.excerpt || '这份日报没有可显示的摘要。'}</p>
-                <span className="daily-report-card-meta">更新于 {formatUpdatedAt(item.updatedAt)} <span aria-hidden="true">→</span></span>
-                </div>
-              </button>
-              {item.emailStatus === 'FAILED' && item.emailNotificationId && (
-                <div className="daily-report-card-footer">
-                  <span>邮件发送失败，可在此确认重试</span>
+        <div className="daily-reports-layout">
+          {(() => {
+            const [latest, ...history] = reports;
+            const renderEmailRetry = (item: DailyReportSummary) => item.emailStatus === 'FAILED' && item.emailNotificationId ? (
+              <div className="daily-report-card-footer">
+                <span>邮件发送失败，可在此确认重试</span>
+                <button
+                  type="button"
+                  className="daily-report-retry-button"
+                  onClick={() => void retryEmail(item)}
+                  disabled={retryingId === item.id}
+                  aria-label={`重试 ${formatReportDate(item.date)} 日报邮件`}
+                >
+                  <RefreshCw size={14} className={retryingId === item.id ? 'spin' : undefined} />
+                  {retryingId === item.id ? '重新排队中…' : '确认重试'}
+                </button>
+              </div>
+            ) : null;
+            return (
+              <>
+                <article className="daily-report-featured" key={latest.id}>
                   <button
                     type="button"
-                    className="daily-report-retry-button"
-                    onClick={() => void retryEmail(item)}
-                    disabled={retryingId === item.id}
-                    aria-label={`重试 ${formatReportDate(item.date)} 日报邮件`}
+                    className="daily-report-featured-open"
+                    onClick={() => navigate(`/reports/${latest.date}`)}
+                    aria-label={`打开最新的 ${formatReportDate(latest.date)} 日报`}
                   >
-                    <RefreshCw size={14} className={retryingId === item.id ? 'spin' : undefined} />
-                    {retryingId === item.id ? '重新排队中…' : '确认重试'}
+                    {latest.heroImageUrl && <img className="daily-report-featured-hero" src={latest.heroImageUrl} alt="" aria-hidden="true" />}
+                    <div className="daily-report-featured-body">
+                      <div className="daily-report-featured-kicker">FRONT PAGE · 最新日报</div>
+                      <div className="daily-report-card-topline">
+                        <span className="daily-report-card-date">{formatReportDate(latest.date)}</span>
+                        <span className={`daily-report-email-status ${latest.emailStatus.toLowerCase()}`}>
+                          <Mail size={13} /> {emailStatusLabel[latest.emailStatus]}
+                        </span>
+                      </div>
+                      {latest.headline && <h2 className="daily-report-featured-headline">{latest.headline}</h2>}
+                      <p>{latest.excerpt || '这份日报没有可显示的摘要。'}</p>
+                      <span className="daily-report-card-meta">更新于 {formatUpdatedAt(latest.updatedAt)} <span aria-hidden="true">→</span></span>
+                    </div>
                   </button>
-                </div>
-              )}
-            </article>
-          ))}
+                  {renderEmailRetry(latest)}
+                </article>
+
+                {history.length > 0 && (
+                  <section className="daily-report-history" aria-labelledby="daily-report-history-title">
+                    <div className="daily-report-history-heading">
+                      <div>
+                        <div className="daily-reports-eyebrow">ARCHIVE</div>
+                        <h2 id="daily-report-history-title">历史日报</h2>
+                      </div>
+                      <span>{history.length} 份已加载</span>
+                    </div>
+                    <div className="daily-reports-history-list">
+                      {history.map(item => (
+                        <article className="daily-report-card" key={item.id}>
+                          <button
+                            type="button"
+                            className="daily-report-card-open"
+                            onClick={() => navigate(`/reports/${item.date}`)}
+                            aria-label={`打开 ${formatReportDate(item.date)} 日报`}
+                          >
+                            {item.heroImageUrl && <img className="daily-report-card-hero" src={item.heroImageUrl} alt="" aria-hidden="true" />}
+                            <div className="daily-report-card-body">
+                              <div className="daily-report-card-topline">
+                                <span className="daily-report-card-date">{formatReportDate(item.date)}</span>
+                                <span className={`daily-report-email-status ${item.emailStatus.toLowerCase()}`}>
+                                  <Mail size={13} /> {emailStatusLabel[item.emailStatus]}
+                                </span>
+                              </div>
+                              {item.headline && <h3 className="daily-report-card-headline">{item.headline}</h3>}
+                              <p>{item.excerpt || '这份日报没有可显示的摘要。'}</p>
+                              <span className="daily-report-card-meta">更新于 {formatUpdatedAt(item.updatedAt)} <span aria-hidden="true">→</span></span>
+                            </div>
+                          </button>
+                          {renderEmailRetry(item)}
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                )}
+                {hasMore && (
+                  <button type="button" className="daily-report-load-more" onClick={() => void loadMore()} disabled={loadingMore}>
+                    <RefreshCw size={15} className={loadingMore ? 'spin' : undefined} />
+                    {loadingMore ? '正在加载…' : '加载更多 7 份日报'}
+                  </button>
+                )}
+              </>
+            );
+          })()}
         </div>
       ) : (
         <div className="daily-report-state">

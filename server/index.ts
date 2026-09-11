@@ -32,7 +32,7 @@ import { parseAiJson } from "./ai-json.js";
 import { extractWeatherLocationQuery, getDailyWeather, getWeatherErrorKind, isWeatherQuestion, searchLocations, type WeatherLocation } from './weather-service.js';
 import { createReadableUserExport, createSchedulesCsv } from './export-service.js';
 import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
-import { getDailyReportView, listDailyReportViews, publishDailyReport, queueDailyReportEmail } from './daily-report-service.js';
+import { getDailyReportView, listDailyReportViewsPage, publishDailyReport, queueDailyReportEmail } from './daily-report-service.js';
 import * as libraryService from './library-service.js';
 import { authenticateLibraryPublishToken, generateLibraryPublishToken, getLibraryPublishTokenStatus, revokeLibraryPublishToken } from './library-publish-token-service.js';
 import {
@@ -945,13 +945,11 @@ app.put("/api/admin/users/:id/role", authenticate, requireAdmin, (req, res) => {
   if (role !== 'admin' && role !== 'user') {
     return res.status(400).json({ error: '角色必须是 admin 或 user' });
   }
-  
-  // 禁止降权管理员
-  if (role === 'user') {
-    const targetUser = db.getUserById(req.params.id);
-    if (targetUser?.role === 'admin') {
-      return res.status(403).json({ error: '无法降权管理员账号' });
-    }
+  const payload = (req as any).user as JwtPayload;
+  const targetUser = db.getUserById(req.params.id);
+  if (!targetUser) return res.status(404).json({ error: '用户不存在' });
+  if (targetUser.id === payload.userId) {
+    return res.status(403).json({ error: '无法修改自己的管理员身份' });
   }
   
   const success = db.updateUserRole(req.params.id, role);
@@ -983,10 +981,9 @@ app.put("/api/admin/users/:id/api-share", authenticate, requireAdmin, (req, res)
 
   const targetUser = db.getUserById(req.params.id);
   if (!targetUser) return res.status(404).json({ error: '用户不存在' });
-  if (targetUser.role === 'admin') return res.status(403).json({ error: '管理员账号不适用共享 API 权限' });
 
   const success = db.updateUserAdminApiSharing(req.params.id, enabled ? 1 : 0);
-  if (!success) return res.status(404).json({ error: '用户不存在或不是普通用户' });
+  if (!success) return res.status(404).json({ error: '用户不存在' });
 
   addLog('info', 'admin', `${enabled ? '开启' : '关闭'}用户管理员 API 共享: ${req.params.id}`);
   res.json({
@@ -1886,8 +1883,12 @@ app.post('/api/daily-report/cloud-activity', authenticate, (req, res) => {
 // 登录后的日报页面只允许读取当前账号的数据。
 app.get('/api/daily-reports', authenticate, (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  const limit = Math.min(Math.max(Number(req.query.limit || 100), 1), 500);
-  res.json({ reports: listDailyReportViews((req as any).user.userId, limit) });
+  const rawLimit = Number(req.query.limit || 100);
+  const rawOffset = Number(req.query.offset || 0);
+  const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 500) : 100;
+  const offset = Number.isInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
+  const page = listDailyReportViewsPage((req as any).user.userId, limit, offset);
+  res.json({ reports: page.reports, total: page.total, offset, limit, hasMore: offset + page.reports.length < page.total });
 });
 
 app.get('/api/daily-reports/:date', authenticate, (req, res) => {
