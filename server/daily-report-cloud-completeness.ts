@@ -11,13 +11,16 @@ interface WatchlistStockRequirement {
 
 export interface CloudDigestCompletenessRequirements {
   unreadMailCount: number;
+  mailReadStatus: string;
+  mailConfigured: boolean;
+  mailEnabled: boolean;
   requiredCategories: string[];
   watchlistStockCount: number;
   watchlistStocks: WatchlistStockRequirement[];
 }
 
 export interface CloudDigestCompletenessInput {
-  mail: { messages?: unknown; unreadCount?: unknown };
+  mail: { messages?: unknown; unreadCount?: unknown; status?: unknown; configured?: unknown; enabled?: unknown };
   cloudContext: Record<string, unknown>;
 }
 
@@ -61,9 +64,13 @@ export function getCloudDigestCompletenessRequirements(
   const messagesCount = Array.isArray(input.mail.messages) ? input.mail.messages.length : 0;
   const reportedUnreadCount = nonNegativeInteger(input.mail.unreadCount);
   const unreadMailCount = Math.max(messagesCount, reportedUnreadCount);
+  const mailReadStatus = textValue(input.mail.status).toUpperCase() || 'UNKNOWN';
   const stocks = watchlistStocks(input.cloudContext);
   return {
     unreadMailCount,
+    mailReadStatus,
+    mailConfigured: input.mail.configured === true,
+    mailEnabled: input.mail.enabled === true,
     requiredCategories: [CLOUD_MARKET_CATEGORY, ...(stocks.length ? [CLOUD_WATCHLIST_CATEGORY] : [])],
     watchlistStockCount: stocks.length,
     watchlistStocks: stocks,
@@ -72,9 +79,10 @@ export function getCloudDigestCompletenessRequirements(
 
 export function summarizeCloudDigestCompletenessRequirements(
   requirements: CloudDigestCompletenessRequirements,
-): { unreadMailCount: number; requiredCategories: string[]; watchlistStockCount: number } {
+): { unreadMailCount: number; mailReadStatus: string; requiredCategories: string[]; watchlistStockCount: number } {
   return {
     unreadMailCount: requirements.unreadMailCount,
+    mailReadStatus: requirements.mailReadStatus,
     requiredCategories: [...requirements.requiredCategories],
     watchlistStockCount: requirements.watchlistStockCount,
   };
@@ -84,6 +92,16 @@ export function assertCloudDigestCompleteness(
   digest: DailyDigest,
   requirements: CloudDigestCompletenessRequirements,
 ): void {
+  const mailReadFailure = requirements.mailConfigured
+    && requirements.mailEnabled
+    && ['UNAVAILABLE', 'AUTH_ERROR', 'UNKNOWN'].includes(requirements.mailReadStatus);
+  if (mailReadFailure) {
+    throw new Error(`云端日报邮箱读取失败（${requirements.mailReadStatus}），未发布`);
+  }
+  if (requirements.mailConfigured && requirements.mailEnabled
+    && requirements.mailReadStatus === 'PARTIAL' && requirements.unreadMailCount === 0) {
+    throw new Error('云端日报邮箱读取不完整且没有可用邮件摘要，未发布');
+  }
   if (requirements.unreadMailCount > digest.mailBriefings.length) {
     throw new Error(
       `云端日报缺少未读邮件简报：当前输入有 ${requirements.unreadMailCount} 封未读邮件，但只生成了 ${digest.mailBriefings.length} 条邮件简报`,

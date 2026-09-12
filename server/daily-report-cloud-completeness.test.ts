@@ -58,7 +58,7 @@ function mailBriefing(title: string): DailyDigest['mailBriefings'][number] {
 }
 
 const requirements = getCloudDigestCompletenessRequirements({
-  mail: { unreadCount: 2, messages: [{}, {}] },
+  mail: { status: 'PARTIAL', configured: true, enabled: true, unreadCount: 2, messages: [{}, {}] },
   cloudContext: {
     watchlist: {
       stocks: [
@@ -80,6 +80,26 @@ test('Cloud 有未读邮件但邮件简报不足时拒绝发布', () => {
   assert.throws(
     () => assertCloudDigestCompleteness(digest({ categories: [marketCategory, watchlistCategory] }), requirements),
     /缺少未读邮件简报/,
+  );
+});
+
+test('Cloud 已启用邮箱读取失败或无法返回摘要时拒绝发布', () => {
+  const unavailableRequirements = getCloudDigestCompletenessRequirements({
+    mail: { status: 'UNAVAILABLE', configured: true, enabled: true, messages: [] },
+    cloudContext: {},
+  });
+  assert.throws(
+    () => assertCloudDigestCompleteness(digest({ categories: [marketCategory] }), unavailableRequirements),
+    /邮箱读取失败/,
+  );
+
+  const partialRequirements = getCloudDigestCompletenessRequirements({
+    mail: { status: 'PARTIAL', configured: true, enabled: true, messages: [] },
+    cloudContext: {},
+  });
+  assert.throws(
+    () => assertCloudDigestCompleteness(digest({ categories: [marketCategory] }), partialRequirements),
+    /读取不完整/,
   );
 });
 

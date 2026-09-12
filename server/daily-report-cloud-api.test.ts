@@ -302,6 +302,7 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     const inputsBody = await inputsCall.json() as any;
     assert.deepEqual(inputsBody.result.structuredContent.requirements, {
       unreadMailCount: 0,
+      mailReadStatus: 'UNAVAILABLE',
       requiredCategories: ['金融与市场'],
       watchlistStockCount: 0,
     });
