@@ -37,12 +37,22 @@ export interface ReadableUserExport {
 
 function readablePreferences(reminder: db.DbReminder | null): Record<string, unknown> | null {
   if (!reminder) return null;
+  let dailyReportDeliverySources: string[] = ['local'];
+  try {
+    const parsed = JSON.parse(reminder.daily_report_delivery_sources || '["local"]');
+    if (Array.isArray(parsed)) {
+      dailyReportDeliverySources = parsed.filter((item): item is string => item === 'local' || item === 'cloud');
+    }
+  } catch {
+    // 旧账号或损坏的偏好回退到兼容默认值，不阻断其他数据导出。
+  }
   return {
     dailyReminderEnabled: Boolean(reminder.enabled),
     dailyReminderTime: `${String(reminder.hour).padStart(2, '0')}:${String(reminder.minute).padStart(2, '0')}`,
     reminderEmail: reminder.reminder_email || null,
     emailEnabled: Boolean(reminder.email_enabled),
     reportEmailEnabled: Boolean(reminder.report_email_enabled),
+    dailyReportDeliverySources,
     inAppEnabled: Boolean(reminder.in_app_enabled),
     browserEnabled: Boolean(reminder.browser_enabled),
     timezone: reminder.timezone || 'Asia/Shanghai',
@@ -84,7 +94,7 @@ export function createReadableUserExport(userId: string, exportedAt = new Date()
     noteItems: noteItemService.exportNoteItems(userId),
     libraryEntries: libraryService.exportUserLibraryEntries(userId),
     completions: activityStore.listCompletions(userId),
-    dailyReports: activityStore.listDailyReports(userId),
+    dailyReports: activityStore.listAllDailyReports(userId),
     attachments: activityStore.listAttachments(userId).map(file => ({
       id: file.id,
       completionId: file.completionId,

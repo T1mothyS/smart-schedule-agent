@@ -115,10 +115,34 @@ test('日报 HTTP API 使用令牌发布、账号隔离并支持更新后重发�
     });
     assert.equal(created.status, 201);
     const createdPayload = await created.json();
+    assert.equal(createdPayload.status, 'PUBLISHED');
     assert.equal(createdPayload.date, '2026-08-30');
+    assert.equal(createdPayload.source, 'local');
+    assert.equal(createdPayload.deliveryStatus, 'RECEIVED');
     assert.equal(createdPayload.reportStatus, 'CREATED');
     assert.equal(createdPayload.emailStatus, 'DISABLED');
     assert.match(createdPayload.contentHash, /^[0-9a-f]{64}$/);
+
+    const cloudCandidateMarkdown = '# Cloud 候选日报';
+    activity.createDailyReport({
+      userId,
+      reportDate: '2026-08-30',
+      source: 'cloud',
+      deliveryStatus: 'candidate',
+      markdown: cloudCandidateMarkdown,
+      contentHash: crypto.createHash('sha256').update(cloudCandidateMarkdown).digest('hex'),
+    });
+    const officialDetail = await request('/api/daily-reports/2026-08-30', { headers: { Authorization: `Bearer ${userToken}` } });
+    assert.equal(officialDetail.status, 200);
+    assert.equal((await officialDetail.json()).report.source, 'local');
+    const cloudCandidateDetail = await request('/api/daily-reports/2026-08-30?source=cloud&view=candidates', { headers: { Authorization: `Bearer ${userToken}` } });
+    assert.equal(cloudCandidateDetail.status, 200);
+    const cloudCandidatePayload = await cloudCandidateDetail.json();
+    assert.equal(cloudCandidatePayload.report.source, 'cloud');
+    assert.equal(cloudCandidatePayload.report.deliveryStatus, 'CANDIDATE');
+    assert.equal(cloudCandidatePayload.report.markdown, cloudCandidateMarkdown);
+    const cloudOfficialDetail = await request('/api/daily-reports/2026-08-30?source=cloud&view=received', { headers: { Authorization: `Bearer ${userToken}` } });
+    assert.equal(cloudOfficialDetail.status, 404);
 
     const forbiddenFields = await request('/api/integrations/daily-report/reports/2026-08-31', {
       method: 'PUT',
@@ -133,6 +157,14 @@ test('日报 HTTP API 使用令牌发布、账号隔离并支持更新后重发�
     assert.equal(listPayload.total, 1);
     assert.equal(listPayload.offset, 0);
     assert.equal(listPayload.hasMore, false);
+
+    const candidateList = await request('/api/daily-reports?view=candidates', { headers: { Authorization: `Bearer ${userToken}` } });
+    assert.equal(candidateList.status, 200);
+    const candidateListPayload = await candidateList.json();
+    assert.equal(candidateListPayload.view, 'candidates');
+    assert.equal(candidateListPayload.total, 1);
+    assert.equal(candidateListPayload.reports[0].source, 'cloud');
+    assert.equal(candidateListPayload.reports[0].deliveryStatus, 'CANDIDATE');
 
     const emptyPage = await request('/api/daily-reports?limit=1&offset=1', { headers: { Authorization: `Bearer ${userToken}` } });
     assert.equal(emptyPage.status, 200);
@@ -224,6 +256,43 @@ test('日报 HTTP API 使用令牌发布、账号隔离并支持更新后重发�
     assert.equal(manualPayload.emailStatus, 'QUEUED');
     assert.equal(activity.listNotifications(userId).filter(item => item.kind === 'daily_report').length, 4);
     assert.equal(activity.listNotifications(userId)[0].id, manualPayload.notificationId);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test('日报来源接收策略按账号保存，允许空选项并且不改动任务开关', async () => {
+  const policyUserId = 'daily-report-policy-api-user';
+  const createdAt = new Date().toISOString();
+  const policyUser = db.createUser({
+    id: policyUserId,
+    email: 'policy-api@example.com',
+    password_hash: 'not-a-real-password',
+    role: 'user',
+    disabled: 0,
+    created_at: createdAt,
+    updated_at: createdAt,
+  });
+  const policyToken = api.signUserToken(policyUser);
+  const server = http.createServer(api.app);
+  const port = await listen(server);
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const request = (init: RequestInit = {}) => fetch(baseUrl + '/api/daily-report/delivery-policy', init);
+  try {
+    const headers = { Authorization: `Bearer ${policyToken}`, 'Content-Type': 'application/json' };
+    const initial = await request({ headers });
+    assert.equal(initial.status, 200);
+    assert.deepEqual((await initial.json()).sources, ['local']);
+
+    const empty = await request({ method: 'PUT', headers, body: JSON.stringify({ sources: [] }) });
+    assert.equal(empty.status, 200);
+    assert.deepEqual((await empty.json()).sources, []);
+    assert.equal(db.getReminder(policyUserId)?.enabled, 0);
+    assert.deepEqual(JSON.parse(db.getReminder(policyUserId)?.daily_report_delivery_sources || 'null'), []);
+
+    const both = await request({ method: 'PUT', headers, body: JSON.stringify({ sources: ['cloud', 'local', 'cloud'] }) });
+    assert.equal(both.status, 200);
+    assert.deepEqual((await both.json()).sources, ['local', 'cloud']);
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   }

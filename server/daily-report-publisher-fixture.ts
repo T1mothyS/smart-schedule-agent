@@ -1,6 +1,9 @@
 export interface DailyReportPublisherFixtureResult {
   status: 'PUBLISHED';
   date: string;
+  source: string;
+  delivery_status: string;
+  content_hash: string;
   report_status: string;
   email_status: string;
 }
@@ -27,6 +30,9 @@ export async function publishDailyReportFixture(
   return {
     status: 'PUBLISHED',
     date: reportDate,
+    source: String(payload.source || ''),
+    delivery_status: String(payload.deliveryStatus || ''),
+    content_hash: String(payload.contentHash || ''),
     report_status: String(payload.reportStatus || ''),
     email_status: String(payload.emailStatus || ''),
   };

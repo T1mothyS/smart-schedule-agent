@@ -142,6 +142,7 @@ async function initDb(): Promise<void> {
       reminder_email TEXT,
       email_enabled INTEGER NOT NULL DEFAULT 1,
       report_email_enabled INTEGER NOT NULL DEFAULT 0,
+      daily_report_delivery_sources TEXT NOT NULL DEFAULT '["local"]',
       in_app_enabled INTEGER NOT NULL DEFAULT 1,
       browser_enabled INTEGER NOT NULL DEFAULT 1,
       timezone TEXT NOT NULL DEFAULT 'Asia/Shanghai',
@@ -167,6 +168,7 @@ async function initDb(): Promise<void> {
   const reminderMigrations: Array<[string, string]> = [
     ['email_enabled', "INTEGER NOT NULL DEFAULT 1"],
     ['report_email_enabled', "INTEGER NOT NULL DEFAULT 0"],
+    ['daily_report_delivery_sources', "TEXT NOT NULL DEFAULT '[\"local\"]'"],
     ['in_app_enabled', "INTEGER NOT NULL DEFAULT 1"],
     ['browser_enabled', "INTEGER NOT NULL DEFAULT 1"],
     ['timezone', "TEXT NOT NULL DEFAULT 'Asia/Shanghai'"],
@@ -595,6 +597,7 @@ export interface DbReminder {
   reminder_email?: string | null;
   email_enabled?: number;
   report_email_enabled?: number;
+  daily_report_delivery_sources?: string | null;
   in_app_enabled?: number;
   browser_enabled?: number;
   timezone?: string;
@@ -1170,14 +1173,18 @@ export function upsertReminder(reminder: DbReminder): DbReminder {
   const homeLatitude = reminder.home_latitude === undefined ? existing?.home_latitude ?? null : reminder.home_latitude;
   const homeLongitude = reminder.home_longitude === undefined ? existing?.home_longitude ?? null : reminder.home_longitude;
   const homeTimezone = reminder.home_timezone === undefined ? existing?.home_timezone ?? null : reminder.home_timezone;
+  const dailyReportDeliverySources = reminder.daily_report_delivery_sources
+    ?? existing?.daily_report_delivery_sources
+    ?? '["local"]';
   if (existing) {
     run(
-      `UPDATE reminders SET enabled = ?, hour = ?, minute = ?, reminder_email = ?, email_enabled = ?, report_email_enabled = ?,
+      `UPDATE reminders SET enabled = ?, hour = ?, minute = ?, reminder_email = ?, email_enabled = ?, report_email_enabled = ?, daily_report_delivery_sources = ?,
        in_app_enabled = ?, browser_enabled = ?, timezone = ?, quiet_hours_enabled = ?, quiet_start = ?, quiet_end = ?,
        home_location_name = ?, home_location_admin1 = ?, home_location_country = ?, home_latitude = ?, home_longitude = ?, home_timezone = ?,
        updated_at = ? WHERE user_id = ?`,
       [reminder.enabled, reminder.hour, reminder.minute, reminderEmail, reminder.email_enabled ?? existing.email_enabled ?? 1,
         reminder.report_email_enabled ?? existing.report_email_enabled ?? 0,
+        dailyReportDeliverySources,
         reminder.in_app_enabled ?? existing.in_app_enabled ?? 1, reminder.browser_enabled ?? existing.browser_enabled ?? 1,
         reminder.timezone || existing.timezone || 'Asia/Shanghai', reminder.quiet_hours_enabled ?? existing.quiet_hours_enabled ?? 0,
         reminder.quiet_start || existing.quiet_start || '22:00', reminder.quiet_end || existing.quiet_end || '08:00',
@@ -1186,12 +1193,12 @@ export function upsertReminder(reminder: DbReminder): DbReminder {
     );
   } else {
     run(
-      `INSERT INTO reminders (id, user_id, enabled, hour, minute, reminder_email, email_enabled, report_email_enabled, in_app_enabled,
+      `INSERT INTO reminders (id, user_id, enabled, hour, minute, reminder_email, email_enabled, report_email_enabled, daily_report_delivery_sources, in_app_enabled,
        browser_enabled, timezone, quiet_hours_enabled, quiet_start, quiet_end, home_location_name, home_location_admin1,
        home_location_country, home_latitude, home_longitude, home_timezone, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [reminder.id, reminder.user_id, reminder.enabled, reminder.hour, reminder.minute, reminderEmail,
-        reminder.email_enabled ?? 1, reminder.report_email_enabled ?? 0, reminder.in_app_enabled ?? 1, reminder.browser_enabled ?? 1,
+        reminder.email_enabled ?? 1, reminder.report_email_enabled ?? 0, dailyReportDeliverySources, reminder.in_app_enabled ?? 1, reminder.browser_enabled ?? 1,
         reminder.timezone || 'Asia/Shanghai', reminder.quiet_hours_enabled ?? 0, reminder.quiet_start || '22:00',
         reminder.quiet_end || '08:00', homeLocationName, homeLocationAdmin1, homeLocationCountry, homeLatitude,
         homeLongitude, homeTimezone, reminder.created_at, reminder.updated_at]
@@ -1201,6 +1208,7 @@ export function upsertReminder(reminder: DbReminder): DbReminder {
     ...reminder,
     reminder_email: reminderEmail,
     report_email_enabled: reminder.report_email_enabled ?? existing?.report_email_enabled ?? 0,
+    daily_report_delivery_sources: dailyReportDeliverySources,
     home_location_name: homeLocationName,
     home_location_admin1: homeLocationAdmin1,
     home_location_country: homeLocationCountry,

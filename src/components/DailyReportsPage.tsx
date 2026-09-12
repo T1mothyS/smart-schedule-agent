@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, FileText, Mail, RefreshCw } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 
 type EmailStatus = 'DISABLED' | 'QUEUED' | 'SENT' | 'FAILED';
+type DailyReportSource = 'local' | 'cloud';
+type DeliveryStatus = 'RECEIVED' | 'CANDIDATE';
 
 interface DailyReportSummary {
   id: string;
@@ -14,6 +16,8 @@ interface DailyReportSummary {
   contentHash: string;
   publishedAt: string;
   updatedAt: string;
+  source: DailyReportSource;
+  deliveryStatus: DeliveryStatus;
   emailStatus: EmailStatus;
   emailNotificationId: string | null;
 }
@@ -32,6 +36,24 @@ const emailStatusLabel: Record<EmailStatus, string> = {
   SENT: '邮件已发送',
   FAILED: '邮件发送失败',
 };
+
+const sourceLabel: Record<DailyReportSource, string> = {
+  local: '本地',
+  cloud: 'Cloud',
+};
+
+const deliveryStatusLabel: Record<DeliveryStatus, string> = {
+  RECEIVED: '已接收',
+  CANDIDATE: '候选',
+};
+
+function normalizeReportSummary(value: any): DailyReportSummary {
+  return {
+    ...value,
+    source: value?.source === 'cloud' ? 'cloud' : 'local',
+    deliveryStatus: value?.deliveryStatus === 'CANDIDATE' ? 'CANDIDATE' : 'RECEIVED',
+  };
+}
 
 function formatReportDate(value: string): string {
   const date = new Date(`${value}T00:00:00+08:00`);
@@ -73,32 +95,33 @@ export function DailyReportsPage() {
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'received' | 'candidates'>('received');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/daily-reports?limit=${INITIAL_REPORT_LIMIT}&offset=0`, { headers: authHeaders() });
+      const response = await fetch(`/api/daily-reports?limit=${INITIAL_REPORT_LIMIT}&offset=0&view=${viewMode}`, { headers: authHeaders() });
       if (!response.ok) throw await readError(response, '日报加载失败');
       const result = await response.json();
-      setReports(result.reports || []);
+      setReports((result.reports || []).map(normalizeReportSummary));
       setHasMore(Boolean(result.hasMore));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '日报加载失败');
     } finally {
       setLoading(false);
     }
-  }, [authHeaders]);
+  }, [authHeaders, viewMode]);
 
   const loadMore = async () => {
     if (loadingMore || loading || !hasMore) return;
     setLoadingMore(true);
     setError(null);
     try {
-      const response = await fetch(`/api/daily-reports?limit=${HISTORY_PAGE_SIZE}&offset=${reports.length}`, { headers: authHeaders() });
+      const response = await fetch(`/api/daily-reports?limit=${HISTORY_PAGE_SIZE}&offset=${reports.length}&view=${viewMode}`, { headers: authHeaders() });
       if (!response.ok) throw await readError(response, '更多日报加载失败');
       const result = await response.json();
-      setReports(current => [...current, ...(result.reports || [])]);
+      setReports(current => [...current, ...(result.reports || []).map(normalizeReportSummary)]);
       setHasMore(Boolean(result.hasMore));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '更多日报加载失败');
@@ -108,6 +131,17 @@ export function DailyReportsPage() {
   };
 
   useEffect(() => { void load(); }, [load]);
+
+  const switchView = (next: 'received' | 'candidates') => {
+    if (next === viewMode) return;
+    setReports([]);
+    setHasMore(false);
+    setViewMode(next);
+  };
+
+  const openReport = (item: DailyReportSummary) => {
+    navigate(`/reports/${encodeURIComponent(item.date)}?source=${item.source}&view=${viewMode}`);
+  };
 
   const retryEmail = async (item: DailyReportSummary) => {
     if (!item.emailNotificationId || retryingId) return;
@@ -135,12 +169,18 @@ export function DailyReportsPage() {
         <div>
           <div className="daily-reports-eyebrow">PRIVATE INTELLIGENCE</div>
           <h1>日报</h1>
-          <p>按日期保存的个人情报日报，网页与邮件使用同一份安全渲染。</p>
+          <p>{viewMode === 'received' ? '正式接收的日报会进入网页和邮件；来源由设置控制。' : '候选日报已经写入生产服务器，但当前未进入正式网页和邮件。'}</p>
         </div>
-        <button type="button" className="daily-report-toolbar-button" onClick={() => void load()} disabled={loading}>
-          <RefreshCw size={15} className={loading ? 'spin' : undefined} />
-          刷新
-        </button>
+        <div className="daily-report-toolbar-actions">
+          <div className="daily-report-view-toggle" role="tablist" aria-label="日报查看范围">
+            <button type="button" role="tab" aria-selected={viewMode === 'received'} className={viewMode === 'received' ? 'active' : undefined} onClick={() => switchView('received')}>正式日报</button>
+            <button type="button" role="tab" aria-selected={viewMode === 'candidates'} className={viewMode === 'candidates' ? 'active' : undefined} onClick={() => switchView('candidates')}>候选对照</button>
+          </div>
+          <button type="button" className="daily-report-toolbar-button" onClick={() => void load()} disabled={loading}>
+            <RefreshCw size={15} className={loading ? 'spin' : undefined} />
+            刷新
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -183,16 +223,20 @@ export function DailyReportsPage() {
                   <button
                     type="button"
                     className="daily-report-featured-open"
-                    onClick={() => navigate(`/reports/${latest.date}`)}
+                    onClick={() => openReport(latest)}
                     aria-label={`打开最新的 ${formatReportDate(latest.date)} 日报`}
                   >
                     {latest.heroImageUrl && <img className="daily-report-featured-hero" src={latest.heroImageUrl} alt="" aria-hidden="true" />}
                     <div className="daily-report-featured-body">
-                      <div className="daily-report-featured-kicker">FRONT PAGE · 最新日报</div>
+                      <div className="daily-report-featured-kicker">{viewMode === 'received' ? 'FRONT PAGE · 最新日报' : 'CANDIDATE DESK · 最新候选'}</div>
                       <div className="daily-report-card-topline">
                         <span className="daily-report-card-date">{formatReportDate(latest.date)}</span>
-                        <span className={`daily-report-email-status ${latest.emailStatus.toLowerCase()}`}>
-                          <Mail size={13} /> {emailStatusLabel[latest.emailStatus]}
+                        <span className="daily-report-source-meta">
+                          <span className={`daily-report-source-badge ${latest.source}`}>{sourceLabel[latest.source]}</span>
+                          <span className={`daily-report-delivery-status ${latest.deliveryStatus.toLowerCase()}`}>{deliveryStatusLabel[latest.deliveryStatus]}</span>
+                          <span className={`daily-report-email-status ${latest.emailStatus.toLowerCase()}`}>
+                            <Mail size={13} /> {emailStatusLabel[latest.emailStatus]}
+                          </span>
                         </span>
                       </div>
                       {latest.headline && <h2 className="daily-report-featured-headline">{latest.headline}</h2>}
@@ -218,15 +262,19 @@ export function DailyReportsPage() {
                           <button
                             type="button"
                             className="daily-report-card-open"
-                            onClick={() => navigate(`/reports/${item.date}`)}
+                            onClick={() => openReport(item)}
                             aria-label={`打开 ${formatReportDate(item.date)} 日报`}
                           >
                             {item.heroImageUrl && <img className="daily-report-card-hero" src={item.heroImageUrl} alt="" aria-hidden="true" />}
                             <div className="daily-report-card-body">
                               <div className="daily-report-card-topline">
                                 <span className="daily-report-card-date">{formatReportDate(item.date)}</span>
-                                <span className={`daily-report-email-status ${item.emailStatus.toLowerCase()}`}>
-                                  <Mail size={13} /> {emailStatusLabel[item.emailStatus]}
+                                <span className="daily-report-source-meta">
+                                  <span className={`daily-report-source-badge ${item.source}`}>{sourceLabel[item.source]}</span>
+                                  <span className={`daily-report-delivery-status ${item.deliveryStatus.toLowerCase()}`}>{deliveryStatusLabel[item.deliveryStatus]}</span>
+                                  <span className={`daily-report-email-status ${item.emailStatus.toLowerCase()}`}>
+                                    <Mail size={13} /> {emailStatusLabel[item.emailStatus]}
+                                  </span>
                                 </span>
                               </div>
                               {item.headline && <h3 className="daily-report-card-headline">{item.headline}</h3>}
@@ -243,7 +291,7 @@ export function DailyReportsPage() {
                 {hasMore && (
                   <button type="button" className="daily-report-load-more" onClick={() => void loadMore()} disabled={loadingMore}>
                     <RefreshCw size={15} className={loadingMore ? 'spin' : undefined} />
-                    {loadingMore ? '正在加载…' : '加载更多 7 份日报'}
+                    {loadingMore ? '正在加载…' : `加载更多 ${HISTORY_PAGE_SIZE} 份日报`}
                   </button>
                 )}
               </>
@@ -253,8 +301,8 @@ export function DailyReportsPage() {
       ) : (
         <div className="daily-report-state">
           <FileText size={34} />
-          <strong>还没有日报</strong>
-          <span>日报项目发布后，会按日期显示在这里。</span>
+          <strong>{viewMode === 'received' ? '还没有正式日报' : '还没有候选日报'}</strong>
+          <span>{viewMode === 'received' ? '日报项目发布后，会按日期显示在这里。' : '未勾选来源的有效日报会保存在这里，供后续对照。'}</span>
         </div>
       )}
     </div>
@@ -265,7 +313,13 @@ export function DailyReportReaderPage() {
   const { authHeaders } = useAuth();
   const navigate = useNavigate();
   const { date } = useParams<{ date: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedSource = searchParams.get('source') === 'cloud' || searchParams.get('source') === 'local'
+    ? searchParams.get('source') as DailyReportSource
+    : undefined;
+  const requestedView = searchParams.get('view') === 'candidates' ? 'candidates' : 'received';
   const [report, setReport] = useState<DailyReport | null>(null);
+  const [dateReports, setDateReports] = useState<DailyReportSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sendingEmail, setSendingEmail] = useState(false);
@@ -274,25 +328,35 @@ export function DailyReportReaderPage() {
     setLoading(true);
     setError(null);
     setReport(null);
+    setDateReports([]);
     try {
       if (!date) throw new Error('日报日期无效');
-      const response = await fetch(`/api/daily-reports/${encodeURIComponent(date)}`, { headers: authHeaders() });
+      const query = new URLSearchParams();
+      if (requestedSource) query.set('source', requestedSource);
+      query.set('view', requestedView);
+      const sourceQuery = `?${query.toString()}`;
+      const response = await fetch(`/api/daily-reports/${encodeURIComponent(date)}${sourceQuery}`, { headers: authHeaders() });
       if (!response.ok) throw await readError(response, '日报加载失败');
       const result = await response.json();
-      setReport(result.report || null);
+      setReport(result.report ? normalizeReportSummary(result.report) as DailyReport : null);
+      setDateReports((result.reports || []).map(normalizeReportSummary));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '日报加载失败');
     } finally {
       setLoading(false);
     }
-  }, [authHeaders, date]);
+  }, [authHeaders, date, requestedSource, requestedView]);
 
   useEffect(() => { void load(); }, [load]);
 
   const isNewsletter = report?.html.includes('daily-newsletter') === true;
 
+  const chooseSource = (source: DailyReportSource) => {
+    setSearchParams({ source, view: requestedView });
+  };
+
   const sendEmail = async () => {
-    if (!date || !report || sendingEmail) return;
+    if (!date || !report || report.deliveryStatus !== 'RECEIVED' || sendingEmail) return;
     if (!window.confirm(`将把 ${formatReportDate(date)} 的当前日报重新发送到已配置的收件邮箱，是否继续？`)) return;
     setSendingEmail(true);
     setError(null);
@@ -300,7 +364,7 @@ export function DailyReportReaderPage() {
       const response = await fetch(`/api/daily-reports/${encodeURIComponent(date)}/send`, {
         method: 'POST',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirm: true }),
+        body: JSON.stringify({ confirm: true, source: report.source }),
       });
       if (!response.ok) throw await readError(response, '日报邮件发送失败');
       await load();
@@ -321,19 +385,36 @@ export function DailyReportReaderPage() {
           </button>
           {report && (
             <div className="daily-report-reader-toolbar-actions">
+              <div className="daily-report-source-tabs" role="tablist" aria-label="选择日报来源">
+                {dateReports.filter(item => item.deliveryStatus === (requestedView === 'candidates' ? 'CANDIDATE' : 'RECEIVED')).map(item => (
+                  <button
+                    type="button"
+                    role="tab"
+                    key={item.source}
+                    aria-selected={item.source === report.source}
+                    className={item.source === report.source ? 'active' : undefined}
+                    onClick={() => chooseSource(item.source)}
+                  >
+                    {sourceLabel[item.source]} · {deliveryStatusLabel[item.deliveryStatus]}
+                  </button>
+                ))}
+              </div>
+              <span className={`daily-report-delivery-status ${report.deliveryStatus.toLowerCase()}`}>{sourceLabel[report.source]} · {deliveryStatusLabel[report.deliveryStatus]}</span>
               <span className={`daily-report-email-status ${report.emailStatus.toLowerCase()}`}>
                 <Mail size={13} /> {emailStatusLabel[report.emailStatus]}
               </span>
-              <button
-                type="button"
-                className="daily-report-send-button"
-                onClick={() => void sendEmail()}
-                disabled={sendingEmail}
-                aria-label={`手动发送 ${formatReportDate(report.date)} 日报邮件`}
-              >
-                <Mail size={14} />
-                {sendingEmail ? '正在排队…' : report.emailStatus === 'SENT' ? '重新发送邮件' : '发送日报邮件'}
-              </button>
+              {report.deliveryStatus === 'RECEIVED' ? (
+                <button
+                  type="button"
+                  className="daily-report-send-button"
+                  onClick={() => void sendEmail()}
+                  disabled={sendingEmail}
+                  aria-label={`手动发送 ${formatReportDate(report.date)} ${sourceLabel[report.source]}日报邮件`}
+                >
+                  <Mail size={14} />
+                  {sendingEmail ? '正在排队…' : report.emailStatus === 'SENT' ? '重新发送邮件' : '发送日报邮件'}
+                </button>
+              ) : <span className="daily-report-candidate-note">已写入生产服务器，当前设置未接收</span>}
             </div>
           )}
         </div>
@@ -350,6 +431,7 @@ export function DailyReportReaderPage() {
         </div>
       ) : report ? (
         <div className={`daily-report-reader-content ${isNewsletter ? 'is-newsletter' : 'is-legacy'}`}>
+          {report.deliveryStatus === 'CANDIDATE' && <div className="daily-report-notice candidate" role="status">这份 {sourceLabel[report.source]} 日报已经正式写入生产服务器，但按当前设置暂不进入正式网页和邮件。勾选该来源并保存后，下一次正式发布起才会接收。</div>}
           <div className="daily-report-markdown daily-report-reader-markdown" dangerouslySetInnerHTML={{ __html: report.html }} />
         </div>
       ) : (

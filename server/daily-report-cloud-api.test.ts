@@ -388,7 +388,18 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
       } }),
     });
     assert.equal(published.status, 200);
-    assert.equal((await published.json() as any).result.structuredContent.status, 'PUBLISHED');
+    const publishedBody = await published.json() as any;
+    assert.equal(publishedBody.result.structuredContent.status, 'PUBLISHED');
+    assert.equal(publishedBody.result.structuredContent.source, 'cloud');
+    assert.equal(publishedBody.result.structuredContent.deliveryStatus, 'CANDIDATE');
+    assert.match(publishedBody.result.structuredContent.contentHash, /^[0-9a-f]{64}$/);
+    const storedCloud = activity.getLatestDailyReportCandidate(userId, '2026-09-09', 'cloud');
+    assert.ok(storedCloud);
+    assert.equal(storedCloud.source, 'cloud');
+    assert.equal(storedCloud.deliveryStatus, 'candidate');
+    assert.equal(storedCloud.contentHash, publishedBody.result.structuredContent.contentHash);
+    assert.ok(cloudStore.listDailyReportCloudHistory(userId, 30).some(item => item.source === 'cloud' && item.deliveryStatus === 'CANDIDATE'));
+    assert.equal(activity.listNotifications(userId).length, notificationsBeforeDryRun);
 
     const refreshed = await request('/oauth/token', formBody({
       grant_type: 'refresh_token',

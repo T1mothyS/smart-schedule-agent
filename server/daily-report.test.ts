@@ -358,11 +358,11 @@ test('日报支持在详情中手动重新发送当前正文', () => {
 
 test('日报包含在活动导出、删除和恢复链路中', () => {
   const exported = activity.exportUserActivity(userId);
-  assert.equal((exported.dailyReports || []).length, 1);
+  assert.equal((exported.dailyReports || []).length, 2);
   const deleted = activity.deleteUserActivity(userId);
-  assert.equal(deleted.dailyReports, 1);
+  assert.equal(deleted.dailyReports, 2);
   assert.equal(activity.listDailyReports(userId).length, 0);
   const restored = activity.restoreUserActivity(userId, exported as Record<string, any[]>, 'merge');
-  assert.equal(restored.dailyReports, 1);
+  assert.equal(restored.dailyReports, 2);
   assert.equal(activity.listDailyReports(userId).length, 1);
 });

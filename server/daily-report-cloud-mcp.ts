@@ -115,7 +115,7 @@ const toolDefinitions: McpTool[] = [
   {
     name: 'daily_report.publish',
     securitySchemes: oauthSecurity('daily_report.publish'),
-    description: '在服务端校验并发布日报；服务端负责媒体下载、哈希化、托管和按账号设置排队邮件。先使用 dry_run=true 验证，确认结构和媒体后再正式发布。',
+    description: '在生产服务端校验并发布 Cloud 日报；服务端固定将来源标记为 cloud，负责媒体下载、哈希化、托管和按账号设置排队邮件。先使用 dry_run=true 验证，确认结构和媒体后再用 dry_run=false 正式写入生产服务器。',
     inputSchema: {
       type: 'object',
       required: ['date', 'markdown'],
@@ -272,6 +272,7 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
       return {
         status: 'VALIDATED_NOT_PUBLISHED',
         date,
+        source: 'cloud',
         mediaCount: media.mediaCount,
         imageCount: media.imageCount,
         logoCount: media.logoCount,
@@ -279,10 +280,12 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
         featuredImageUrl: validated.quality.featured.imageUrl,
       };
     }
-    const result = await publishDailyReport(auth.userId, date, localizedMarkdown, { requireHostedMedia: true });
+    const result = await publishDailyReport(auth.userId, date, localizedMarkdown, { requireHostedMedia: true, source: 'cloud' });
     return {
       status: 'PUBLISHED',
       date,
+      source: 'cloud',
+      deliveryStatus: result.report.deliveryStatus,
       reportStatus: result.reportStatus,
       emailStatus: result.emailStatus,
       contentHash: result.report.contentHash,
@@ -296,6 +299,8 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
         excerpt: result.report.excerpt,
         publishedAt: result.report.publishedAt,
         updatedAt: result.report.updatedAt,
+        source: result.report.source,
+        deliveryStatus: result.report.deliveryStatus,
       },
     };
   }

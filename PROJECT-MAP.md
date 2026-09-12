@@ -48,11 +48,14 @@ flowchart LR
     Render --> Media[本地下载、签名校验、SHA256 媒体缓存]
     Media --> Upload[上传本站媒体]
     Upload --> Publish[发布到 AI Calendar]
-    Publish --> Queue[账号设置决定日报邮件队列]
+    Publish --> Store[生产记录：账号 + 日期 + 来源 + 内容哈希]
+    Store --> Policy{来源接收设置}
+    Policy -->|已勾选| Receive[RECEIVED：正式网页 + 邮件队列]
+    Policy -->|未勾选| Candidate[CANDIDATE：候选对照]
     Validate -. "-NoSend：停在本地验收" .-> Local[本地产物与证据]
 ```
 
-模型只产生结构化内容；Markdown、HTML、纯文本、图片路径、邮件队列和归档由确定性程序负责。媒体校验或上传失败时，不执行最后的日报发布。旧六章日报仍走受限 Markdown 兼容路径。
+模型只产生结构化内容；Markdown、HTML、纯文本、图片路径、生产日报记录、邮件队列和归档由确定性程序负责。媒体校验或上传失败时，不执行最后的日报发布。旧六章日报仍走受限 Markdown 兼容路径。
 
 ## 2. 跨项目 API 与安全边界
 
@@ -61,8 +64,10 @@ flowchart LR
 | `/api/integrations/daily-report/agenda` | V2 collector | 按显式日期读取当前账号日程 | Bearer 只读令牌、按账号隔离，不允许写入 |
 | `/api/integrations/daily-report/mail` | V2 mail collector | 读取当前账号 QQ 未读邮件摘要 | 只返回摘要，不返回授权码，不改变已读状态 |
 | `/api/integrations/daily-report/reports/:date/media/:filename` | V2 publisher | 上传本地已校验的新闻图或来源 logo | 令牌鉴权；文件名为内容 SHA256；服务端不访问外站 |
-| `/api/integrations/daily-report/reports/:date` | V2 publisher | 创建或幂等更新当日已校验日报 | 只接受合法结构与本站媒体引用；按账号、日期和内容版本处理 |
-| `/api/daily-reports`、`/reports/:date` | 登录用户 | 查看日报列表和独立阅读页 | 登录态、当前账号隔离；详情页不重复产品壳 |
+| `/api/integrations/daily-report/reports/:date` | V2 publisher | 创建或幂等更新本地来源日报 | 服务端固定 `source=local`；只接受合法结构与本站媒体引用；按账号、日期、来源和内容版本处理 |
+| `/mcp` 的 `daily_report.publish` | Work Cloud | Shadow 校验或正式发布 Cloud 日报 | OAuth scope；服务端固定 `source=cloud`；`dry_run=true` 只返回 `VALIDATED_NOT_PUBLISHED`，`false` 返回 `PUBLISHED` 并写入生产记录 |
+| `/api/daily-report/delivery-policy` | 登录用户 | 读取/保存本地与 Cloud 来源接收设置 | 只影响下一次正式发布后的网页和邮件接收；不暂停任务，不删除候选或历史 |
+| `/api/daily-reports`、`/reports/:date` | 登录用户 | 查看正式日报、候选对照和来源日期详情 | 登录态、当前账号隔离；正式列表与候选视图分开；同日 Local/Cloud 可切换对照 |
 | `/api/note-items` | 登录用户 | AI 记事 CRUD、颜色、完成/恢复和导出所需数据 | JWT 身份与 `user_id` 所有权；颜色只允许预设枚举 |
 | `/api/library`、`/library` | 登录用户 | Fragment/Article 列表、搜索、阅读、评论和导出 | 当前账号隔离；正文、类型、标签和关系只读；Markdown 由服务端安全渲染 |
 | `/api/integrations/library` 及生命周期子路径 | 本地 Markdown 迁移脚本 | 使用独立 Knowledge Publish Token 执行 `publish/retire/restore/purge` | 只保存 token 哈希；`sourceId + user_id` 定位文章；不拥有登录、读取列表、评论、日程或记事权限 |
@@ -91,7 +96,7 @@ flowchart LR
 | 知识库、Markdown 迁移 | `server/library-service.ts`、`server/library-markdown.ts`、V2 项目的 `scripts/process-migration-folder.ps1`、`docs/knowledge-library-operations.md` | 普通处理校验通过后默认 `publish`；`retire/restore/purge` 必须显式选择；本地关系和正文清理后再通过令牌写入；不直接修改运行中的数据库 |
 | AI 计划确认 | `server/index.ts`、`server/ai-plan.ts` | 先生成待确认草稿；禁止旧专用入口自动完成来源记事 |
 | 日报采集/生成/校验 | `日报-v2/scripts/`、`日报-v2/schemas/`、`日报-v2/tests/` | V2 只输出结构化内容；`-NoSend` 不发布、不入队、不发信 |
-| 日报媒体与发布 | `日报-v2/scripts/report_media.py`、`日报-v2/scripts/publish_report.py`、主仓库 `server/daily-report*.ts` | 先本地校验和上传媒体，再执行最后日报 PUT |
+| 日报媒体与发布 | `日报-v2/scripts/report_media.py`、`日报-v2/scripts/publish_report.py`、主仓库 `server/daily-report*.ts` | 先本地校验和上传媒体，再执行最后日报 PUT；Local/Cloud 都先写生产记录，再按来源设置进入网页/邮件 |
 | 生产升级与回滚 | `DEPLOY.md`、`日报-v2/README.md` | 本地构建/验收与生产部署、真实 SMTP、收件箱验收分开授权和记录 |
 | Knowledge Library 首次部署与文档追踪 | `docs/KNOWLEDGE-LIBRARY-FIRST-DEPLOYMENT.md`、本地 V2 项目的 `docs/knowledge-library-first-deployment.md` | 本地批次、关系和生命周期先校验；不把令牌写入命令行、报告、日志或 Git |
 | 旧日报问题 | `LEGACY_PROJECT` 只读副本 | 仅用于理解和回滚，不修改旧项目 |
@@ -104,6 +109,7 @@ flowchart LR
 npm run typecheck
 npm test
 npm run build
+npm run test:cross-project
 git diff --check
 ```
 
@@ -117,4 +123,4 @@ python -m compileall scripts tests
 pwsh -NoProfile -File scripts/run_daily.ps1 -Date YYYY-MM-DD -NoSend
 ```
 
-`-NoSend` 的产物和 Validator 是本地证据；发布接口返回、通知队列、SMTP accepted 和收件箱到达分别属于不同验收层，不能相互替代。跨项目检查必须分别查看两个仓库的 `git status`、`git diff`、敏感信息扫描和版本/记录文件。
+`-NoSend` 的产物和 Validator 是本地证据；Cloud `dry_run=true` 的 `VALIDATED_NOT_PUBLISHED`、正式接口的 `PUBLISHED`、通知队列、SMTP accepted 和收件箱到达分别属于不同验收层，不能相互替代。跨项目检查必须分别查看两个仓库的 `git status`、`git diff`、敏感信息扫描和版本/记录文件。

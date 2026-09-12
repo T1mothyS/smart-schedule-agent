@@ -32,7 +32,8 @@ import { parseAiJson } from "./ai-json.js";
 import { extractWeatherLocationQuery, getDailyWeather, getWeatherErrorKind, isWeatherQuestion, searchLocations, type WeatherLocation } from './weather-service.js';
 import { createReadableUserExport, createSchedulesCsv } from './export-service.js';
 import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
-import { getDailyReportView, listDailyReportViewsPage, publishDailyReport, queueDailyReportEmail } from './daily-report-service.js';
+import { getDailyReportCandidateView, getDailyReportView, getDailyReportViewsForDate, listDailyReportViewsPage, publishDailyReport, queueDailyReportEmail } from './daily-report-service.js';
+import { getDailyReportDeliveryPolicy, normalizeDailyReportDeliverySources, setDailyReportDeliveryPolicy } from './daily-report-delivery-policy.js';
 import * as libraryService from './library-service.js';
 import { authenticateLibraryPublishToken, generateLibraryPublishToken, getLibraryPublishTokenStatus, revokeLibraryPublishToken } from './library-publish-token-service.js';
 import {
@@ -1854,6 +1855,31 @@ app.put('/api/daily-report/cloud-context', authenticate, (req, res) => {
   }
 });
 
+app.get('/api/daily-report/delivery-policy', authenticate, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(getDailyReportDeliveryPolicy((req as any).user.userId));
+});
+
+app.put('/api/daily-report/delivery-policy', authenticate, (req, res) => {
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body) || Object.keys(req.body).some(key => key !== 'sources')) {
+    return res.status(400).json({ error: '请求正文只允许包含 sources 字段' });
+  }
+  try {
+    const sources = normalizeDailyReportDeliverySources(req.body.sources);
+    const userId = (req as any).user.userId;
+    const policy = setDailyReportDeliveryPolicy(userId, sources);
+    addLog('info', 'daily-report', '日报来源接收设置已保存', {
+      event: 'daily_report_delivery_policy_saved',
+      userId,
+      sources: policy.sources,
+    });
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(policy);
+  } catch (error: any) {
+    res.status(400).json({ error: error?.message || '保存日报来源接收设置失败' });
+  }
+});
+
 app.get('/api/daily-report/cloud-activity', authenticate, (req, res) => {
   try {
     const activity = dailyReportCloudStore.listDailyReportCloudActivity((req as any).user.userId, {
@@ -1887,17 +1913,35 @@ app.get('/api/daily-reports', authenticate, (req, res) => {
   const rawOffset = Number(req.query.offset || 0);
   const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 500) : 100;
   const offset = Number.isInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
-  const page = listDailyReportViewsPage((req as any).user.userId, limit, offset);
-  res.json({ reports: page.reports, total: page.total, offset, limit, hasMore: offset + page.reports.length < page.total });
+  const view = req.query.view === 'candidates' ? 'candidates' : 'received';
+  const page = listDailyReportViewsPage((req as any).user.userId, limit, offset, view);
+  res.json({ reports: page.reports, total: page.total, offset, limit, view, hasMore: offset + page.reports.length < page.total });
 });
 
 app.get('/api/daily-reports/:date', authenticate, (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   const date = String(req.params.date || '');
   if (!isValidDateKey(date)) return res.status(400).json({ error: 'date 必须是有效的 YYYY-MM-DD 日期' });
-  const report = getDailyReportView((req as any).user.userId, date);
+  const userId = (req as any).user.userId;
+  const rawSource = req.query.source === undefined ? undefined : String(req.query.source);
+  if (rawSource !== undefined && rawSource !== 'local' && rawSource !== 'cloud') {
+    return res.status(400).json({ error: 'source 只能是 local 或 cloud' });
+  }
+  const rawView = req.query.view === undefined ? 'received' : String(req.query.view);
+  if (rawView !== 'received' && rawView !== 'candidates') {
+    return res.status(400).json({ error: 'view 只能是 received 或 candidates' });
+  }
+  const bundle = getDailyReportViewsForDate(userId, date);
+  const candidateSource = bundle.reports.find(item => item.deliveryStatus === 'CANDIDATE')?.source;
+  const report = rawSource === undefined
+    ? rawView === 'received'
+      ? bundle.report
+      : candidateSource ? getDailyReportCandidateView(userId, date, candidateSource) : null
+    : rawView === 'received'
+      ? getDailyReportView(userId, date, rawSource)
+      : getDailyReportCandidateView(userId, date, rawSource);
   if (!report) return res.status(404).json({ error: '该日期的日报不存在' });
-  res.json({ report });
+  res.json({ report, reports: bundle.reports, view: rawView });
 });
 
 app.post('/api/daily-reports/:date/send', authenticate, (req, res) => {
@@ -1908,8 +1952,12 @@ app.post('/api/daily-reports/:date/send', authenticate, (req, res) => {
   if (req.body?.confirm !== true) {
     return res.status(400).json({ error: '请确认要重新发送这一天的日报邮件' });
   }
+  const rawSource = req.body?.source;
+  if (rawSource !== undefined && rawSource !== 'local' && rawSource !== 'cloud') {
+    return res.status(400).json({ error: 'source 只能是 local 或 cloud' });
+  }
   try {
-    const report = queueDailyReportEmail(userId, date, { manual: true });
+    const report = queueDailyReportEmail(userId, date, { manual: true, source: rawSource });
     if (!report) return res.status(404).json({ error: '该日期的日报不存在' });
     addLog('info', 'mail', '日报邮件已请求手动重发', {
       event: 'daily_report_manual_send_requested',
@@ -2044,10 +2092,13 @@ app.put('/api/integrations/daily-report/reports/:date', async (req, res) => {
     return res.status(400).json({ error: '请求正文只允许包含 markdown 字段' });
   }
   try {
-    const result = await publishDailyReport(authenticated.userId, date, req.body.markdown, { requireHostedMedia: true });
-    const media = summarizeDailyReportMedia(req.body.markdown);
+    const result = await publishDailyReport(authenticated.userId, date, req.body.markdown, { requireHostedMedia: true, source: 'local' });
+    const media = summarizeDailyReportMedia(result.report.markdown || req.body.markdown);
     res.status(result.reportStatus === 'CREATED' ? 201 : 200).json({
+      status: result.status,
       date,
+      source: result.report.source,
+      deliveryStatus: result.report.deliveryStatus,
       reportStatus: result.reportStatus,
       emailStatus: result.emailStatus,
       contentHash: result.report.contentHash,

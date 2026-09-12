@@ -58,13 +58,13 @@ server/index.ts 目前是 Express 组合入口，集中注册认证、用户、�
 | AI | AiSchedulePanel、AiImportPage | AI 服务、ai-plan、ai-import-service | 生成计划不等于写入；必须用户确认 |
 | AI 记事 | NoteBoard | note-item-service | 记事独立于行动中心；导出确定性生成 |
 | 知识库 | LibraryPage | library-service、library-markdown、library publish API | V2 本地加工、服务器只读呈现、评论、版本、关系原样保存和安全 Markdown；不在服务器做 AI 加工 |
-| 日报 | DailyReportsPage | daily-report API、模板、media service | 媒体先校验/托管；内容版本决定入队 |
+| 日报 | DailyReportsPage | daily-report API、模板、media service、delivery policy | Local/Cloud 按来源和内容哈希保存；媒体先校验/托管；来源设置决定 `RECEIVED` 或 `CANDIDATE` 及邮件入队 |
 | 完成和附件 | ActionCenterPage | completion、attachment service | 所有权、大小、MIME 和恢复边界 |
 | 备份与管理 | Settings、AdminModal | backup-service、admin API | 高风险操作确认、快照和回滚 |
 
 ## 6. 日报 V2 跨项目流程
 
-外部日报 V2 负责采集、上下文、结构化生成、Validator、确定性渲染、本地媒体下载/校验和上传。AI Calendar 负责令牌鉴权、媒体按内容哈希保存、日报按日期与内容版本幂等保存，以及按账号设置决定邮件队列。
+外部日报 V2 负责本地链路的采集、上下文、结构化生成、Validator、确定性渲染、本地媒体下载/校验和上传；Work Cloud 通过生产 MCP 读取输入并在服务端托管媒体。AI Calendar 负责令牌/OAuth 鉴权、根据调用身份固定 `local` 或 `cloud` 来源、媒体按内容哈希保存、日报按账号/日期/来源/内容版本幂等保存，以及按账号来源设置决定 `RECEIVED` 或 `CANDIDATE` 和邮件队列。Cloud `dry_run=true` 只验证不写入，`dry_run=false` 必须返回 `PUBLISHED` 才表示生产数据库已保存。
 
 本地 NoSend、发布接口返回、QUEUED、SMTP accepted 和收件箱到达属于不同证据层级，不能相互替代。主仓库不从生产服务器访问外站新闻图，也不把外部项目的凭据或运行数据带入仓库。
 

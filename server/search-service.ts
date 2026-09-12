@@ -143,8 +143,13 @@ function reportResults(userId: string, query: string): SearchResult[] {
       title,
       snippet: makeSnippet(query, [report.markdown, title]),
       date: report.reportDate,
-      target: { path: `/reports/${encodeURIComponent(report.reportDate)}` },
-      metadata: { updatedAt: report.updatedAt, contentHash: report.contentHash },
+      target: { path: `/reports/${encodeURIComponent(report.reportDate)}?source=${report.source}` },
+      metadata: {
+        updatedAt: report.updatedAt,
+        contentHash: report.contentHash,
+        source: report.source,
+        deliveryStatus: report.deliveryStatus === 'candidate' ? 'CANDIDATE' : 'RECEIVED',
+      },
       rank,
     }];
   });

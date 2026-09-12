@@ -6,6 +6,7 @@ import { renderMarkdown } from './markdown-renderer.js';
 import { addLog } from './log-service.js';
 import { dailyReportMediaPath, localizeDailyDigestImages, type DailyReportMediaOptions } from './daily-report-media-service.js';
 import { parseDailyDigestMarkdown, selectDailyDigestFeaturedStory } from './daily-digest-template.js';
+import { getDailyReportDeliveryPolicy } from './daily-report-delivery-policy.js';
 
 export const DAILY_REPORT_SOURCE_TYPE = 'daily_report';
 export const DAILY_REPORT_KIND = 'daily_report';
@@ -14,6 +15,7 @@ export const MAX_DAILY_REPORT_BYTES = 800_000;
 export type DailyReportPublishStatus = 'CREATED' | 'UNCHANGED' | 'UPDATED';
 export type DailyReportEmailStatus = 'DISABLED' | 'QUEUED' | 'SENT' | 'FAILED';
 export type DailyReportPublishEmailStatus = 'QUEUED' | 'DISABLED' | 'ALREADY_QUEUED' | 'ALREADY_SENT' | 'FAILED';
+export type DailyReportViewDeliveryStatus = 'RECEIVED' | 'CANDIDATE';
 
 export interface DailyReportView {
   id: string;
@@ -26,11 +28,14 @@ export interface DailyReportView {
   contentHash: string;
   publishedAt: string;
   updatedAt: string;
+  source: activityStore.DailyReportSource;
+  deliveryStatus: DailyReportViewDeliveryStatus;
   emailStatus: DailyReportEmailStatus;
   emailNotificationId: string | null;
 }
 
 export interface PublishDailyReportResult {
+  status: 'PUBLISHED';
   reportStatus: DailyReportPublishStatus;
   emailStatus: DailyReportPublishEmailStatus;
   report: DailyReportView;
@@ -92,12 +97,16 @@ function enqueueDailyReportEmail(record: activityStore.DailyReportRecord, dedupe
   return { record: attachedRecord, notification: queued.notification, created: queued.created };
 }
 
-export function queueDailyReportEmail(userId: string, reportDate: string, options: { manual?: boolean } = {}): DailyReportView | null {
-  const record = activityStore.getDailyReport(userId, reportDate);
+export function queueDailyReportEmail(
+  userId: string,
+  reportDate: string,
+  options: { manual?: boolean; source?: activityStore.DailyReportSource } = {},
+): DailyReportView | null {
+  const record = activityStore.getDailyReport(userId, reportDate, options.source);
   if (!record) return null;
   const dedupeKey = options.manual
-    ? `daily-report:${userId}:${reportDate}:manual:${crypto.randomUUID()}:email`
-    : `daily-report:${userId}:${reportDate}:content:${record.contentHash}:email`;
+    ? `daily-report:${userId}:${reportDate}:${record.source}:manual:${crypto.randomUUID()}:email`
+    : `daily-report:${userId}:${reportDate}:${record.source}:content:${record.contentHash}:email`;
   const queued = enqueueDailyReportEmail(record, dedupeKey);
   return toDailyReportView(queued.record);
 }
@@ -160,53 +169,104 @@ export function toDailyReportView(record: activityStore.DailyReportRecord, inclu
     contentHash: record.contentHash,
     publishedAt: record.publishedAt,
     updatedAt: record.updatedAt,
+    source: record.source || 'local',
+    deliveryStatus: record.deliveryStatus === 'candidate' ? 'CANDIDATE' : 'RECEIVED',
     emailStatus: emailStatus(record),
     emailNotificationId: record.emailNotificationId,
   };
 }
 
-export function listDailyReportViews(userId: string, limit = 100): DailyReportView[] {
-  return activityStore.listDailyReports(userId, limit).map(record => toDailyReportView(record, false));
+export function listDailyReportViews(userId: string, limit = 100, view: 'received' | 'candidates' = 'received'): DailyReportView[] {
+  const records = view === 'received'
+    ? activityStore.listDailyReports(userId, limit)
+    : activityStore.listDailyReportsPage(userId, limit, 0, 'candidates').reports;
+  return records.map(record => toDailyReportView(record, false));
 }
 
-export function listDailyReportViewsPage(userId: string, limit = 100, offset = 0): { reports: DailyReportView[]; total: number } {
-  const result = activityStore.listDailyReportsPage(userId, limit, offset);
+export function listDailyReportViewsPage(
+  userId: string,
+  limit = 100,
+  offset = 0,
+  view: 'received' | 'candidates' = 'received',
+): { reports: DailyReportView[]; total: number } {
+  const result = activityStore.listDailyReportsPage(userId, limit, offset, view);
   return { reports: result.reports.map(record => toDailyReportView(record, false)), total: result.total };
 }
 
-export function getDailyReportView(userId: string, reportDate: string): DailyReportView | null {
-  const record = activityStore.getDailyReport(userId, reportDate);
+export function getDailyReportView(
+  userId: string,
+  reportDate: string,
+  source?: activityStore.DailyReportSource,
+): DailyReportView | null {
+  const record = activityStore.getDailyReport(userId, reportDate, source);
   return record ? toDailyReportView(record) : null;
 }
 
-export async function publishDailyReport(userId: string, reportDate: string, markdown: string, mediaOptions: DailyReportMediaOptions = {}): Promise<PublishDailyReportResult> {
+export function getDailyReportCandidateView(userId: string, reportDate: string, source: activityStore.DailyReportSource): DailyReportView | null {
+  const record = activityStore.getDailyReportBySourceAndStatus(userId, reportDate, source, 'candidate');
+  return record ? toDailyReportView(record) : null;
+}
+
+export function getDailyReportViewsForDate(userId: string, reportDate: string): { report: DailyReportView | null; reports: DailyReportView[] } {
+  const records = activityStore.listDailyReportsForDate(userId, reportDate);
+  const reports = records.map(record => toDailyReportView(record, false));
+  const preferred = records.find(record => record.deliveryStatus === 'received') || records[0] || null;
+  return { report: preferred ? toDailyReportView(preferred) : null, reports };
+}
+
+export async function publishDailyReport(
+  userId: string,
+  reportDate: string,
+  markdown: string,
+  mediaOptions: DailyReportMediaOptions & { source?: activityStore.DailyReportSource } = {},
+): Promise<PublishDailyReportResult> {
   validateDailyReportInput(reportDate, markdown);
-  const localizedMarkdown = await localizeDailyDigestImages(markdown, mediaOptions);
+  const { source: sourceOverride, ...localizationOptions } = mediaOptions;
+  const source = sourceOverride || 'local';
+  if (source !== 'local' && source !== 'cloud') throw new Error('日报来源不受支持');
+  const localizedMarkdown = await localizeDailyDigestImages(markdown, localizationOptions);
   validateDailyReportInput(reportDate, localizedMarkdown);
   const contentHash = hashDailyReport(localizedMarkdown);
-  const existing = activityStore.getDailyReport(userId, reportDate);
+  const selectedSources = getDailyReportDeliveryPolicy(userId).sources;
+  const shouldReceive = selectedSources.includes(source);
+  const existingExact = activityStore.getDailyReportCandidate(userId, reportDate, source, contentHash);
+  const existingLatest = activityStore.getLatestDailyReportCandidate(userId, reportDate, source);
   let record: activityStore.DailyReportRecord;
   let reportStatus: DailyReportPublishStatus;
+  let promoted = false;
 
-  if (existing && existing.contentHash === contentHash) {
-    record = existing;
-    reportStatus = 'UNCHANGED';
-  } else if (existing) {
-    record = activityStore.updateDailyReport(existing.id, userId, localizedMarkdown, contentHash) || existing;
-    reportStatus = 'UPDATED';
+  if (existingExact) {
+    if (shouldReceive && existingExact.deliveryStatus === 'candidate') {
+      record = activityStore.promoteDailyReportCandidate(existingExact.id, userId) || existingExact;
+      promoted = record.deliveryStatus === 'received';
+      reportStatus = promoted ? 'UPDATED' : 'UNCHANGED';
+    } else {
+      record = existingExact;
+      reportStatus = 'UNCHANGED';
+    }
   } else {
-    record = activityStore.createDailyReport({ userId, reportDate, markdown: localizedMarkdown, contentHash });
-    reportStatus = 'CREATED';
+    record = activityStore.createDailyReport({
+      userId,
+      reportDate,
+      source,
+      deliveryStatus: shouldReceive ? 'received' : 'candidate',
+      markdown: localizedMarkdown,
+      contentHash,
+    });
+    reportStatus = existingLatest ? 'UPDATED' : 'CREATED';
   }
 
   let currentEmailStatus = emailStatus(record);
   let queuedNotificationCreated = false;
-  if ((reportStatus === 'CREATED' || reportStatus === 'UPDATED') && db.getReminder(userId)?.report_email_enabled === 1) {
-    const queued = enqueueDailyReportEmail(record, `daily-report:${userId}:${reportDate}:content:${contentHash}:email`);
+  const shouldQueueEmail = record.deliveryStatus === 'received'
+    && (reportStatus === 'CREATED' || reportStatus === 'UPDATED' || promoted)
+    && db.getReminder(userId)?.report_email_enabled === 1;
+  if (shouldQueueEmail) {
+    const queued = enqueueDailyReportEmail(record, `daily-report:${userId}:${reportDate}:${source}:content:${contentHash}:email`);
     record = queued.record;
     queuedNotificationCreated = queued.created;
     currentEmailStatus = queued.created ? 'QUEUED' : emailStatus(record);
-  } else if (reportStatus === 'CREATED' || reportStatus === 'UPDATED') {
+  } else if (reportStatus === 'CREATED' || reportStatus === 'UPDATED' || promoted) {
     currentEmailStatus = emailStatus(record);
   }
 
@@ -214,11 +274,14 @@ export async function publishDailyReport(userId: string, reportDate: string, mar
     event: 'daily_report_published',
     userId,
     date: reportDate,
+    source,
+    deliveryStatus: record.deliveryStatus,
     contentHash,
     reportStatus,
     emailStatus: currentEmailStatus,
   });
   return {
+    status: 'PUBLISHED',
     reportStatus,
     emailStatus: publishEmailStatus(currentEmailStatus, queuedNotificationCreated),
     report: toDailyReportView(record),

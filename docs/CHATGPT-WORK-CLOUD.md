@@ -1,6 +1,6 @@
-# ChatGPT Work Cloud 日报候选链路
+# ChatGPT Work Cloud 日报正式发布与并行回滚链路
 
-本文档描述把日报 V2 迁移到 ChatGPT Work Cloud 的并行实现。当前代码已提供 OAuth/MCP 和 Cloud Context 边界；生产候选服务已经部署并完成一次 Work shadow 验收，Work 中已启用每日 16:40（Asia/Shanghai）的 shadow 定时任务。正式发布和本地链路切换仍未执行。
+本文档描述把日报 V2 迁移到 ChatGPT Work Cloud 的并行与正式发布实现。当前代码已提供 OAuth/MCP、来源维度的生产写入和 Cloud Context 边界；生产候选服务已经部署并完成一次 Work shadow 验收，Work 中已启用每日 16:40（Asia/Shanghai）的 shadow 定时任务。正式发布和本地链路切换仍未执行。
 
 这里的“云端”指 ChatGPT Work 的后台任务运行环境；它不能直接读取本机 `日报-v2` worktree 或本地令牌。当前分支中的 Skill、结构化校验器和渲染器是待打包的源材料，尚未安装为 Work 可用的插件/Skill 资源，因此现在还不能仅凭本地文件路径创建可运行的 Work 定时任务。
 
@@ -14,8 +14,12 @@ AI Calendar /mcp
     ├─ read_inputs -> Calendar / QQ 未读摘要 / Cloud Context / 日报历史
     ├─ Work Cloud 网络 -> 公开新闻、市场和可靠媒体
     ├─ Work Skill -> daily-digest.v1 JSON
-    └─ publish(dry_run) -> 服务端媒体托管 -> publish
-                                      └─ 日报记录 -> 账号级邮件队列 -> 163 SMTP
+    └─ publish(dry_run=true|false)
+             ├─ true  -> VALIDATED_NOT_PUBLISHED（不写日报、不入邮件队列）
+             └─ false -> 服务端媒体托管 -> PUBLISHED
+                                      └─ source=cloud 日报记录
+                                           ├─ RECEIVED -> 正式网页 + Cloud 邮件队列
+                                           └─ CANDIDATE -> 候选对照（不进正式网页/邮件）
 
 现有本地链路：继续由 v2-chatgpt -> run_daily.ps1 独立运行，作为当前生产和回滚链路。
 ```
@@ -61,6 +65,13 @@ offline_access
 
 OAuth 令牌只保存在数据库的 SHA-256 哈希；人工登录/权限审阅请求有效 30 分钟，授权码一次性使用且 5 分钟过期，访问令牌 15 分钟过期，刷新令牌轮换并支持撤销。客户端为公开 PKCE 客户端，不使用 `client_secret`。账号禁用会立即阻止新的 MCP bearer 请求。
 
+日报来源接收策略使用登录态接口：
+
+- `GET /api/daily-report/delivery-policy`
+- `PUT /api/daily-report/delivery-policy`，正文只允许 `{"sources":["local","cloud"]}`；空数组表示两边都暂不接收
+
+网页设置只保留“接收并转发本地日报”和“接收并转发 Cloud 日报”两个开关。它不暂停本地或 Work 任务，不删除候选或历史，也不追溯发送；下一次正式发布时，两个来源都仍先写生产记录，再根据开关标记为 `RECEIVED` 或 `CANDIDATE`。同日 Local/Cloud 按来源和内容哈希分别保存，邮件去重键也包含来源。
+
 ## Cloud Context 导入
 
 V2 本地 Context 仍是当前本地链路的编辑源。一次性迁移时：
@@ -80,7 +91,7 @@ Work 必须先生成 `daily-digest.v1` JSON，再调用已经随 Work Skill 提�
 - 公开图片和来源 logo 的 DNS/SSRF、大小、MIME、签名校验；
 - 内容哈希媒体缓存和本站路径替换。
 
-dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。任何媒体失败都会阻断云端发布，不会降级成不完整日报。正式返回的 `PUBLISHED` 只代表日报已写入服务端；`QUEUED` 只代表邮件已入队，不代表 SMTP accepted 或收件箱到达。
+dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。任何媒体失败都会阻断云端发布，不会降级成不完整日报。正式调用必须使用 `dry_run=false`，并以返回 `status=PUBLISHED` 作为“已写入生产服务器”的硬性回执；`source` 必须由服务端标记为 `cloud`。随后 `deliveryStatus=RECEIVED` 或 `CANDIDATE` 只表示是否进入正式网页和邮件，`QUEUED` 只代表邮件已入队，不代表 SMTP accepted 或收件箱到达。
 
 ## 当前运行证据（2026-09-09）
 

@@ -25,6 +25,8 @@ export interface DailyReportCloudActivity {
 
 export interface DailyReportCloudHistoryItem {
   date: string;
+  source: activityStore.DailyReportSource;
+  deliveryStatus: 'RECEIVED' | 'CANDIDATE';
   contentHash: string;
   excerpt: string;
   publishedAt: string;
@@ -198,7 +200,7 @@ export function createDailyReportCloudActivity(
 
 export function listDailyReportCloudHistory(userId: string, limit = 7): DailyReportCloudHistoryItem[] {
   const safeLimit = Math.min(Math.max(Math.trunc(limit) || 7, 1), 30);
-  return activityStore.listDailyReports(userId, safeLimit).map(record => {
+  return activityStore.listDailyReportCandidates(userId, safeLimit).map(record => {
     const view = toDailyReportView(record, false);
     const excerpt = SECRET_VALUE_PATTERNS.some(pattern => pattern.test(view.excerpt))
       || /(?:[A-Z]:\\|\\\\[^\r\n ]+\\|\/Users\/|\/home\/)/i.test(view.excerpt)
@@ -206,6 +208,8 @@ export function listDailyReportCloudHistory(userId: string, limit = 7): DailyRep
       : view.excerpt;
     return {
       date: record.reportDate,
+      source: record.source,
+      deliveryStatus: record.deliveryStatus === 'candidate' ? 'CANDIDATE' : 'RECEIVED',
       contentHash: record.contentHash,
       excerpt,
       publishedAt: record.publishedAt,

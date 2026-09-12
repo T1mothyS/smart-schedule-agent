@@ -12,11 +12,15 @@ const DB_PATH = path.join(DATA_DIR, 'activity.db');
 export type ActionSource = 'schedule' | 'reminder';
 export type NotificationChannel = 'email' | 'in_app' | 'browser';
 export type NotificationStatus = 'pending' | 'sending' | 'sent' | 'failed';
+export type DailyReportSource = 'local' | 'cloud';
+export type DailyReportDeliveryStatus = 'received' | 'candidate';
 
 export interface DailyReportRecord {
   id: string;
   userId: string;
   reportDate: string;
+  source: DailyReportSource;
+  deliveryStatus: DailyReportDeliveryStatus;
   markdown: string;
   contentHash: string;
   publishedAt: string;
@@ -193,12 +197,55 @@ function rowToDailyReport(row: any): DailyReportRecord {
     id: row.id,
     userId: row.user_id,
     reportDate: row.report_date,
+    source: row.source === 'cloud' ? 'cloud' : 'local',
+    deliveryStatus: row.delivery_status === 'candidate' ? 'candidate' : 'received',
     markdown: row.markdown,
     contentHash: row.content_hash,
     publishedAt: row.published_at,
     updatedAt: row.updated_at,
     emailNotificationId: row.email_notification_id || null,
   };
+}
+
+function migrateDailyReportsTable(): void {
+  const columns = queryAll<{ name: string }>('PRAGMA table_info(daily_reports)');
+  const hasSource = columns.some(column => column.name === 'source');
+  const hasDeliveryStatus = columns.some(column => column.name === 'delivery_status');
+  if (hasSource && hasDeliveryStatus) return;
+
+  db.run('DROP TABLE IF EXISTS daily_reports_v3');
+  db.run('BEGIN TRANSACTION');
+  try {
+    const sourceSelect = hasSource ? "CASE WHEN source = 'cloud' THEN 'cloud' ELSE 'local' END" : "'local'";
+    const deliveryStatusSelect = hasDeliveryStatus ? "CASE WHEN delivery_status = 'candidate' THEN 'candidate' ELSE 'received' END" : "'received'";
+    db.run(`
+      CREATE TABLE daily_reports_v3 (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        report_date TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'local' CHECK (source IN ('local', 'cloud')),
+        delivery_status TEXT NOT NULL DEFAULT 'received' CHECK (delivery_status IN ('received', 'candidate')),
+        markdown TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        published_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        email_notification_id TEXT,
+        UNIQUE(user_id, report_date, source, content_hash)
+      )
+    `);
+    db.run(`
+      INSERT INTO daily_reports_v3
+        (id, user_id, report_date, source, delivery_status, markdown, content_hash, published_at, updated_at, email_notification_id)
+      SELECT id, user_id, report_date, ${sourceSelect}, ${deliveryStatusSelect}, markdown, content_hash, published_at, updated_at, email_notification_id
+      FROM daily_reports
+    `);
+    db.run('DROP TABLE daily_reports');
+    db.run('ALTER TABLE daily_reports_v3 RENAME TO daily_reports');
+    db.run('COMMIT');
+  } catch (error) {
+    try { db.run('ROLLBACK'); } catch {}
+    throw error;
+  }
 }
 
 function rowToAiImport(row: any): AiImportRecord {
@@ -278,12 +325,14 @@ export async function initActivityDb(): Promise<void> {
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
       report_date TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'local' CHECK (source IN ('local', 'cloud')),
+      delivery_status TEXT NOT NULL DEFAULT 'received' CHECK (delivery_status IN ('received', 'candidate')),
       markdown TEXT NOT NULL,
       content_hash TEXT NOT NULL,
       published_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       email_notification_id TEXT,
-      UNIQUE(user_id, report_date)
+      UNIQUE(user_id, report_date, source, content_hash)
     );
     CREATE TABLE IF NOT EXISTS ai_imports (
       id TEXT PRIMARY KEY,
@@ -325,7 +374,9 @@ export async function initActivityDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_daily_reports_user_date ON daily_reports(user_id, report_date DESC);
     CREATE INDEX IF NOT EXISTS idx_ai_imports_user ON ai_imports(user_id, created_at);
   `);
-  db.run(`INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', '2')`);
+  migrateDailyReportsTable();
+  db.run('CREATE INDEX IF NOT EXISTS idx_daily_reports_user_date_source ON daily_reports(user_id, report_date DESC, source, updated_at DESC)');
+  db.run(`INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', '3')`);
   db.run(`UPDATE notification_deliveries SET status = 'failed', next_retry_at = ? WHERE status = 'sending'`, [nowIso()]);
   persist();
 }
@@ -528,9 +579,72 @@ export function getNotification(id: string, userId?: string): NotificationDelive
   return row ? rowToNotification(row) : null;
 }
 
-export function getDailyReport(userId: string, reportDate: string): DailyReportRecord | null {
-  const row = queryOne<any>('SELECT * FROM daily_reports WHERE user_id = ? AND report_date = ?', [userId, reportDate]);
+function latestDailyReportRows(
+  userId: string,
+  status?: DailyReportDeliveryStatus,
+  reportDate?: string,
+): any[] {
+  const clauses = ['report.user_id = ?'];
+  const params: unknown[] = [userId];
+  if (reportDate !== undefined) {
+    clauses.push('report.report_date = ?');
+    params.push(reportDate);
+  }
+  if (status !== undefined) {
+    clauses.push('report.delivery_status = ?');
+    params.push(status);
+  }
+  const newerClauses = [
+    'newer.user_id = report.user_id',
+    'newer.report_date = report.report_date',
+    'newer.source = report.source',
+    '(newer.updated_at > report.updated_at OR (newer.updated_at = report.updated_at AND newer.id > report.id))',
+  ];
+  if (status !== undefined) newerClauses.push('newer.delivery_status = ?');
+  const newerParams = status === undefined ? [] : [status];
+  return queryAll<any>(
+    `SELECT report.* FROM daily_reports report
+     WHERE ${clauses.join(' AND ')}
+       AND NOT EXISTS (
+         SELECT 1 FROM daily_reports newer
+         WHERE ${newerClauses.join(' AND ')}
+       )
+     ORDER BY report.report_date DESC, report.updated_at DESC, report.source ASC, report.id DESC`,
+    [...params, ...newerParams],
+  );
+}
+
+export function getDailyReport(userId: string, reportDate: string, source?: DailyReportSource): DailyReportRecord | null {
+  const rows = latestDailyReportRows(userId, 'received', reportDate)
+    .filter(row => source === undefined || row.source === source);
+  return rows[0] ? rowToDailyReport(rows[0]) : null;
+}
+
+export function getLatestDailyReportCandidate(userId: string, reportDate: string, source: DailyReportSource): DailyReportRecord | null {
+  const rows = latestDailyReportRows(userId, undefined, reportDate).filter(row => row.source === source);
+  return rows[0] ? rowToDailyReport(rows[0]) : null;
+}
+
+export function getDailyReportBySourceAndStatus(
+  userId: string,
+  reportDate: string,
+  source: DailyReportSource,
+  status: DailyReportDeliveryStatus,
+): DailyReportRecord | null {
+  const rows = latestDailyReportRows(userId, status, reportDate).filter(row => row.source === source);
+  return rows[0] ? rowToDailyReport(rows[0]) : null;
+}
+
+export function getDailyReportCandidate(userId: string, reportDate: string, source: DailyReportSource, contentHash: string): DailyReportRecord | null {
+  const row = queryOne<any>(
+    'SELECT * FROM daily_reports WHERE user_id = ? AND report_date = ? AND source = ? AND content_hash = ?',
+    [userId, reportDate, source, contentHash],
+  );
   return row ? rowToDailyReport(row) : null;
+}
+
+export function listDailyReportsForDate(userId: string, reportDate: string): DailyReportRecord[] {
+  return latestDailyReportRows(userId, undefined, reportDate).map(rowToDailyReport);
 }
 
 export function getDailyReportById(id: string, userId?: string): DailyReportRecord | null {
@@ -542,43 +656,50 @@ export function getDailyReportById(id: string, userId?: string): DailyReportReco
 
 export function listDailyReports(userId: string, limit = 100): DailyReportRecord[] {
   const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 500);
+  return latestDailyReportRows(userId, 'received').slice(0, safeLimit).map(rowToDailyReport);
+}
+
+export function listDailyReportCandidates(userId: string, limit = 100): DailyReportRecord[] {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 500);
+  return latestDailyReportRows(userId).slice(0, safeLimit).map(rowToDailyReport);
+}
+
+export function listAllDailyReports(userId: string): DailyReportRecord[] {
   return queryAll<any>(
-    'SELECT * FROM daily_reports WHERE user_id = ? ORDER BY report_date DESC, updated_at DESC LIMIT ?',
-    [userId, safeLimit],
+    'SELECT * FROM daily_reports WHERE user_id = ? ORDER BY report_date ASC, published_at ASC, id ASC',
+    [userId],
   ).map(rowToDailyReport);
 }
 
-export function listDailyReportsPage(userId: string, limit = 100, offset = 0): { reports: DailyReportRecord[]; total: number } {
+export function listDailyReportsPage(
+  userId: string,
+  limit = 100,
+  offset = 0,
+  view: 'received' | 'candidates' = 'received',
+): { reports: DailyReportRecord[]; total: number } {
   const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 500);
   const safeOffset = Math.max(Math.trunc(offset) || 0, 0);
-  const count = queryOne<{ count: number }>('SELECT COUNT(*) AS count FROM daily_reports WHERE user_id = ?', [userId]);
-  const reports = queryAll<any>(
-    'SELECT * FROM daily_reports WHERE user_id = ? ORDER BY report_date DESC, updated_at DESC LIMIT ? OFFSET ?',
-    [userId, safeLimit, safeOffset],
-  ).map(rowToDailyReport);
-  return { reports, total: Number(count?.count || 0) };
-}
-
-function escapeSearchLike(value: string): string {
-  return value.replace(/[\\%_]/gu, character => `\\${character}`);
+  const rows = latestDailyReportRows(userId, view === 'received' ? 'received' : 'candidate');
+  return {
+    reports: rows.slice(safeOffset, safeOffset + safeLimit).map(rowToDailyReport),
+    total: rows.length,
+  };
 }
 
 export function searchDailyReports(userId: string, query: string, limit = 100): DailyReportRecord[] {
-  const pattern = `%${escapeSearchLike(query.trim())}%`;
+  const normalizedQuery = query.trim().toLocaleLowerCase();
   const safeLimit = Math.min(Math.max(Math.trunc(limit) || 100, 1), 100);
-  return queryAll<any>(
-    `SELECT * FROM daily_reports
-     WHERE user_id = ?
-       AND (report_date LIKE ? ESCAPE '\\' OR markdown LIKE ? ESCAPE '\\')
-     ORDER BY report_date DESC, updated_at DESC
-     LIMIT ?`,
-    [userId, pattern, pattern, safeLimit],
-  ).map(rowToDailyReport);
+  return latestDailyReportRows(userId, 'received')
+    .filter(row => `${row.report_date}\n${row.markdown}`.toLocaleLowerCase().includes(normalizedQuery))
+    .slice(0, safeLimit)
+    .map(rowToDailyReport);
 }
 
 export function createDailyReport(input: {
   userId: string;
   reportDate: string;
+  source?: DailyReportSource;
+  deliveryStatus?: DailyReportDeliveryStatus;
   markdown: string;
   contentHash: string;
   publishedAt?: string;
@@ -587,11 +708,20 @@ export function createDailyReport(input: {
   const id = uuidv4();
   run(
     `INSERT INTO daily_reports
-      (id, user_id, report_date, markdown, content_hash, published_at, updated_at, email_notification_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
-    [id, input.userId, input.reportDate, input.markdown, input.contentHash, now, now],
+      (id, user_id, report_date, source, delivery_status, markdown, content_hash, published_at, updated_at, email_notification_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+    [id, input.userId, input.reportDate, input.source || 'local', input.deliveryStatus || 'received', input.markdown, input.contentHash, now, now],
   );
-  return getDailyReport(input.userId, input.reportDate)!;
+  return getDailyReportById(id, input.userId)!;
+}
+
+export function promoteDailyReportCandidate(id: string, userId: string, updatedAt = nowIso()): DailyReportRecord | null {
+  const changed = run(
+    "UPDATE daily_reports SET delivery_status = 'received', updated_at = ? WHERE id = ? AND user_id = ? AND delivery_status = 'candidate'",
+    [updatedAt, id, userId],
+  );
+  if (!changed) return getDailyReportById(id, userId);
+  return getDailyReportById(id, userId);
 }
 
 export function updateDailyReport(id: string, userId: string, markdown: string, contentHash: string, updatedAt = nowIso()): DailyReportRecord | null {
@@ -831,15 +961,22 @@ export function restoreUserActivity(
   }
   for (const row of data.dailyReports || []) {
     if (!row?.id || !isValidDateOnly(String(row.report_date || '')) || typeof row.markdown !== 'string') continue;
-    if (queryOne('SELECT id FROM daily_reports WHERE id = ? OR (user_id = ? AND report_date = ?)', [row.id, userId, row.report_date])) continue;
+    const source: DailyReportSource = row.source === 'cloud' ? 'cloud' : 'local';
+    const deliveryStatus: DailyReportDeliveryStatus = row.delivery_status === 'candidate' ? 'candidate' : 'received';
+    const contentHash = String(row.content_hash || '');
+    if (queryOne(
+      'SELECT id FROM daily_reports WHERE id = ? OR (user_id = ? AND report_date = ? AND source = ? AND content_hash = ?)',
+      [row.id, userId, row.report_date, source, contentHash],
+    )) continue;
     const notificationId = row.email_notification_id && queryOne(
       'SELECT id FROM notification_deliveries WHERE id = ? AND user_id = ?',
       [row.email_notification_id, userId],
     ) ? row.email_notification_id : null;
     db.run(
-      `INSERT INTO daily_reports (id, user_id, report_date, markdown, content_hash, published_at, updated_at, email_notification_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [row.id, userId, row.report_date, row.markdown, row.content_hash || '', row.published_at || nowIso(),
+      `INSERT INTO daily_reports
+        (id, user_id, report_date, source, delivery_status, markdown, content_hash, published_at, updated_at, email_notification_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [row.id, userId, row.report_date, source, deliveryStatus, row.markdown, contentHash, row.published_at || nowIso(),
         row.updated_at || nowIso(), notificationId],
     );
     dailyReports++;
