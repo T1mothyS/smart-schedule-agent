@@ -19,6 +19,11 @@ import { getSchedulesByDate } from './schedule-store.js';
 import { readUserMail } from './user-mail-service.js';
 import { assertHostedDailyReportMedia, localizeDailyDigestImages, summarizeDailyReportMedia } from './daily-report-media-service.js';
 import { validateDailyDigestMarkdown } from './daily-digest-template.js';
+import {
+  assertCloudDigestCompleteness,
+  getCloudDigestCompletenessRequirements,
+  summarizeCloudDigestCompletenessRequirements,
+} from './daily-report-cloud-completeness.js';
 
 const MAX_MCP_BODY_BYTES = 1_000_000;
 const CLOUD_MARKER = '<!-- daily-digest.v1 -->';
@@ -117,7 +122,7 @@ const toolDefinitions: McpTool[] = [
   {
     name: 'daily_report.publish',
     securitySchemes: oauthSecurity('daily_report.publish'),
-    description: '在生产服务端校验并发布 Cloud 日报；服务端固定将来源标记为 cloud，负责媒体下载、哈希化、托管和按账号设置排队邮件。先使用 dry_run=true 验证，确认结构和媒体后再用 dry_run=false 正式写入生产服务器。',
+    description: '在生产服务端校验并发布 Cloud 日报；服务端固定将来源标记为 cloud，负责输入完整性、媒体下载、哈希化、托管和按账号设置排队邮件。先使用 dry_run=true 验证，确认结构、输入完整性和媒体后再用 dry_run=false 正式写入生产服务器。',
     inputSchema: {
       type: 'object',
       required: ['date', 'markdown'],
@@ -246,12 +251,15 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
     const timezone = db.getReminder(auth.userId)?.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai';
     const date = validDateOrToday(args.date, timezone);
     const [mail] = await Promise.all([readMail(auth.userId, 20)]);
+    const cloudContext = getDailyReportCloudContext(auth.userId);
+    const requirements = getCloudDigestCompletenessRequirements({ mail, cloudContext: cloudContext.context });
     return {
       date,
       generatedAt: new Date().toISOString(),
       calendar: readCalendar(auth.userId, date),
       mail,
-      cloudContext: getDailyReportCloudContext(auth.userId),
+      cloudContext,
+      requirements: summarizeCloudDigestCompletenessRequirements(requirements),
       activity: listDailyReportCloudActivity(auth.userId, { limit: 100 }),
       history: listDailyReportCloudHistory(auth.userId, 7),
     };
@@ -260,7 +268,13 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
     const date = stringValue(args.date);
     assertCloudMarkdown(date, args.markdown);
     // 先验证新闻数量、来源、分类角度、图片覆盖和头版候选，再进入媒体下载。
-    validateDailyDigestMarkdown(args.markdown);
+    const initialValidation = validateDailyDigestMarkdown(args.markdown);
+    const [mail, cloudContext] = await Promise.all([
+      readMail(auth.userId, 20),
+      Promise.resolve(getDailyReportCloudContext(auth.userId)),
+    ]);
+    const requirements = getCloudDigestCompletenessRequirements({ mail, cloudContext: cloudContext.context });
+    assertCloudDigestCompleteness(initialValidation.digest, requirements);
     // dry-run 也在服务端完成媒体下载、签名校验和哈希缓存，保证正式调用不会才发现云端无法托管图片/logo。
     const localizedMarkdown = await localizeDailyDigestImages(args.markdown, {
       requireHostedMedia: false,

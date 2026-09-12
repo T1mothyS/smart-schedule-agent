@@ -53,9 +53,11 @@ cloudStore.replaceDailyReportCloudContext(userId, {
 const cloudMediaRoot = path.join(tempDir, 'daily-report-media');
 fs.mkdirSync(cloudMediaRoot, { recursive: true });
 const cloudMediaUrls = ['a', 'b', 'c', 'd', 'e'].map(letter => `/daily-report-media/${letter.repeat(64)}.jpg`);
+const cloudMarketLogoUrl = `/daily-report-media/${'0'.repeat(64)}.jpg`;
 for (const [index, letter] of ['a', 'b', 'c', 'd', 'e'].entries()) {
   fs.writeFileSync(path.join(cloudMediaRoot, `${letter.repeat(64)}.jpg`), `cloud-media-${index}`);
 }
+fs.writeFileSync(path.join(cloudMediaRoot, `${'0'.repeat(64)}.jpg`), 'cloud-market-logo');
 const cloudMarkdown = [
   '# Daily Digest',
   '<!-- daily-digest.v1 -->',
@@ -112,6 +114,14 @@ const cloudMarkdown = [
   '链接：https://example.com/four',
   `图片：${cloudMediaUrls[4]}`,
   '摘要：这条普通新闻补充了第四个独立且可核验的观察角度。',
+  '',
+  '### 金融与市场',
+  '#### 市场快照',
+  '来源：Yahoo Finance chart',
+  `来源图标：${cloudMarketLogoUrl}`,
+  '时间：2026-09-09 15:00',
+  '链接：https://finance.yahoo.com/',
+  '摘要：市场数据按各自时间点记录，不计入普通新闻数量。',
   '',
   '## Worth Your Time',
   '## Footer',
@@ -283,6 +293,19 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     const contextBody = await contextCall.json() as any;
     assert.equal(contextBody.result.structuredContent.context.context.profile.name, 'Cloud test');
 
+    const inputsCall = await request('/mcp', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 30, method: 'tools/call', params: { name: 'daily_report.read_inputs', arguments: { date: '2026-09-09' } } }),
+    });
+    assert.equal(inputsCall.status, 200);
+    const inputsBody = await inputsCall.json() as any;
+    assert.deepEqual(inputsBody.result.structuredContent.requirements, {
+      unreadMailCount: 0,
+      requiredCategories: ['金融与市场'],
+      watchlistStockCount: 0,
+    });
+
     const limitedAccessToken = crypto.randomBytes(32).toString('base64url');
     db.createOAuthAccessToken({
       token_hash: crypto.createHash('sha256').update(limitedAccessToken, 'utf8').digest('hex'),
@@ -326,7 +349,7 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     const dryRunBody = await dryRun.json() as any;
     assert.equal(dryRunBody.result.structuredContent.status, 'VALIDATED_NOT_PUBLISHED');
     assert.equal(dryRunBody.result.structuredContent.imageCount, 5);
-    assert.equal(dryRunBody.result.structuredContent.mediaCount, 5);
+    assert.equal(dryRunBody.result.structuredContent.mediaCount, 6);
     assert.equal(dryRunBody.result.structuredContent.featuredHeadline, 'Lead headline');
     assert.equal(dryRunBody.result.structuredContent.featuredImageUrl, `http://127.0.0.1:0${cloudMediaUrls[0]}`);
     assert.equal(cloudStore.listDailyReportCloudHistory(userId, 30).length, historyBeforeDryRun);
