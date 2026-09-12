@@ -79,9 +79,15 @@ async function initDb(): Promise<void> {
       intent TEXT,
       schedule_items TEXT,
       plan TEXT,
+      knowledge_sources TEXT,
       created_at TEXT NOT NULL
     )
   `);
+
+  const aiScheduleMessageColumns = queryAll<{ name: string }>('PRAGMA table_info(ai_schedule_messages)');
+  if (!aiScheduleMessageColumns.some(column => column.name === 'knowledge_sources')) {
+    db.run('ALTER TABLE ai_schedule_messages ADD COLUMN knowledge_sources TEXT');
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS users (
@@ -562,6 +568,7 @@ export interface DbAiScheduleMessage {
   intent: string | null;
   schedule_items: string | null;
   plan: string | null;
+  knowledge_sources?: string | null;
   created_at: string;
 }
 
@@ -922,8 +929,8 @@ export function getAiScheduleMessages(userId: string, limit = 20): DbAiScheduleM
 export function createAiScheduleMessage(message: DbAiScheduleMessage): DbAiScheduleMessage {
   run(
     `INSERT INTO ai_schedule_messages
-      (id, user_id, role, type, content, intent, schedule_items, plan, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (id, user_id, role, type, content, intent, schedule_items, plan, knowledge_sources, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       message.id,
       message.user_id,
@@ -933,6 +940,7 @@ export function createAiScheduleMessage(message: DbAiScheduleMessage): DbAiSched
       message.intent,
       message.schedule_items,
       message.plan,
+      message.knowledge_sources ?? null,
       message.created_at,
     ],
   );
@@ -942,11 +950,11 @@ export function createAiScheduleMessage(message: DbAiScheduleMessage): DbAiSched
 export function updateAiScheduleMessage(
   id: string,
   userId: string,
-  updates: Partial<Pick<DbAiScheduleMessage, 'type' | 'content' | 'intent' | 'schedule_items' | 'plan'>>,
+  updates: Partial<Pick<DbAiScheduleMessage, 'type' | 'content' | 'intent' | 'schedule_items' | 'plan' | 'knowledge_sources'>>,
 ): boolean {
   const fields: string[] = [];
   const values: any[] = [];
-  for (const field of ['type', 'content', 'intent', 'schedule_items', 'plan'] as const) {
+  for (const field of ['type', 'content', 'intent', 'schedule_items', 'plan', 'knowledge_sources'] as const) {
     if (updates[field] !== undefined) {
       fields.push(`${field} = ?`);
       values.push(updates[field]);
@@ -1325,7 +1333,8 @@ export interface DbLibraryListFilters {
   source_type?: string;
   limit?: number;
   offset?: number;
-  sort?: 'updated_desc' | 'created_desc';
+  sort?: 'title_asc' | 'title_desc' | 'updated_asc' | 'updated_desc' | 'created_asc' | 'created_desc';
+  fetchAll?: boolean;
 }
 
 function escapeLike(value: string): string {
@@ -1375,11 +1384,20 @@ export function listLibraryEntries(userId: string, filters: DbLibraryListFilters
   const total = queryOne<{ count: number }>(`SELECT COUNT(*) AS count FROM library_entries WHERE ${where}`, params)?.count || 0;
   const limit = Math.min(Math.max(Math.floor(filters.limit || 40), 1), 100);
   const offset = Math.max(Math.floor(filters.offset || 0), 0);
-  const order = filters.sort === 'created_desc' ? 'created_at DESC, id DESC' : 'updated_at DESC, created_at DESC, id DESC';
-  const items = queryAll<DbLibraryEntry>(
-    `SELECT * FROM library_entries WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
-    [...params, limit, offset],
-  );
+  const order = filters.sort === 'updated_asc'
+    ? 'updated_at ASC, created_at ASC, id ASC'
+    : filters.sort === 'created_asc'
+      ? 'created_at ASC, id ASC'
+      : filters.sort === 'created_desc'
+        ? 'created_at DESC, id DESC'
+        : 'updated_at DESC, created_at DESC, id DESC';
+  const isTitleSort = filters.sort === 'title_asc' || filters.sort === 'title_desc';
+  const items = filters.fetchAll || isTitleSort
+    ? queryAll<DbLibraryEntry>(`SELECT * FROM library_entries WHERE ${where}`, params)
+    : queryAll<DbLibraryEntry>(
+        `SELECT * FROM library_entries WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
+        [...params, limit, offset],
+      );
   return { items, total: Number(total) };
 }
 

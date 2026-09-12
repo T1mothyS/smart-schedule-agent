@@ -11,7 +11,7 @@ const db = await import('./db.js');
 const activity = await import('./activity-store.js');
 const scheduleStore = await import('./schedule-store.js');
 const library = await import('./library-service.js');
-const { searchAll } = await import('./search-service.js');
+const { searchAll, searchLibraryForAi } = await import('./search-service.js');
 
 await db.initDb();
 await activity.initActivityDb();
@@ -79,6 +79,16 @@ library.createLibraryEntry(userId, {
   status: 'active',
   sourceType: 'manual',
 });
+library.createLibraryEntry(otherUserId, {
+  kind: 'article',
+  type: 'knowledge',
+  title: '其他用户的知识原则',
+  content: '统一搜索需要保留权限边界和可解释的结果排序。',
+  summary: '其他用户的私有资料',
+  tags: ['搜索'],
+  status: 'active',
+  sourceType: 'manual',
+});
 scheduleStore.createSchedule({
   id: 'other-search-schedule',
   user_id: otherUserId,
@@ -112,4 +122,15 @@ test('统一搜索按 scope 过滤，并隔离其他账号数据', () => {
   const scheduleOnly = searchAll(userId, { query: '搜索', scope: 'schedule' });
   assert.ok(scheduleOnly.results.every(item => item.type === 'schedule'));
   assert.equal(searchAll(userId, { query: '其他用户', scope: 'all' }).results.length, 0);
+});
+
+test('AI 知识检索使用有效内容的词法匹配、返回来源卡片元数据并隔离账号', () => {
+  const matches = searchLibraryForAi(userId, '请解释历史知识库里的搜索权限边界', 5);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].title, '搜索系统设计原则');
+  assert.match(matches[0].snippet, /权限边界/);
+  assert.equal(matches[0].sourceId, null);
+  assert.equal('content' in matches[0], false);
+  assert.equal(searchLibraryForAi(otherUserId, '搜索权限边界', 5).length, 1);
+  assert.equal(searchLibraryForAi(userId, '其他用户的私有资料', 5).length, 0);
 });

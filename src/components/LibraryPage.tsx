@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowLeft, BookOpen, Download, Link2, RefreshCw, Search, Send, Trash2 } from 'lucide-react';
+import { ArrowLeft, BookOpen, Download, Link2, RefreshCw, Search, Send, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 
@@ -7,6 +7,7 @@ type LibraryKind = 'fragment' | 'article';
 type LibraryType = 'knowledge' | 'insight' | 'framework' | 'experience' | 'tutorial' | 'reference';
 type LibraryStatus = 'draft' | 'active' | 'archived';
 type RelationStatus = 'confirmed' | 'suggested' | 'unresolved';
+type LibrarySort = 'title_asc' | 'title_desc' | 'updated_asc' | 'updated_desc' | 'created_asc' | 'created_desc';
 
 interface LibraryRelation {
   sourceId: string;
@@ -14,6 +15,9 @@ interface LibraryRelation {
   type: string;
   label: string;
   status: RelationStatus;
+  targetEntryId?: string;
+  targetTitle?: string;
+  targetStatus?: LibraryStatus;
 }
 
 interface LibraryEntry {
@@ -79,6 +83,14 @@ const typeLabels: Record<LibraryType, string> = {
 const kindLabels: Record<LibraryKind, string> = { fragment: '知识碎片', article: '正式知识' };
 const statusLabels: Record<LibraryStatus, string> = { draft: '草稿', active: '有效', archived: '已归档' };
 const relationStatusLabels: Record<RelationStatus, string> = { confirmed: '已确认', suggested: '待确认', unresolved: '未解析' };
+const sortLabels: Record<LibrarySort, string> = {
+  title_asc: '名称正序',
+  title_desc: '名称倒序',
+  updated_desc: '修改时间倒序',
+  updated_asc: '修改时间正序',
+  created_desc: '创建时间倒序',
+  created_asc: '创建时间正序',
+};
 
 function formatTime(value: string): string {
   const date = new Date(value);
@@ -145,6 +157,7 @@ function LibraryHomePage() {
   const [kind, setKind] = useState<'all' | LibraryKind>('all');
   const [type, setType] = useState<'all' | LibraryType>('all');
   const [status, setStatus] = useState<'active' | 'all' | 'draft' | 'archived'>('active');
+  const [sort, setSort] = useState<LibrarySort>('updated_desc');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -152,7 +165,7 @@ function LibraryHomePage() {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ status, kind, type, pageSize: '100' });
+      const params = new URLSearchParams({ status, kind, type, sort, pageSize: '100' });
       if (query.trim()) params.set('q', query.trim());
       const response = await fetch(`/api/library?${params.toString()}`, { headers: authHeaders() });
       if (!response.ok) throw await readError(response, '知识库加载失败');
@@ -164,7 +177,7 @@ function LibraryHomePage() {
     } finally {
       setLoading(false);
     }
-  }, [authHeaders, kind, query, status, type]);
+  }, [authHeaders, kind, query, sort, status, type]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -201,19 +214,27 @@ function LibraryHomePage() {
           <button type="submit">搜索</button>
         </form>
         <div className="library-filters">
-          <select value={kind} onChange={event => setKind(event.target.value as typeof kind)} aria-label="筛选内容形态">
-            <option value="all">全部形态</option><option value="article">正式知识</option><option value="fragment">知识碎片</option>
-          </select>
           <select value={type} onChange={event => setType(event.target.value as typeof type)} aria-label="筛选内容类型">
             <option value="all">全部类型</option>{(Object.keys(typeLabels) as LibraryType[]).map(option => <option key={option} value={option}>{typeLabels[option]}</option>)}
           </select>
-          <select value={status} onChange={event => setStatus(event.target.value as typeof status)} aria-label="筛选内容状态">
-            <option value="active">有效内容</option><option value="draft">草稿</option><option value="archived">已归档</option><option value="all">全部状态</option>
+          <details className="library-filter-more">
+            <summary><SlidersHorizontal size={14} aria-hidden="true" />更多筛选{(kind !== 'all' || status !== 'active') && <span className="library-filter-active-dot" aria-label="已有更多筛选条件" />}</summary>
+            <div className="library-filter-more-panel">
+              <label>形态<select value={kind} onChange={event => setKind(event.target.value as typeof kind)} aria-label="筛选内容形态">
+                <option value="all">全部形态</option><option value="article">正式知识</option><option value="fragment">知识碎片</option>
+              </select></label>
+              <label>有效性<select value={status} onChange={event => setStatus(event.target.value as typeof status)} aria-label="筛选内容状态">
+                <option value="active">有效内容</option><option value="draft">草稿</option><option value="archived">已归档</option><option value="all">全部状态</option>
+              </select></label>
+            </div>
+          </details>
+          <select className="library-sort-select" value={sort} onChange={event => setSort(event.target.value as LibrarySort)} aria-label="知识库排序">
+            {(Object.keys(sortLabels) as LibrarySort[]).map(option => <option key={option} value={option}>{sortLabels[option]}</option>)}
           </select>
         </div>
       </section>
 
-      <div className="library-list-meta"><span>{loading ? '正在加载…' : `显示 ${entries.length} 条，共 ${total} 条`}</span><span>默认按最近更新排序</span></div>
+      <div className="library-list-meta"><span>{loading ? '正在加载…' : `显示 ${entries.length} 条，共 ${total} 条`}</span><span>当前按{sortLabels[sort]}</span></div>
       {loading ? (
         <div className="library-state"><RefreshCw size={24} className="spin" /><span>正在加载知识库…</span></div>
       ) : entries.length ? (
@@ -354,7 +375,7 @@ function LibraryDetailPage({ id }: { id: string }) {
         </article>
         <aside className="library-detail-aside">
           <section className="library-aside-card"><strong>内容信息</strong><dl><dt>内容 ID</dt><dd>{entry.id}</dd><dt>sourceId</dt><dd>{entry.sourceId || '—'}</dd><dt>哈希</dt><dd>{entry.contentHash.slice(0, 16)}…</dd><dt>创建</dt><dd>{formatTime(entry.createdAt)}</dd><dt>版本</dt><dd>{detail.versions.length || '—'}</dd></dl></section>
-          <section className="library-aside-card"><strong><Link2 size={14} />关联</strong>{relations.length ? <div className="library-relation-list">{relations.map((relation, index) => <div className="library-relation" key={`${relation.targetSourceId}-${index}`}><span className={`library-relation-status ${relation.status}`}>{relationStatusLabels[relation.status]}</span><span>{relation.label}</span><code>{relation.targetSourceId}</code></div>)}</div> : <p>当前没有本地关联。未解析目标不会被伪装成可用链接。</p>}</section>
+          <section className="library-aside-card"><strong><Link2 size={14} />关联</strong><p className="library-relation-help">关联由知识库 V2 的 <code>relations.json</code> 维护。已确认可直接查看目标，待确认仅供复核，未解析不会伪装成链接。</p>{relations.length ? <div className="library-relation-list">{relations.map((relation, index) => <div className="library-relation" key={`${relation.targetSourceId}-${index}`}><span className={`library-relation-status ${relation.status}`}>{relationStatusLabels[relation.status]}</span><span>{relation.label}</span>{relation.targetEntryId ? <a className="library-relation-target" href={`/library/${encodeURIComponent(relation.targetEntryId)}`}>{relation.targetTitle || relation.targetSourceId}</a> : <span className="library-relation-unresolved">{relation.targetStatus === 'archived' ? '目标已归档' : '目标尚未解析'}</span>}<code>{relation.targetSourceId}</code></div>)}</div> : <p>当前没有本地关联。</p>}</section>
           <section className="library-aside-card"><strong>来源</strong><p>{entry.sourceRef || '本地知识库 V2 发布'}</p>{entry.sourceUrl && <a href={entry.sourceUrl} target="_blank" rel="noreferrer">打开来源</a>}</section>
         </aside>
       </div>

@@ -1,5 +1,5 @@
 import { forwardRef, useState, useRef, useCallback, useEffect, useImperativeHandle } from 'react';
-import { Bot, Send, Loader2, CheckCircle2, Edit3, MapPin, Clock, Save, X, StickyNote } from 'lucide-react';
+import { Bot, BookOpen, Send, Loader2, CheckCircle2, Edit3, MapPin, Clock, Save, X, StickyNote } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { SCHEDULE_CATEGORY_COLORS, SCHEDULE_CATEGORY_LABELS } from '../utils/scheduleCategories';
 import type { NoteItem } from './NoteBoard';
@@ -51,6 +51,20 @@ interface AiSchedulePlan {
   operations: AiPlanOperation[];
 }
 
+interface KnowledgeSource {
+  id: string;
+  title: string;
+  summary?: string;
+  snippet?: string;
+  sourceId?: string | null;
+  sourceType?: string;
+  sourceRef?: string | null;
+  type?: string;
+  tags?: string[];
+  updatedAt?: string;
+  target?: { path: string };
+}
+
 type MessageRole = 'user' | 'assistant';
 type MessageType = 'text' | 'schedules' | 'update' | 'plan' | 'error';
 
@@ -62,6 +76,7 @@ interface ChatMessage {
   intent?: string;
   scheduleItems?: Schedule[];
   plan?: AiSchedulePlan;
+  knowledgeSources?: KnowledgeSource[];
   timestamp: string;
 }
 
@@ -422,6 +437,21 @@ function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan,
               </div>
             )}
 
+            {msg.knowledgeSources && msg.knowledgeSources.length > 0 && (
+              <div className="ai-knowledge-sources" aria-label="参考知识库">
+                <div className="ai-knowledge-sources-title"><BookOpen size={13} aria-hidden="true" />参考知识库 · {msg.knowledgeSources.length} 条</div>
+                <div className="ai-knowledge-source-list">
+                  {msg.knowledgeSources.map(source => (
+                    <a key={source.id} className="ai-knowledge-source" href={source.target?.path || `/library/${encodeURIComponent(source.id)}`}>
+                      <span className="ai-knowledge-source-head"><strong>{source.title}</strong><span>查看</span></span>
+                      {source.snippet && <span className="ai-knowledge-source-snippet">{source.snippet}</span>}
+                      <small>{source.sourceId || source.sourceType || source.type || '知识库内容'}</small>
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {msg.type === 'plan' && msg.plan && (
               <div className="mt-2 rounded-lg p-2.5" style={{ backgroundColor: '#EFF6FF', border: '1px solid #BFDBFE' }}>
                 <div className="text-xs font-medium mb-2" style={{ color: '#1D4ED8' }}>待确认执行计划 · {msg.plan.operations.length} 项</div>
@@ -514,6 +544,7 @@ export const AiSchedulePanel = forwardRef<AiSchedulePanelHandle, AiSchedulePanel
             intent: m.intent,
             scheduleItems: m.scheduleItems || m.schedule_items || undefined,
             plan: m.plan,
+            knowledgeSources: m.knowledgeSources || m.knowledge_sources || undefined,
             timestamp: m.timestamp || m.created_at || new Date().toISOString(),
           })) as ChatMessage[];
           setMessages(msgs);
@@ -616,6 +647,7 @@ export const AiSchedulePanel = forwardRef<AiSchedulePanelHandle, AiSchedulePanel
         text: data.reply,
         scheduleItems: data.scheduleItems || [],
         plan: data.plan,
+        knowledgeSources: data.knowledgeSources || [],
         timestamp: new Date().toISOString(),
       };
       setMessages(prev => [...prev, aiMsg]);

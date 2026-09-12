@@ -33,6 +33,9 @@ export interface LibraryRelation {
   type: string;
   label: string;
   status: LibraryRelationStatus;
+  targetEntryId?: string;
+  targetTitle?: string;
+  targetStatus?: LibraryStatus;
 }
 
 export interface LibraryEntry {
@@ -305,6 +308,24 @@ function buildLibraryLinkTargets(userId: string): Map<string, LibraryLinkTarget>
   return targets;
 }
 
+function enrichRelationTargets(userId: string, relations: LibraryRelation[]): LibraryRelation[] {
+  const targetBySourceId = new Map(
+    db.exportUserLibraryEntries(userId)
+      .filter(row => row.source_id)
+      .map(row => [row.source_id as string, row] as const),
+  );
+  return relations.map(relation => {
+    const target = targetBySourceId.get(relation.targetSourceId);
+    if (!target) return relation;
+    return {
+      ...relation,
+      ...(target.status === 'archived' ? {} : { targetEntryId: target.id }),
+      targetTitle: target.title || target.summary || target.source_id || undefined,
+      targetStatus: target.status,
+    };
+  });
+}
+
 function toEntry(row: db.DbLibraryEntry, includeContent = false, linkTargets?: Map<string, LibraryLinkTarget>): LibraryEntry {
   const tags = parseJson<unknown[]>(row.tags_json, []).filter(item => typeof item === 'string') as string[];
   const metadataValue = parseJson<unknown>(row.metadata_json, {});
@@ -492,10 +513,12 @@ export function listLibraryEntries(userId: string, filters: {
   sourceType?: string;
   page?: number;
   pageSize?: number;
-  sort?: 'updated_desc' | 'created_desc';
+  sort?: 'title_asc' | 'title_desc' | 'updated_asc' | 'updated_desc' | 'created_asc' | 'created_desc';
 } = {}): { items: LibraryEntry[]; total: number; page: number; pageSize: number } {
   const page = Math.max(Math.floor(filters.page || 1), 1);
   const pageSize = Math.min(Math.max(Math.floor(filters.pageSize || 40), 1), 100);
+  const sort = filters.sort || 'updated_desc';
+  const titleSort = sort === 'title_asc' || sort === 'title_desc';
   const result = db.listLibraryEntries(userId, {
     q: filters.q,
     kind: filters.kind,
@@ -503,11 +526,24 @@ export function listLibraryEntries(userId: string, filters: {
     status: filters.status || 'active',
     tag: filters.tag,
     source_type: filters.sourceType,
-    sort: filters.sort,
+    sort,
     limit: pageSize,
-    offset: (page - 1) * pageSize,
+    offset: titleSort ? 0 : (page - 1) * pageSize,
+    fetchAll: titleSort,
   });
-  return { items: result.items.map(row => toEntry(row)), total: result.total, page, pageSize };
+  let rows = result.items;
+  if (titleSort) {
+    const collator = new Intl.Collator('zh-CN', { usage: 'sort', numeric: true, sensitivity: 'base' });
+    rows = [...rows].sort((left, right) => {
+      const leftTitle = left.title || left.summary || left.source_id || left.id;
+      const rightTitle = right.title || right.summary || right.source_id || right.id;
+      const compared = collator.compare(leftTitle, rightTitle);
+      if (compared !== 0) return sort === 'title_asc' ? compared : -compared;
+      return sort === 'title_asc' ? left.id.localeCompare(right.id) : right.id.localeCompare(left.id);
+    });
+    rows = rows.slice((page - 1) * pageSize, page * pageSize);
+  }
+  return { items: rows.map(row => toEntry(row)), total: result.total, page, pageSize };
 }
 
 export function exportUserLibraryEntries(userId: string): LibraryEntry[] {
@@ -579,14 +615,15 @@ export function getLibraryDetail(userId: string, id: string): LibraryDetail | un
   const entry = db.getLibraryEntry(id, userId);
   if (!entry) return undefined;
   const mappedEntry = toEntry(entry, true, buildLibraryLinkTargets(userId));
+  const relations = enrichRelationTargets(userId, mappedEntry.relations);
   return {
-    entry: mappedEntry,
+    entry: { ...mappedEntry, relations },
     versions: db.listLibraryEntryVersions(id, userId).map(toVersion),
     comments: db.listLibraryComments(id, userId).map(toComment),
     relations: {
-      items: mappedEntry.relations,
+      items: relations,
       calendarEvents: [],
-      libraryEntries: mappedEntry.relations.map(item => item.targetSourceId),
+      libraryEntries: relations.flatMap(item => item.targetEntryId ? [item.targetEntryId] : []),
     },
   };
 }

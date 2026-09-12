@@ -25,6 +25,21 @@ export interface SearchResponse {
   counts: Record<Exclude<SearchScope, 'all'>, number>;
 }
 
+export interface KnowledgeSearchMatch {
+  id: string;
+  title: string;
+  summary: string;
+  snippet: string;
+  sourceId: string | null;
+  sourceType: string;
+  sourceRef: string | null;
+  sourceUrl: string | null;
+  type: string;
+  tags: string[];
+  updatedAt: string;
+  target: SearchTarget;
+}
+
 const MAX_QUERY_LENGTH = 120;
 const MAX_LIMIT = 40;
 const PER_SCOPE_LIMIT = 10;
@@ -74,6 +89,46 @@ function makeSnippet(query: string, fields: unknown[], maxLength = 150): string 
   const prefix = start > 0 ? '…' : '';
   const suffix = end < source.length ? '…' : '';
   return `${prefix}${source.slice(start, end).trim()}${suffix}`;
+}
+
+const KNOWLEDGE_STOP_WORDS = new Set([
+  '请问', '请帮我', '帮我', '告诉我', '解释一下', '分析一下', '如何', '怎么', '什么', '哪些', '是否', '能否',
+  '知识库', '历史知识', '历史记录', '相关内容', '之前记录', '内容', '一下', '关于', '根据',
+  'please', 'could', 'would', 'what', 'how', 'about', 'knowledge', 'history',
+]);
+
+function knowledgeTerms(query: string): string[] {
+  const segments = query.toLocaleLowerCase().match(/[a-z0-9][a-z0-9_-]{1,}|[\u4e00-\u9fff]{2,}/gu) || [];
+  return [...new Set(segments.filter(term => term.length >= 2 && !KNOWLEDGE_STOP_WORDS.has(term)))];
+}
+
+function knowledgeMatchRank(query: string, fields: unknown[]): { rank: number; snippetQuery: string } {
+  const normalizedFields = fields.map(field => plainText(field).toLocaleLowerCase());
+  const exactRank = matchRank(query, fields);
+  const terms = knowledgeTerms(query);
+  let rank = exactRank;
+  let matchedTerms = 0;
+  let bestTerm = '';
+
+  for (const term of terms) {
+    if (normalizedFields.some(field => field.includes(term))) {
+      matchedTerms += 1;
+      rank += term.length >= 4 ? 18 : 12;
+      if (term.length > bestTerm.length) bestTerm = term;
+      continue;
+    }
+    if (!/^[\u4e00-\u9fff]+$/u.test(term) || term.length < 4) continue;
+    const shingles = [...Array(term.length - 1)].map((_, index) => term.slice(index, index + 2));
+    const hitCount = shingles.filter(shingle => normalizedFields.some(field => field.includes(shingle))).length;
+    if (hitCount >= 2) {
+      matchedTerms += 1;
+      rank += hitCount * 6;
+      if (term.length > bestTerm.length) bestTerm = term;
+    }
+  }
+
+  if (exactRank === 0 && matchedTerms === 0) return { rank: 0, snippetQuery: query };
+  return { rank: rank + matchedTerms * 10, snippetQuery: bestTerm || query };
 }
 
 function sortResults(results: Array<SearchResult & { rank: number }>): SearchResult[] {
@@ -172,11 +227,49 @@ function libraryResults(userId: string, query: string): SearchResult[] {
       snippet: makeSnippet(query, [entry.summary, entry.content]),
       date: entry.updated_at,
       target: { path: `/library/${encodeURIComponent(entry.id)}` },
-      metadata: { kind: entry.kind, sourceType: entry.source_type, tags },
+      metadata: { kind: entry.kind, type: entry.type, sourceId: entry.source_id, sourceType: entry.source_type, tags },
       rank,
     }];
   });
   return sortResults(matches);
+}
+
+export function searchLibraryForAi(userId: string, query: string, limit = 5): KnowledgeSearchMatch[] {
+  const normalizedQuery = normalizeQuery(query);
+  if (!normalizedQuery) return [];
+  const rows = db.listLibraryEntries(userId, { status: 'active', fetchAll: true, sort: 'updated_desc' }).items;
+  const matches = rows.flatMap(entry => {
+    let tags: string[] = [];
+    try {
+      const parsed = JSON.parse(entry.tags_json);
+      if (Array.isArray(parsed)) tags = parsed.filter(item => typeof item === 'string') as string[];
+    } catch {
+      tags = [];
+    }
+    const fields = [entry.title, entry.summary, entry.content, tags.join(' ')];
+    const ranked = knowledgeMatchRank(normalizedQuery, fields);
+    if (!ranked.rank) return [];
+    return [{
+      id: entry.id,
+      title: entry.title || entry.summary || '未命名知识内容',
+      summary: plainText(entry.summary).slice(0, 240),
+      snippet: makeSnippet(ranked.snippetQuery, [entry.content, entry.summary], 900),
+      sourceId: entry.source_id,
+      sourceType: entry.source_type,
+      sourceRef: entry.source_ref,
+      sourceUrl: entry.source_url,
+      type: entry.type,
+      tags,
+      updatedAt: entry.updated_at,
+      target: { path: `/library/${encodeURIComponent(entry.id)}` },
+      rank: ranked.rank,
+    }];
+  });
+
+  return matches
+    .sort((left, right) => right.rank - left.rank || right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))
+    .slice(0, Math.max(1, Math.min(Math.floor(limit) || 5, 10)))
+    .map(({ rank: _rank, ...match }) => match);
 }
 
 export function searchAll(userId: string, input: { query?: unknown; scope?: unknown; limit?: unknown } = {}): SearchResponse {

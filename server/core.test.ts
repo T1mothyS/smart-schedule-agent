@@ -234,7 +234,9 @@ test('AI 助手历史按用户隔离并逐条清理超过三天的记录', () =>
   });
   db.createAiScheduleMessage({
     id: 'ai-history-fresh', user_id: userId, role: 'assistant', type: 'text', content: '新消息',
-    intent: 'chat', schedule_items: '[]', plan: null, created_at: freshTime,
+    intent: 'chat', schedule_items: '[]', plan: null,
+    knowledge_sources: JSON.stringify([{ id: 'library-entry', title: '历史知识' }]),
+    created_at: freshTime,
   });
   db.createAiScheduleMessage({
     id: 'ai-history-other-user', user_id: 'other-session-user', role: 'user', type: 'text', content: '其他用户消息',
@@ -245,6 +247,7 @@ test('AI 助手历史按用户隔离并逐条清理超过三天的记录', () =>
   assert.equal(deleted, 1);
   assert.equal(db.getAiScheduleMessages(userId, 0).some(item => item.id === 'ai-history-old'), false);
   assert.equal(db.getAiScheduleMessages(userId, 0).some(item => item.id === 'ai-history-fresh'), true);
+  assert.deepEqual(JSON.parse(db.getAiScheduleMessages(userId, 0).find(item => item.id === 'ai-history-fresh')?.knowledge_sources || 'null'), [{ id: 'library-entry', title: '历史知识' }]);
   assert.equal(db.getAiScheduleMessages('other-session-user', 0).some(item => item.id === 'ai-history-other-user'), true);
 });
 

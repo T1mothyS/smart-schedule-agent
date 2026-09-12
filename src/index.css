@@ -2234,6 +2234,16 @@ t-chat-sender::part(send-btn):disabled,
 .library-field input:focus,
 .library-field textarea:focus,
 .library-comment-compose textarea:focus { border-color: var(--td-brand-color); box-shadow: 0 0 0 3px var(--td-brand-color-light); }
+.library-filter-more { position: relative; }
+.library-filter-more summary { min-height: 38px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; color: var(--td-text-color-secondary); border: 1px solid var(--td-component-stroke); border-radius: 9px; background: var(--td-bg-color-container); cursor: pointer; list-style: none; font-size: 12px; }
+.library-filter-more summary::-webkit-details-marker { display: none; }
+.library-filter-more summary:hover,
+.library-filter-more[open] summary { color: var(--td-brand-color); border-color: var(--td-brand-color); background: var(--td-brand-color-light); }
+.library-filter-active-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--td-brand-color); }
+.library-filter-more-panel { position: absolute; z-index: 5; top: calc(100% + 7px); right: 0; min-width: 190px; display: grid; gap: 10px; padding: 12px; border: 1px solid var(--td-component-stroke); border-radius: 11px; background: var(--td-bg-color-container); box-shadow: 0 12px 28px rgba(15, 23, 42, .12); }
+.library-filter-more-panel label { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: center; gap: 8px; color: var(--td-text-color-secondary); font-size: 11px; }
+.library-filter-more-panel select { width: 100%; min-height: 34px; }
+.library-sort-select { min-width: 116px; }
 .library-token-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 18px; padding: 13px 15px; border: 1px solid color-mix(in srgb, var(--td-brand-color) 26%, var(--td-component-stroke)); border-radius: 12px; background: color-mix(in srgb, var(--td-brand-color-light) 55%, var(--td-bg-color-container)); }
 .library-token-card strong { font-size: 13px; }
 .library-token-card p { margin: 4px 0 0; color: var(--td-text-color-secondary); font-size: 11px; line-height: 1.5; }
@@ -2309,6 +2319,8 @@ t-chat-sender::part(send-btn):disabled,
 .library-aside-card strong svg { display: inline-block; margin-right: 5px; vertical-align: -2px; }
 .library-aside-card p, .library-aside-card a { overflow-wrap: anywhere; color: var(--td-text-color-secondary); font-size: 11px; line-height: 1.7; }
 .library-aside-card a { color: var(--td-brand-color); text-decoration: underline; }
+.library-aside-card .library-relation-help { margin: -2px 0 12px; color: var(--td-text-color-placeholder); font-size: 10px; line-height: 1.6; }
+.library-relation-help code { color: inherit; font-size: inherit; }
 .library-aside-card dl { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; margin: 0; font-size: 10px; }
 .library-aside-card dt { color: var(--td-text-color-placeholder); }
 .library-aside-card dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: var(--td-text-color-secondary); }
@@ -2327,6 +2339,8 @@ t-chat-sender::part(send-btn):disabled,
 .library-comment-empty { padding: 26px 14px; color: var(--td-text-color-placeholder); border: 1px dashed var(--td-component-stroke); border-radius: 10px; font-size: 12px; text-align: center; }
 .library-relation-list { display: flex; flex-direction: column; gap: 9px; }
 .library-relation { min-width: 0; display: flex; flex-direction: column; gap: 3px; color: var(--td-text-color-secondary); font-size: 11px; line-height: 1.5; }
+.library-relation-target { font-weight: 650; text-underline-offset: 2px; }
+.library-relation-unresolved { color: var(--td-text-color-placeholder); }
 .library-relation code { overflow-wrap: anywhere; color: var(--td-text-color-placeholder); font-size: 10px; }
 .library-relation-status { align-self: flex-start; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 700; }
 .library-relation-status.confirmed { color: #047857; background: #ecfdf5; }
@@ -2361,7 +2375,7 @@ t-chat-sender::part(send-btn):disabled,
 .global-search-trigger:hover { border-color: var(--td-brand-color); color: var(--td-brand-color); background: var(--td-brand-color-light); }
 .global-search-trigger kbd { padding: 2px 5px; border: 1px solid var(--td-component-stroke); border-radius: 5px; color: var(--td-text-color-placeholder); background: var(--td-bg-color-page); font-size: 9px; font-family: inherit; }
 .global-search-overlay { position: fixed; z-index: 180; inset: 0; display: flex; align-items: flex-start; justify-content: center; padding: clamp(72px, 11vh, 118px) 16px 24px; background: rgba(15, 23, 42, .38); backdrop-filter: blur(5px); }
-.global-search-dialog { width: min(720px, 100%); max-height: min(720px, calc(100dvh - 96px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--td-component-stroke); border-radius: 18px; background: var(--td-bg-color-container); box-shadow: 0 24px 70px rgba(15, 23, 42, .22); }
+.global-search-dialog { width: min(720px, 100%); max-height: min(720px, calc(100dvh - 96px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid color-mix(in srgb, var(--td-component-stroke) 45%, var(--td-bg-color-container)); border-radius: 18px; outline: none; background: var(--td-bg-color-container); background-clip: padding-box; box-shadow: 0 20px 56px rgba(15, 23, 42, .16); }
 .global-search-head { display: flex; align-items: center; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--td-component-stroke); }
 .global-search-input-wrap { min-width: 0; display: flex; flex: 1; align-items: center; gap: 10px; color: var(--td-brand-color); }
 .global-search-input-wrap input { min-width: 0; flex: 1; height: 38px; border: 0; outline: 0; color: var(--td-text-color-primary); background: transparent; font: inherit; font-size: 16px; }
@@ -2385,6 +2399,17 @@ t-chat-sender::part(send-btn):disabled,
 .global-search-result-main > span { overflow: hidden; color: var(--td-text-color-secondary); font-size: 11px; line-height: 1.5; text-overflow: ellipsis; white-space: nowrap; }
 .global-search-result-meta { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; color: var(--td-text-color-placeholder); }
 .global-search-result-meta small { font-size: 10px; }
+
+.ai-knowledge-sources { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--td-component-stroke); }
+.ai-knowledge-sources-title { display: inline-flex; align-items: center; gap: 5px; color: var(--td-text-color-secondary); font-size: 10px; font-weight: 700; }
+.ai-knowledge-source-list { display: grid; gap: 6px; margin-top: 7px; }
+.ai-knowledge-source { min-width: 0; display: block; padding: 8px 9px; border: 1px solid var(--td-component-stroke); border-radius: 8px; color: inherit !important; text-decoration: none !important; background: var(--td-bg-color-container); }
+.ai-knowledge-source:hover { border-color: var(--td-brand-color); background: var(--td-brand-color-light); }
+.ai-knowledge-source-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ai-knowledge-source-head strong { min-width: 0; overflow: hidden; color: var(--td-brand-color); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.ai-knowledge-source-head span { flex: 0 0 auto; color: var(--td-brand-color); font-size: 10px; }
+.ai-knowledge-source-snippet { display: -webkit-box; margin-top: 4px; overflow: hidden; color: var(--td-text-color-secondary); font-size: 10px; line-height: 1.55; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.ai-knowledge-source small { display: block; margin-top: 5px; overflow-wrap: anywhere; color: var(--td-text-color-placeholder); font-size: 9px; }
 
 /* ===== AI 助手移动端结构 ===== */
 .schedule-ai-reading-column { min-width: 0; }
@@ -2488,6 +2513,7 @@ t-chat-sender::part(send-btn):disabled,
   .library-detail-toolbar .library-header-actions { width: 100%; }
   .library-detail-toolbar .library-header-actions > button { width: 100%; }
   .library-detail-aside { grid-template-columns: 1fr; }
+  .library-filter-more-panel { left: 0; right: auto; max-width: min(260px, calc(100vw - 28px)); }
   .library-comment-compose { align-items: stretch; flex-direction: column; }
   .library-comment-compose .library-primary-button { align-self: flex-start; }
 }

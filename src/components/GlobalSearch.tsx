@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowRight, BookOpen, CalendarDays, FileText, Loader2, Search, StickyNote, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 
@@ -118,6 +119,10 @@ export function GlobalSearch() {
     navigate(result.target.path);
   };
 
+  const closeFromOverlay = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) close();
+  };
+
   return (
     <>
       <button
@@ -132,9 +137,9 @@ export function GlobalSearch() {
         <kbd>Ctrl K</kbd>
       </button>
 
-      {open && (
-        <div className="global-search-overlay" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
-          <section className="global-search-dialog" role="dialog" aria-modal="true" aria-labelledby="global-search-title">
+      {open && createPortal((
+        <div className="global-search-overlay" role="presentation" onMouseDown={closeFromOverlay} onClick={closeFromOverlay}>
+          <section className="global-search-dialog" role="dialog" aria-modal="true" aria-labelledby="global-search-title" onMouseDown={event => event.stopPropagation()} onClick={event => event.stopPropagation()}>
             <div className="global-search-head">
               <div className="global-search-input-wrap">
                 <Search size={18} aria-hidden="true" />
@@ -188,7 +193,7 @@ export function GlobalSearch() {
             </div>
           </section>
         </div>
-      )}
+      ), document.body)}
     </>
   );
 }

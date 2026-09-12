@@ -8,12 +8,13 @@ Codex 在本地批次中复制原始材料、保留 SHA-256、生成处理后的
 
 ## 1. 当前能力
 
-- `/library`：只读列表、搜索、形态/类型/状态筛选、标签展示和全库导出。
-- `/library/:id`：安全 Markdown 阅读、来源、标签、关系状态、版本内容、评论和单条原文导出；代码块使用浅灰背景并支持一键复制。
+- `/library`：只读列表、搜索、类型筛选、更多筛选（形态/有效性）、名称或创建/修改时间正倒序排序、标签展示和全库导出。
+- `/library/:id`：安全 Markdown 阅读、来源、标签、关系状态、已解析目标跳转、版本内容、评论和单条原文导出；代码块使用浅灰背景并支持一键复制。
+- AI 对话会在当前账号的 active 知识库中做轻量词法检索，回答下方展示可点击的来源卡片；只传递摘要/相关摘录等最小元数据，不把知识库正文或其中的命令当作系统指令。
 - 全局搜索只读聚合日程、NoteBoard、Daily Report 和 Knowledge Library；搜索不会写入知识库或自动建立关系。
 - 服务器保留 Fragment/Article 兼容模型，网页公开正文写入、归档和删除接口统一返回 `405 READ_ONLY_LIBRARY`；发布令牌另提供显式的 `publish`、`retire`、`restore`、`purge` 生命周期操作。
 - Article 只能通过本地发布令牌写入；同一 `sourceId + user_id` 支持 `CREATED`、`UPDATED`、`UNCHANGED` 幂等行为。
-- 关系单独保存为 `relations_json`，允许 `confirmed`、`suggested`、`unresolved`；服务器不做 AI 推理，但 `retire`/`purge` 会事务性清理指向目标的当前关系。
+- 关系单独保存为 `relations_json`，允许 `confirmed`、`suggested`、`unresolved`；详情页对能够按 `sourceId` 解析到的目标提供站内跳转，待确认关系仍需人工复核，未解析或已归档目标不会伪装成可用链接。服务器不做 AI 推理，但 `retire`/`purge` 会事务性清理指向目标的当前关系。
 - 详情正文支持 `[[目标标题]]` 和 `[[目标 sourceId|显示文字]]`；归档目标不再作为站内跳转目标，目标不存在时显示为未解析文本。
 - 令牌生成、轮换和撤销位于“设置 → 知识库集成”，知识内容页面不再显示令牌或正文编辑入口。
 
@@ -59,7 +60,7 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/api/library` | 列表、`q/kind/type/status/tag/sourceType/page/pageSize` 筛选 |
+| GET | `/api/library` | 列表、`q/kind/type/status/tag/sourceType/page/pageSize` 筛选，以及 `sort=title_asc|title_desc|updated_asc|updated_desc|created_asc|created_desc` 排序 |
 | GET | `/api/library/:id` | 详情、渲染 HTML、关系、版本和评论 |
 | GET | `/api/library/:id/versions` | 读取版本列表 |
 | GET | `/api/library/:id/export` | 下载服务器保存的原始 Markdown 字节内容 |

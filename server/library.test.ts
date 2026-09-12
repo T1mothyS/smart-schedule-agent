@@ -87,6 +87,7 @@ test('知识库网页只读、评论隔离并可导出原始 Markdown 与关系'
     const detailPayload = await detail.json();
     assert.equal(detailPayload.relations.items[0].status, 'unresolved');
     assert.equal(detailPayload.relations.items[0].targetSourceId, 'kb:missing');
+    assert.equal(detailPayload.relations.items[0].targetEntryId, undefined);
 
     const comment = await request(`/api/library/${entryId}/comments`, userToken, { method: 'POST', ...json({ content: '补充一个验证点。' }) });
     assert.equal(comment.status, 201);
@@ -266,6 +267,7 @@ test('详情页会把已存在的知识库标题解析为站内跳转链接', ()
     sourceId: 'kb:internal-target',
     title: '可跳转目标',
     content: '# 可跳转目标\n\n目标正文\n',
+    status: 'active',
     sourceType: 'codex',
     metadata: { legacyId: 'legacy-target', aliases: ['目标简称'] },
   });
@@ -276,6 +278,7 @@ test('详情页会把已存在的知识库标题解析为站内跳转链接', ()
     title: '站内引用',
     content: '# 站内引用\n\n参见 [[可跳转目标]]、[[目标简称]] 和 [[#legacy-target]]。\n\n[[不存在的条目]]\n',
     sourceType: 'codex',
+    relations: [{ sourceId: 'kb:internal-source', targetSourceId: 'kb:internal-target', type: 'related', label: '相关目标', status: 'confirmed' }],
   });
   const detail = libraryService.getLibraryDetail(user.id, source.entry.id);
   assert.ok(detail);
@@ -283,6 +286,30 @@ test('详情页会把已存在的知识库标题解析为站内跳转链接', ()
   assert.match(detail.entry.html || '', new RegExp(`<a class="library-internal-link" href="/library/${target.entry.id}">目标简称</a>`));
   assert.match(detail.entry.html || '', new RegExp(`<a class="library-internal-link" href="/library/${target.entry.id}">#legacy-target</a>`));
   assert.match(detail.entry.html || '', /class="library-unresolved-link"/);
+  assert.equal(detail.relations.items[0].targetEntryId, target.entry.id);
+  assert.equal(detail.relations.items[0].targetTitle, '可跳转目标');
+});
+
+test('知识库支持中文拼音名称排序和正倒序日期排序', () => {
+  for (const title of ['排序样本 10', '排序样本 2', '排序样本 1']) {
+    libraryService.createLibraryEntry(user.id, {
+      kind: 'article',
+      type: 'reference',
+      title,
+      content: `# ${title}\n\n排序测试正文。`,
+      summary: '排序样本',
+      status: 'active',
+      sourceType: 'codex',
+    });
+  }
+  const ascending = libraryService.listLibraryEntries(user.id, { q: '排序样本', sort: 'title_asc', pageSize: 10 });
+  const descending = libraryService.listLibraryEntries(user.id, { q: '排序样本', sort: 'title_desc', pageSize: 10 });
+  assert.deepEqual(ascending.items.map(item => item.title), ['排序样本 1', '排序样本 2', '排序样本 10']);
+  assert.deepEqual(descending.items.map(item => item.title), ['排序样本 10', '排序样本 2', '排序样本 1']);
+  const createdAsc = libraryService.listLibraryEntries(user.id, { q: '排序样本', sort: 'created_asc', pageSize: 10 });
+  const createdDesc = libraryService.listLibraryEntries(user.id, { q: '排序样本', sort: 'created_desc', pageSize: 10 });
+  assert.equal(createdAsc.items[0].createdAt <= createdAsc.items.at(-1)!.createdAt, true);
+  assert.equal(createdDesc.items[0].createdAt >= createdDesc.items.at(-1)!.createdAt, true);
 });
 
 test('Markdown 渲染不信任原始 HTML 和危险链接', () => {
