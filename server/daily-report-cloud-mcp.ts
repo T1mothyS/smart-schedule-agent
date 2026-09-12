@@ -22,6 +22,8 @@ import { validateDailyDigestMarkdown } from './daily-digest-template.js';
 
 const MAX_MCP_BODY_BYTES = 1_000_000;
 const CLOUD_MARKER = '<!-- daily-digest.v1 -->';
+const CLOUD_MARKDOWN_CREDENTIAL_PATTERN = /(?:\bdrr_[A-Za-z0-9_-]{16,}\b|\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b|\bAuthorization\s*:\s*(?:Bearer\s+)?[A-Za-z0-9._~+/=-]{8,}\b|\b(?:api[_ -]?key|password|secret|auth[_ -]?code|private[_ -]?key|client[_ -]?secret)\b\s*[:=]\s*['"`]?[A-Za-z0-9+/_~.-]{8,}['"`]?)/i;
+const CLOUD_MARKDOWN_LOCAL_PATH_PATTERN = /(?:[A-Za-z]:\\|\\\\[^\r\n ]+\\|\/Users\/|\/home\/)/i;
 
 type JsonRpcId = string | number | null;
 
@@ -207,7 +209,7 @@ function assertCloudMarkdown(date: string, markdown: unknown): asserts markdown 
   if (!/^# Daily Digest\b/m.test(markdown) || !/^## Today at a Glance\b/m.test(markdown)) {
     throw new Error('云端日报缺少必要的 Newsletter 标题');
   }
-  if (/(?:\bdrr_[A-Za-z0-9_-]{16,}|\bBearer\s+\S+|\bAuthorization\b|\b(?:api[_ -]?key|password|secret|auth[_ -]?code)\b|(?:[A-Za-z]:\\|\\\\[^\r\n ]+\\|\/Users\/|\/home\/))/i.test(markdown)) {
+  if (CLOUD_MARKDOWN_CREDENTIAL_PATTERN.test(markdown) || CLOUD_MARKDOWN_LOCAL_PATH_PATTERN.test(markdown)) {
     throw new Error('日报正文触发凭据或本地路径安全检查');
   }
 }

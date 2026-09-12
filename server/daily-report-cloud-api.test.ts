@@ -117,6 +117,10 @@ const cloudMarkdown = [
   '## Footer',
   '由日报 V2 自动整理。',
 ].join('\n');
+const cloudMarkdownWithSecurityWords = cloudMarkdown.replace(
+  '今日主题：五条普通新闻组成三个以上可核验角度',
+  '今日主题：五条关于 password reset、secret rotation 和 API key 生命周期的普通新闻组成三个以上可核验角度',
+);
 
 test('日报云端 Context 会进入加密用户备份，但不备份 OAuth 令牌', () => {
   const password = 'cloud-context-backup-password';
@@ -315,7 +319,7 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
       headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: {
         name: 'daily_report.publish',
-        arguments: { date: '2026-09-09', markdown: cloudMarkdown, dry_run: true },
+        arguments: { date: '2026-09-09', markdown: cloudMarkdownWithSecurityWords, dry_run: true },
       } }),
     });
     assert.equal(dryRun.status, 200);
@@ -325,6 +329,25 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     assert.equal(dryRunBody.result.structuredContent.mediaCount, 5);
     assert.equal(dryRunBody.result.structuredContent.featuredHeadline, 'Lead headline');
     assert.equal(dryRunBody.result.structuredContent.featuredImageUrl, `http://127.0.0.1:0${cloudMediaUrls[0]}`);
+    assert.equal(cloudStore.listDailyReportCloudHistory(userId, 30).length, historyBeforeDryRun);
+    assert.equal(activity.listNotifications(userId).length, notificationsBeforeDryRun);
+
+    const credentialMarkdown = cloudMarkdownWithSecurityWords.replace(
+      'password reset',
+      'password=abc12345',
+    );
+    const credentialRun = await request('/mcp', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 44, method: 'tools/call', params: {
+        name: 'daily_report.publish',
+        arguments: { date: '2026-09-09', markdown: credentialMarkdown, dry_run: true },
+      } }),
+    });
+    assert.equal(credentialRun.status, 200);
+    const credentialBody = await credentialRun.json() as any;
+    assert.equal(credentialBody.result.isError, true);
+    assert.match(credentialBody.result.content?.[0]?.text || '', /凭据或本地路径安全检查/);
     assert.equal(cloudStore.listDailyReportCloudHistory(userId, 30).length, historyBeforeDryRun);
     assert.equal(activity.listNotifications(userId).length, notificationsBeforeDryRun);
 
@@ -384,7 +407,7 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
       headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 41, method: 'tools/call', params: {
         name: 'daily_report.publish',
-        arguments: { date: '2026-09-09', markdown: cloudMarkdown, dry_run: false },
+        arguments: { date: '2026-09-09', markdown: cloudMarkdownWithSecurityWords, dry_run: false },
       } }),
     });
     assert.equal(published.status, 200);
