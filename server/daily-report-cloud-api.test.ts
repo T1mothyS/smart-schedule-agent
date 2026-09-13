@@ -356,6 +356,24 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     assert.equal(cloudStore.listDailyReportCloudHistory(userId, 30).length, historyBeforeDryRun);
     assert.equal(activity.listNotifications(userId).length, notificationsBeforeDryRun);
 
+    // Yahoo 的来源名称保留原样；不应自动下载 favicon 来阻止完整日报发布。
+    const withoutOptionalLogo = cloudMarkdownWithSecurityWords.replace(`来源图标：${cloudMarketLogoUrl}\n`, '');
+    const noLogoRun = await request('/mcp', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'without-optional-logo', method: 'tools/call', params: {
+        name: 'daily_report.publish',
+        arguments: { date: '2026-09-09', markdown: withoutOptionalLogo, dry_run: true },
+      } }),
+    });
+    const noLogoBody = await noLogoRun.json() as any;
+    assert.equal(noLogoBody.result.structuredContent.status, 'VALIDATED_NOT_PUBLISHED');
+    assert.equal(noLogoBody.result.structuredContent.imageCount, 5);
+    assert.equal(noLogoBody.result.structuredContent.logoCount, 0);
+    assert.equal(noLogoBody.result.structuredContent.mediaCount, 5);
+    assert.equal(cloudStore.listDailyReportCloudHistory(userId, 30).length, historyBeforeDryRun);
+    assert.equal(activity.listNotifications(userId).length, notificationsBeforeDryRun);
+
     const credentialMarkdown = cloudMarkdownWithSecurityWords.replace(
       'password reset',
       'password=abc12345',

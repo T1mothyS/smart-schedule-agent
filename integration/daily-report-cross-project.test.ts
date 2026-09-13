@@ -32,6 +32,30 @@ const activity = await import('../server/activity-store.js');
 const email = await import('../server/email-service.js');
 const notification = await import('../server/notification-service.js');
 const dailyReportTokens = await import('../server/daily-report-token-service.js');
+const { validateDailyDigestMarkdown, renderDailyDigest, renderDailyDigestPlainText } = await import('../server/daily-digest-template.js');
+const { assertCloudDigestCompleteness, getCloudDigestCompletenessRequirements } = await import('../server/daily-report-cloud-completeness.js');
+
+test('Cloud 实际定时提示模板可解析并覆盖两封邮件、市场与观察名单', () => {
+  const prompt = fs.readFileSync(path.join(reportRoot, 'prompts/cloud_scheduled_task.md'), 'utf8').replace(/\r\n?/g, '\n');
+  const markdown = prompt.split('```markdown\n')[1].split('```')[0];
+  const { digest, quality } = validateDailyDigestMarkdown(markdown);
+  const requirements = getCloudDigestCompletenessRequirements({
+    mail: { status: 'OK', configured: true, enabled: true, unreadCount: 2, messages: [{}, {}] },
+    cloudContext: { watchlist: { stocks: [{ symbol: 'DEMOA' }, { symbol: 'DEMOB' }] } },
+  });
+  assertCloudDigestCompleteness(digest, requirements);
+  assert.equal(quality.ordinaryNewsCount, 5);
+  assert.equal(digest.mailBriefings.length, 2);
+  assert.equal(digest.mailTasks.length, 1);
+  for (const output of [renderDailyDigest(digest), renderDailyDigestPlainText(markdown)]) {
+    for (const text of ['示例邮件简报第一封', '示例邮件简报第二封', '金融与市场', 'DEMOA', 'DEMOB']) {
+      assert.ok(output?.includes(text), `渲染不得丢失 ${text}`);
+    }
+  }
+  const oldTemplate = markdown.replace(/## Mail Briefing[\s\S]*?(?=## Worth Your Time)/, '');
+  assert.throws(() => assertCloudDigestCompleteness(validateDailyDigestMarkdown(oldTemplate).digest, requirements), /缺少未读邮件简报/);
+});
+
 
 await api.initializeServer();
 

@@ -279,7 +279,8 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
     const localizedMarkdown = await localizeDailyDigestImages(args.markdown, {
       requireHostedMedia: false,
       requireAllMedia: true,
-      inferSourceLogos: true,
+      // Cloud 只托管调用方明确提供的媒体；自动推断的可选图标不应成为发布的外部依赖。
+      inferSourceLogos: false,
     });
     assertHostedDailyReportMedia(localizedMarkdown);
     const validated = validateDailyDigestMarkdown(localizedMarkdown, { requireHostedImages: true });
