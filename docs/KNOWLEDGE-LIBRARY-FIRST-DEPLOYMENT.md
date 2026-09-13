@@ -4,6 +4,8 @@
 
 Knowledge Library V2 的稳定边界是：本地项目负责 Markdown 加工、`source-manifest.json`、`relations.json` 和生命周期选择；AI Calendar 负责账号隔离、只读呈现、评论、导出和发布令牌鉴权。网页端不编辑正文，也不替代本地关系校验。
 
+常规文章默认自动处理并上传：除非用户明确要求只分析、只做 `-DryRun`、暂不上传、等待确认或使用其他目标，用户交付新的知识库文章即视为已授权普通 `publish`，无需逐篇重复确认。目标不明确、令牌缺失/权限不符或本地校验失败时停止；`retire`、`restore`、`purge` 仍须显式选择，`purge` 还须二次确认。
+
 ## 1. 首次部署前置条件
 
 - AI Calendar 已完成 `npm run typecheck`、`npm test` 和 `npm run build`，并能通过 `/api/health`。
@@ -47,7 +49,7 @@ pwsh -NoProfile -File .\scripts\process-migration-folder.ps1 `
   -DryRun
 ```
 
-第一次必须先使用 `-DryRun`。检查通过后再由人工确认是否执行普通 `publish`。普通处理默认发布；`retire`、`restore` 和 `purge` 永远必须显式选择，不能复用上一次操作。
+首次配置或目标切换必须先使用 `-DryRun`，并核对目标账号、目标服务和令牌权限。检查通过后，当前目标已明确时普通新文章或更新会按默认规则自动执行 `publish`，不再逐篇等待人工确认；`retire`、`restore` 和 `purge` 永远必须显式选择，不能复用上一次操作。
 
 批次至少应包含：
 
