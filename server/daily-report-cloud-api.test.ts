@@ -266,7 +266,7 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     });
     assert.equal(tools.status, 200);
     const toolsBody = await tools.json() as any;
-    assert.equal(toolsBody.result.tools.length, 8);
+    assert.equal(toolsBody.result.tools.length, 11);
     const toolScopes: Record<string, string[]> = {
       'daily_report.read_inputs': [
         'daily_report:read_calendar',
@@ -281,10 +281,40 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
       'daily_report.publish': ['daily_report:publish'],
       'daily_report.media_probe_start': ['daily_report:media_probe'],
       'daily_report.media_probe_status': ['daily_report:media_probe'],
+      'daily_report.media_prepare_start': ['daily_report:media_prepare'],
+      'daily_report.media_prepare': ['daily_report:media_prepare'],
+      'daily_report.media_prepare_status': ['daily_report:media_prepare'],
     };
     for (const tool of toolsBody.result.tools as Array<any>) {
       assert.deepEqual(tool.securitySchemes, [{ type: 'oauth2', scopes: toolScopes[tool.name] }]);
     }
+
+    const mediaPrepareStart = await request('/mcp', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 25, method: 'tools/call', params: {
+        name: 'daily_report.media_prepare_start',
+        arguments: { date: '2026-09-10' },
+      } }),
+    });
+    assert.equal(mediaPrepareStart.status, 200);
+    const mediaPrepareStartBody = await mediaPrepareStart.json() as any;
+    assert.equal(mediaPrepareStartBody.result.structuredContent.status, 'PREPARING');
+    assert.equal(mediaPrepareStartBody.result.structuredContent.assetCount, 0);
+    assert.equal(mediaPrepareStartBody.result.structuredContent.limits.maxBytesPerFile, 5 * 1024 * 1024);
+
+    const mediaPrepareStatus = await request('/mcp', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 26, method: 'tools/call', params: {
+        name: 'daily_report.media_prepare_status',
+        arguments: { mediaBatchId: mediaPrepareStartBody.result.structuredContent.mediaBatchId },
+      } }),
+    });
+    assert.equal(mediaPrepareStatus.status, 200);
+    const mediaPrepareStatusBody = await mediaPrepareStatus.json() as any;
+    assert.equal(mediaPrepareStatusBody.result.structuredContent.status, 'PREPARING');
+    assert.equal(mediaPrepareStatusBody.result.structuredContent.batch.runId, mediaPrepareStartBody.result.structuredContent.runId);
 
     const contextCall = await request('/mcp', {
       method: 'POST',
@@ -339,6 +369,26 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
 
     const historyBeforeDryRun = cloudStore.listDailyReportCloudHistory(userId, 30).length;
     const notificationsBeforeDryRun = activity.listNotifications(userId).length;
+
+    const previousBatchRequirement = process.env.CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED;
+    process.env.CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED = 'true';
+    try {
+      const gatedPublish = await request('/mcp', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 'batch-required', method: 'tools/call', params: {
+          name: 'daily_report.publish',
+          arguments: { date: '2026-09-09', markdown: cloudMarkdownWithSecurityWords, dry_run: true },
+        } }),
+      });
+      assert.equal(gatedPublish.status, 200);
+      const gatedBody = await gatedPublish.json() as any;
+      assert.equal(gatedBody.result.isError, true);
+      assert.match(gatedBody.result.content?.[0]?.text || '', /必须先准备 mediaBatchId/);
+    } finally {
+      if (previousBatchRequirement === undefined) delete process.env.CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED;
+      else process.env.CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED = previousBatchRequirement;
+    }
 
     const dryRun = await request('/mcp', {
       method: 'POST',

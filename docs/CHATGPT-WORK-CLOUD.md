@@ -1,6 +1,6 @@
 # ChatGPT Work Cloud 日报正式发布与并行回滚链路
 
-本文档描述把日报 V2 迁移到 ChatGPT Work Cloud 的并行与正式发布实现。当前代码已提供 OAuth/MCP、来源维度的生产写入和 Cloud Context 边界；生产候选服务已经部署并完成一次 Work shadow 验收，Work 中已启用每日 16:40（Asia/Shanghai）的 shadow 定时任务。正式发布和本地链路切换仍未执行。
+本文档描述把日报 V2 迁移到 ChatGPT Work Cloud 的并行与正式发布实现。当前代码已提供 OAuth/MCP、来源维度的生产写入、Cloud Context 边界和隔离的媒体准备批次；媒体准备服务的生产部署与真实 Work 选图验证需要按本轮验收记录单独确认。正式发布和本地链路切换仍未执行。
 
 这里的“云端”指 ChatGPT Work 的后台任务运行环境；它不能直接读取本机 `日报-v2` worktree 或本地令牌。当前分支中的 Skill、结构化校验器和渲染器是待打包的源材料，尚未安装为 Work 可用的插件/Skill 资源，因此现在还不能仅凭本地文件路径创建可运行的 Work 定时任务。
 
@@ -12,11 +12,12 @@ ChatGPT Work scheduled task
     ▼
 AI Calendar /mcp
     ├─ read_inputs -> Calendar / QQ 未读摘要 / Cloud Context / 日报历史
-    ├─ Work Cloud 网络 -> 公开新闻、市场和可靠媒体
+    ├─ Work Cloud 网络 -> 公开新闻、市场和可靠媒体候选 URL
     ├─ Work Skill -> daily-digest.v1 JSON
-    └─ publish(dry_run=true|false)
+    ├─ media_prepare_start/media_prepare -> 服务端受控抓取、校验、哈希和托管
+    └─ publish(dry_run=true|false, mediaBatchId=...)
              ├─ true  -> VALIDATED_NOT_PUBLISHED（不写日报、不入邮件队列）
-             └─ false -> 服务端媒体托管 -> PUBLISHED
+             └─ false -> 仅使用 READY 批次媒体 -> PUBLISHED
                                       └─ source=cloud 日报记录
                                            ├─ RECEIVED -> 正式网页 + Cloud 邮件队列
                                            └─ CANDIDATE -> 候选对照（不进正式网页/邮件）
@@ -50,7 +51,10 @@ MCP 工具如下：
 | `daily_report.read_mail` | `daily_report:read_mail` | 读取 QQ 未读摘要，不返回授权码 |
 | `daily_report.read_context` | `daily_report:read_context` | 读取脱敏 Context 和活动证据 |
 | `daily_report.read_history` | `daily_report:read_history` | 读取最近日报摘要/哈希 |
-| `daily_report.publish` | `daily_report:publish` | dry-run 或服务端媒体托管后发布 |
+| `daily_report.publish` | `daily_report:publish` | 使用兼容路径或已 READY 媒体批次 dry-run/发布 |
+| `daily_report.media_prepare_start` | `daily_report:media_prepare` | 创建绑定账号、日期和 runId 的媒体批次 |
+| `daily_report.media_prepare` | `daily_report:media_prepare` | 按候选顺序由服务器抓取、校验和托管图片 |
+| `daily_report.media_prepare_status` | `daily_report:media_prepare` | 读取批次状态、assetKey、hash 和失败原因 |
 
 Work 连接应申请：
 
@@ -60,6 +64,7 @@ daily_report:read_mail
 daily_report:read_context
 daily_report:read_history
 daily_report:publish
+daily_report:media_prepare
 offline_access
 ```
 
@@ -85,13 +90,26 @@ V2 本地 Context 仍是当前本地链路的编辑源。一次性迁移时：
 
 ## 发布语义
 
-Work 必须先生成 `daily-digest.v1` JSON，再调用已经随 Work Skill 提供的等价确定性渲染器（当前 V2 分支的 `scripts/cloud_digest.py` 是待打包源材料）生成 Markdown。不能让 Work 任务引用本地路径，也不能把“模型直接写 Markdown”当作渲染器替代。`daily_report.publish` 的 `dry_run=true` 会在服务端执行：
+Work 必须先生成 `daily-digest.v1` JSON，再调用已经随 Work Skill 提供的等价确定性渲染器（当前 V2 分支的 `scripts/cloud_digest.py` 是待打包源材料）生成 Markdown。不能让 Work 任务引用本地路径，也不能把“模型直接写 Markdown”当作渲染器替代。
 
-- 日期、结构化标记和基础安全检查；
-- 公开图片和来源 logo 的 DNS/SSRF、大小、MIME、签名校验；
-- 内容哈希媒体缓存和本站路径替换。
+新媒体路径先调用 `daily_report.media_prepare_start`，再将每个新闻条目的 `assetKey` 和 1–5 个候选 URL 交给 `daily_report.media_prepare`。服务器执行：
 
-dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。任何媒体失败都会阻断云端发布，不会降级成不完整日报。正式调用必须使用 `dry_run=false`，并以返回 `status=PUBLISHED` 作为“已写入生产服务器”的硬性回执；`source` 必须由服务端标记为 `cloud`。随后 `deliveryStatus=RECEIVED` 或 `CANDIDATE` 只表示是否进入正式网页和邮件，`QUEUED` 只代表邮件已入队，不代表 SMTP accepted 或收件箱到达。
+- redirect、DNS/IP/SSRF、超时和大小限制；
+- HTTP `Content-Type` 与图片 magic bytes 双重校验；
+- SHA-256 去重、原子写入和批次归属记录；
+- 每个候选的成功/失败结果和 fallback 过程。
+
+带 `mediaBatchId` 的 `daily_report.publish` 会要求 `runId`、`requiredAssetKeys`、READY 批次、真实文件校验和 Markdown 中所有媒体均属于该批次；该分支不会在 publish 阶段抓取外链或静默替换为空。环境变量 `CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED` 默认保持 `false`，用于在正式 Work 提示词切换前保留旧版兼容路径；通过隔离验收后才可单独启用。
+
+`daily_report.publish` 的 `dry_run=true` 会在服务端执行日期、结构化标记、内容完整性和批次媒体检查：
+
+dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。新媒体批次中任何必需图片失败都会停留在非 READY 状态，Work 应更换候选后重试，不得降低图片质量要求。正式调用必须使用 `dry_run=false`，并以返回 `status=PUBLISHED` 作为“已写入生产服务器”的硬性回执；`source` 必须由服务端标记为 `cloud`。随后 `deliveryStatus=RECEIVED` 或 `CANDIDATE` 只表示是否进入正式网页和邮件，`QUEUED` 只代表邮件已入队，不代表 SMTP accepted 或收件箱到达。
+
+## 第二阶段第一轮状态（2026-09-13）
+
+- 已在本地实现并测试 `media_prepare_start`、`media_prepare`、`media_prepare_status`、批次归属/生命周期、候选 fallback、服务器受控抓取和严格批次发布检查。
+- 现有 Local V2 与 Cloud 兼容发布路径保留；`CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED` 未开启，正式 Work 定时任务未改写，relay 未部署。
+- 进入生产切换前仍需用真实生产服务器完成 10–20 个公开 URL 的来源分布/成功率验收，再用独立 Work 对话提交 3–5 个候选并确认不发布、不发信。
 
 ## 当前运行证据（2026-09-09）
 

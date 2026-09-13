@@ -49,6 +49,7 @@ export interface DailyReportMediaOptions {
   requireHostedMedia?: boolean;
   requireAllMedia?: boolean;
   inferSourceLogos?: boolean;
+  persistMedia?: (buffer: Buffer, validated: StoredMedia) => StoredMedia;
 }
 
 export interface StoredMedia {
@@ -56,6 +57,39 @@ export interface StoredMedia {
   mimeType: string;
   sizeBytes: number;
   sha256: string;
+}
+
+export type DailyReportMediaFailureCode =
+  | 'INVALID_URL'
+  | 'SSRF_BLOCKED'
+  | 'DNS_ERROR'
+  | 'REDIRECT_INVALID'
+  | 'REDIRECT_LIMIT'
+  | 'HTTP_ERROR'
+  | 'EMPTY_BODY'
+  | 'SIZE_LIMIT'
+  | 'INVALID_MIME'
+  | 'CONTENT_MISMATCH'
+  | 'TIMEOUT'
+  | 'FETCH_ERROR'
+  | 'PERSISTENCE_ERROR'
+  | 'BATCH_TOTAL_LIMIT';
+
+export class DailyReportMediaFetchError extends Error {
+  constructor(
+    readonly code: DailyReportMediaFailureCode,
+    message: string,
+    readonly httpStatus?: number,
+  ) {
+    super(message);
+    this.name = 'DailyReportMediaFetchError';
+  }
+}
+
+export interface ControlledDailyReportMediaResult extends StoredMedia {
+  originalUrl: string;
+  finalUrl: string;
+  hostedUrl: string;
 }
 
 function defaultLookup(hostname: string): Promise<LookupAddress[]> {
@@ -241,42 +275,115 @@ export function validateDailyReportMediaBuffer(buffer: Buffer, declaredMime = ''
   };
 }
 
-async function downloadAndStoreImage(url: string, options: Required<Pick<DailyReportMediaOptions, 'fetcher' | 'lookup' | 'mediaRoot' | 'timeoutMs'>>): Promise<StoredMedia> {
+function classifyMediaFetchError(error: unknown, fallback: DailyReportMediaFailureCode): DailyReportMediaFetchError {
+  if (error instanceof DailyReportMediaFetchError) return error;
+  const message = error instanceof Error ? error.message : String(error || '图片下载失败');
+  if (/不是有效 URL|协议或格式/.test(message)) return new DailyReportMediaFetchError('INVALID_URL', message);
+  if (/指向不允许|未解析到公开/.test(message)) return new DailyReportMediaFetchError('SSRF_BLOCKED', message);
+  if (/ENOTFOUND|EAI_AGAIN|EAI_FAIL|DNS|getaddrinfo|lookup/i.test(message)) return new DailyReportMediaFetchError('DNS_ERROR', message);
+  if (/重定向次数过多/.test(message)) return new DailyReportMediaFetchError('REDIRECT_LIMIT', message);
+  if (/重定向缺少目标/.test(message)) return new DailyReportMediaFetchError('REDIRECT_INVALID', message);
+  if (/超过大小限制/.test(message)) return new DailyReportMediaFetchError('SIZE_LIMIT', message);
+  if (/响应没有正文|正文不能为空/.test(message)) return new DailyReportMediaFetchError('EMPTY_BODY', message);
+  if (/内容不是受支持/.test(message)) return new DailyReportMediaFetchError('INVALID_MIME', message);
+  if (/响应类型与内容不一致/.test(message)) return new DailyReportMediaFetchError('CONTENT_MISMATCH', message);
+  if (/下载超时/.test(message) || (error instanceof Error && error.name === 'AbortError')) {
+    return new DailyReportMediaFetchError('TIMEOUT', '图片下载超时');
+  }
+  return new DailyReportMediaFetchError(fallback, message);
+}
+
+export interface ControlledDailyReportMediaOptions {
+  fetcher?: FetchLike;
+  lookup?: LookupLike;
+  mediaRoot?: string;
+  publicOrigin?: string;
+  timeoutMs?: number;
+  persistMedia?: (buffer: Buffer, validated: StoredMedia) => StoredMedia;
+}
+
+/**
+ * Fetch, validate, hash and host one untrusted upstream image.
+ * The caller may provide persistMedia to enforce a batch-level quota before
+ * the already validated bytes are atomically stored.
+ */
+export async function controlledMediaFetch(
+  url: string,
+  options: ControlledDailyReportMediaOptions = {},
+): Promise<ControlledDailyReportMediaResult> {
+  const fetcher = options.fetcher || fetch;
+  const lookup = options.lookup || defaultLookup;
+  const mediaRoot = options.mediaRoot || ROOT;
+  const publicOrigin = options.publicOrigin || configuredPublicOrigin();
+  const timeoutMs = options.timeoutMs || DAILY_REPORT_MEDIA_TIMEOUT_MS;
   let currentUrl = url;
   for (let redirect = 0; redirect <= DAILY_REPORT_MEDIA_MAX_REDIRECTS; redirect += 1) {
-    const current = await assertPublicUpstreamUrl(currentUrl, options.lookup);
+    let current: URL;
+    try {
+      current = await assertPublicUpstreamUrl(currentUrl, lookup);
+    } catch (error) {
+      throw classifyMediaFetchError(error, 'SSRF_BLOCKED');
+    }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;
     try {
-      response = await options.fetcher(current, {
+      response = await fetcher(current, {
         redirect: 'manual',
         signal: controller.signal,
         headers: {
-          Accept: 'image/jpeg,image/png,image/webp;q=0.9,image/*;q=0.8',
+          Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.7,zh-CN;q=0.3',
           'User-Agent': 'AI-Calendar-DailyDigest/1.0',
         },
       });
       if (response.status >= 300 && response.status < 400) {
-        if (redirect === DAILY_REPORT_MEDIA_MAX_REDIRECTS) throw new Error('图片重定向次数过多');
+        if (redirect === DAILY_REPORT_MEDIA_MAX_REDIRECTS) throw new DailyReportMediaFetchError('REDIRECT_LIMIT', '图片重定向次数过多');
         const location = response.headers.get('location');
-        if (!location) throw new Error('图片重定向缺少目标地址');
-        currentUrl = new URL(location, current).toString();
+        if (!location) throw new DailyReportMediaFetchError('REDIRECT_INVALID', '图片重定向缺少目标地址');
+        try {
+          currentUrl = new URL(location, current).toString();
+        } catch {
+          throw new DailyReportMediaFetchError('REDIRECT_INVALID', '图片重定向目标地址无效');
+        }
         continue;
       }
-      if (!response.ok) throw new Error(`图片上游返回 HTTP ${response.status}`);
+      if (!response.ok) throw new DailyReportMediaFetchError('HTTP_ERROR', `图片上游返回 HTTP ${response.status}`, response.status);
       const body = await readBoundedBody(response, DAILY_REPORT_MEDIA_MAX_BYTES);
       const declaredMime = response.headers.get('content-type') || '';
       const validated = validateDailyReportMediaBuffer(body, declaredMime);
-      return saveMedia(body, validated.mimeType, options.mediaRoot);
+      let stored: StoredMedia;
+      try {
+        stored = options.persistMedia
+          ? options.persistMedia(body, validated)
+          : saveMedia(body, validated.mimeType, mediaRoot);
+      } catch (error) {
+        if (error instanceof DailyReportMediaFetchError) throw error;
+        throw new DailyReportMediaFetchError('PERSISTENCE_ERROR', error instanceof Error ? error.message : '图片托管失败');
+      }
+      return {
+        ...stored,
+        originalUrl: url,
+        finalUrl: current.toString(),
+        hostedUrl: `${publicOrigin}${DAILY_REPORT_MEDIA_ROUTE}/${stored.filename}`,
+      };
     } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') throw new Error('图片下载超时');
-      throw error;
+      throw classifyMediaFetchError(error, 'FETCH_ERROR');
     } finally {
       clearTimeout(timer);
     }
   }
   throw new Error('图片下载失败');
+}
+
+async function downloadAndStoreImage(url: string, options: Required<Pick<DailyReportMediaOptions, 'fetcher' | 'lookup' | 'mediaRoot' | 'timeoutMs'>>): Promise<StoredMedia> {
+  const result = await controlledMediaFetch(url, options);
+  return {
+    filename: result.filename,
+    mimeType: result.mimeType,
+    sizeBytes: result.sizeBytes,
+    sha256: result.sha256,
+  };
 }
 
 function configuredPublicOrigin(): string {
@@ -315,12 +422,12 @@ export function dailyReportMediaPath(value: string): string | null {
   return STORED_MEDIA_FILENAME.test(filename) ? pathname : null;
 }
 
-interface ReportMediaReference {
+export interface ReportMediaReference {
   label: '图片' | '来源图标';
   value: string;
 }
 
-function reportMediaReferences(markdown: string): ReportMediaReference[] {
+export function listDailyReportMediaReferences(markdown: string): ReportMediaReference[] {
   if (!markdown.includes('<!-- daily-digest.v1 -->')) return [];
   const references: ReportMediaReference[] = [];
   const pattern = /^[^\S\r\n]*(图片|来源图标)：([^\s\r\n]+)[^\S\r\n]*$/gm;
@@ -339,8 +446,17 @@ function mediaFilePath(mediaPath: string, mediaRoot: string): string {
   return target;
 }
 
-export function assertHostedDailyReportMedia(markdown: string, mediaRoot = ROOT, publicOrigin = configuredPublicOrigin()): void {
-  const references = reportMediaReferences(markdown);
+export interface HostedDailyReportMediaOptions {
+  verifyContentIntegrity?: boolean;
+}
+
+export function assertHostedDailyReportMedia(
+  markdown: string,
+  mediaRoot = ROOT,
+  publicOrigin = configuredPublicOrigin(),
+  options: HostedDailyReportMediaOptions = {},
+): void {
+  const references = listDailyReportMediaReferences(markdown);
   const unique = new Set(references.map(reference => reference.value));
   if (unique.size > DAILY_REPORT_MEDIA_MAX_COUNT) throw new Error(`日报媒体数量超过上限 ${DAILY_REPORT_MEDIA_MAX_COUNT}`);
   for (const reference of references) {
@@ -349,15 +465,29 @@ export function assertHostedDailyReportMedia(markdown: string, mediaRoot = ROOT,
     if (!mediaPath || !hostedUrl) {
       throw new Error(`${reference.label}必须先在本地上传并使用本站媒体地址`);
     }
-    if (!fs.existsSync(mediaFilePath(mediaPath, mediaRoot))) {
+    if (options.verifyContentIntegrity) {
+      try { verifyStoredDailyReportMedia(mediaPath.slice(`${DAILY_REPORT_MEDIA_ROUTE}/`.length), mediaRoot); }
+      catch (error) { throw new Error(`${reference.label}对应的本站媒体文件校验失败：${error instanceof Error ? error.message : '文件不可用'}`); }
+    } else if (!fs.existsSync(mediaFilePath(mediaPath, mediaRoot))) {
       throw new Error(`${reference.label}对应的本站媒体文件尚未上传`);
     }
   }
 }
 
+export function verifyStoredDailyReportMedia(filename: string, mediaRoot = ROOT): StoredMedia {
+  if (!STORED_MEDIA_FILENAME.test(filename)) throw new Error('日报媒体文件名不安全');
+  const mediaPath = `${DAILY_REPORT_MEDIA_ROUTE}/${filename}`;
+  const target = mediaFilePath(mediaPath, mediaRoot);
+  if (!fs.existsSync(target) || !fs.statSync(target).isFile()) throw new Error('日报媒体文件尚未上传');
+  const buffer = fs.readFileSync(target);
+  const validated = validateDailyReportMediaBuffer(buffer);
+  if (validated.filename !== filename) throw new Error('日报媒体文件与内容哈希不一致');
+  return validated;
+}
+
 export function summarizeDailyReportMedia(markdown: string): { mediaCount: number; imageCount: number; logoCount: number } {
   const unique = new Map<string, ReportMediaReference['label']>();
-  for (const reference of reportMediaReferences(markdown)) unique.set(reference.value, reference.label);
+  for (const reference of listDailyReportMediaReferences(markdown)) unique.set(reference.value, reference.label);
   return {
     mediaCount: unique.size,
     imageCount: [...unique.values()].filter(label => label === '图片').length,
@@ -378,7 +508,7 @@ function existingMediaUrl(value: string, publicOrigin: string): string | null {
 }
 
 function allMediaValues(markdown: string): string[] {
-  return reportMediaReferences(markdown).map(reference => reference.value);
+  return listDailyReportMediaReferences(markdown).map(reference => reference.value);
 }
 
 function inferDailyDigestSourceLogos(markdown: string): string {

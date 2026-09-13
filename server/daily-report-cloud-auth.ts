@@ -12,6 +12,7 @@ export const DAILY_REPORT_CLOUD_SCOPES = [
   'daily_report:read_history',
   'daily_report:publish',
   'daily_report:media_probe',
+  'daily_report:media_prepare',
   'offline_access',
 ] as const;
 

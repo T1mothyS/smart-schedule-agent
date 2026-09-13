@@ -432,6 +432,46 @@ async function initDb(): Promise<void> {
     )
   `);
 
+  // Cloud 日报媒体准备批次；媒体正文仍保存在 daily-report-media 文件目录，数据库只保存归属和校验元数据。
+  db.run(`
+    CREATE TABLE IF NOT EXISTS daily_report_media_batches (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      report_date TEXT NOT NULL,
+      run_id TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL CHECK (status IN ('PREPARING', 'READY', 'COMMITTED', 'FAILED', 'PENDING_RETRY', 'EXPIRED')),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      committed_at TEXT,
+      failure_reason TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS daily_report_media_assets (
+      id TEXT PRIMARY KEY,
+      batch_id TEXT NOT NULL,
+      asset_key TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('HOSTED', 'FAILED')),
+      selected_candidate INTEGER,
+      original_url TEXT,
+      source_url TEXT,
+      source_domain TEXT,
+      hosted_url TEXT,
+      filename TEXT,
+      sha256 TEXT,
+      mime_type TEXT,
+      size_bytes INTEGER,
+      attempts_json TEXT NOT NULL DEFAULT '[]',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      UNIQUE (batch_id, asset_key),
+      FOREIGN KEY (batch_id) REFERENCES daily_report_media_batches(id) ON DELETE CASCADE
+    )
+  `);
+
   db.run(`
     CREATE TABLE IF NOT EXISTS library_entry_versions (
       id TEXT PRIMARY KEY,
@@ -487,6 +527,9 @@ async function initDb(): Promise<void> {
   db.run('CREATE INDEX IF NOT EXISTS idx_email_codes_email ON email_codes(email)');
   db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_report_token_hash ON daily_report_tokens(token_hash)');
   db.run('CREATE INDEX IF NOT EXISTS idx_daily_report_cloud_activity_user_date ON daily_report_cloud_activity(user_id, activity_date DESC, updated_at DESC)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_daily_report_media_batches_user_date ON daily_report_media_batches(user_id, report_date DESC, updated_at DESC)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_daily_report_media_batches_expiry ON daily_report_media_batches(status, expires_at)');
+  db.run('CREATE INDEX IF NOT EXISTS idx_daily_report_media_assets_batch ON daily_report_media_assets(batch_id, updated_at DESC)');
   db.run('CREATE INDEX IF NOT EXISTS idx_oauth_authorization_requests_expires ON oauth_authorization_requests(expires_at)');
   db.run('CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_expires ON oauth_authorization_codes(expires_at)');
   db.run('CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_user ON oauth_access_tokens(user_id, revoked_at, expires_at)');
@@ -682,6 +725,42 @@ export interface DbDailyReportCloudActivity {
   title: string;
   evidence: string;
   source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type DbDailyReportMediaBatchStatus = 'PREPARING' | 'READY' | 'COMMITTED' | 'FAILED' | 'PENDING_RETRY' | 'EXPIRED';
+
+export interface DbDailyReportMediaBatch {
+  id: string;
+  user_id: string;
+  report_date: string;
+  run_id: string;
+  status: DbDailyReportMediaBatchStatus;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+  committed_at: string | null;
+  failure_reason: string | null;
+}
+
+export type DbDailyReportMediaAssetStatus = 'HOSTED' | 'FAILED';
+
+export interface DbDailyReportMediaAsset {
+  id: string;
+  batch_id: string;
+  asset_key: string;
+  status: DbDailyReportMediaAssetStatus;
+  selected_candidate: number | null;
+  original_url: string | null;
+  source_url: string | null;
+  source_domain: string | null;
+  hosted_url: string | null;
+  filename: string | null;
+  sha256: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  attempts_json: string;
   created_at: string;
   updated_at: string;
 }
@@ -2059,6 +2138,132 @@ export function createDailyReportCloudActivity(input: DbDailyReportCloudActivity
     [input.id, input.user_id, input.activity_date, input.title, input.evidence, input.source, input.created_at, input.updated_at],
   );
   return input;
+}
+
+// ============= Cloud 日报媒体准备批次 =============
+
+export function createDailyReportMediaBatch(input: DbDailyReportMediaBatch): DbDailyReportMediaBatch {
+  run(
+    `INSERT INTO daily_report_media_batches
+     (id, user_id, report_date, run_id, status, created_at, updated_at, expires_at, committed_at, failure_reason)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      input.id,
+      input.user_id,
+      input.report_date,
+      input.run_id,
+      input.status,
+      input.created_at,
+      input.updated_at,
+      input.expires_at,
+      input.committed_at,
+      input.failure_reason,
+    ],
+  );
+  return input;
+}
+
+export function getDailyReportMediaBatch(id: string): DbDailyReportMediaBatch | undefined {
+  return queryOne<DbDailyReportMediaBatch>('SELECT * FROM daily_report_media_batches WHERE id = ?', [id]);
+}
+
+export function listDailyReportMediaBatches(userId: string, reportDate?: string, limit = 20): DbDailyReportMediaBatch[] {
+  const safeLimit = Math.min(Math.max(Math.trunc(limit) || 20, 1), 100);
+  const params: any[] = [userId];
+  const dateClause = reportDate ? ' AND report_date = ?' : '';
+  if (reportDate) params.push(reportDate);
+  params.push(safeLimit);
+  return queryAll<DbDailyReportMediaBatch>(
+    `SELECT * FROM daily_report_media_batches
+     WHERE user_id = ?${dateClause}
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    params,
+  );
+}
+
+export function updateDailyReportMediaBatchStatus(
+  id: string,
+  status: DbDailyReportMediaBatchStatus,
+  failureReason: string | null = null,
+  committedAt: string | null = null,
+  now = new Date().toISOString(),
+): DbDailyReportMediaBatch | undefined {
+  run(
+    `UPDATE daily_report_media_batches
+     SET status = ?, updated_at = ?, committed_at = ?, failure_reason = ?
+     WHERE id = ?`,
+    [status, now, committedAt, failureReason, id],
+  );
+  return getDailyReportMediaBatch(id);
+}
+
+export function getDailyReportMediaAsset(batchId: string, assetKey: string): DbDailyReportMediaAsset | undefined {
+  return queryOne<DbDailyReportMediaAsset>(
+    'SELECT * FROM daily_report_media_assets WHERE batch_id = ? AND asset_key = ?',
+    [batchId, assetKey],
+  );
+}
+
+export function listDailyReportMediaAssets(batchId: string): DbDailyReportMediaAsset[] {
+  return queryAll<DbDailyReportMediaAsset>(
+    'SELECT * FROM daily_report_media_assets WHERE batch_id = ? ORDER BY created_at ASC, asset_key ASC',
+    [batchId],
+  );
+}
+
+export function upsertDailyReportMediaAsset(input: DbDailyReportMediaAsset): DbDailyReportMediaAsset {
+  const existing = getDailyReportMediaAsset(input.batch_id, input.asset_key);
+  if (existing) {
+    run(
+      `UPDATE daily_report_media_assets SET
+       status = ?, selected_candidate = ?, original_url = ?, source_url = ?, source_domain = ?,
+       hosted_url = ?, filename = ?, sha256 = ?, mime_type = ?, size_bytes = ?, attempts_json = ?, updated_at = ?
+       WHERE batch_id = ? AND asset_key = ?`,
+      [
+        input.status,
+        input.selected_candidate,
+        input.original_url,
+        input.source_url,
+        input.source_domain,
+        input.hosted_url,
+        input.filename,
+        input.sha256,
+        input.mime_type,
+        input.size_bytes,
+        input.attempts_json,
+        input.updated_at,
+        input.batch_id,
+        input.asset_key,
+      ],
+    );
+  } else {
+    run(
+      `INSERT INTO daily_report_media_assets
+       (id, batch_id, asset_key, status, selected_candidate, original_url, source_url, source_domain,
+        hosted_url, filename, sha256, mime_type, size_bytes, attempts_json, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.id,
+        input.batch_id,
+        input.asset_key,
+        input.status,
+        input.selected_candidate,
+        input.original_url,
+        input.source_url,
+        input.source_domain,
+        input.hosted_url,
+        input.filename,
+        input.sha256,
+        input.mime_type,
+        input.size_bytes,
+        input.attempts_json,
+        input.created_at,
+        input.updated_at,
+      ],
+    );
+  }
+  return getDailyReportMediaAsset(input.batch_id, input.asset_key)!;
 }
 
 // ============= OAuth 2.1 / MCP 授权记录 =============
