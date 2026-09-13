@@ -9,6 +9,10 @@ export type LibraryKind = (typeof LIBRARY_KINDS)[number];
 export const LIBRARY_TYPES = ['knowledge', 'insight', 'framework', 'experience', 'tutorial', 'reference'] as const;
 export type LibraryType = (typeof LIBRARY_TYPES)[number];
 
+export const LIBRARY_SORTS = ['title_asc', 'title_desc', 'updated_asc', 'updated_desc', 'created_asc', 'created_desc'] as const;
+export type LibrarySort = (typeof LIBRARY_SORTS)[number];
+export const DEFAULT_LIBRARY_SORT: LibrarySort = 'created_desc';
+
 export const LIBRARY_STATUSES = ['draft', 'active', 'archived'] as const;
 export type LibraryStatus = (typeof LIBRARY_STATUSES)[number];
 
@@ -110,6 +114,32 @@ export class LibraryInputError extends Error {
     this.code = code;
     this.field = field;
   }
+}
+
+export interface LibrarySortPreference {
+  sort: LibrarySort;
+  updatedAt: string | null;
+}
+
+export function isLibrarySort(value: unknown): value is LibrarySort {
+  return typeof value === 'string' && (LIBRARY_SORTS as readonly string[]).includes(value);
+}
+
+export function getLibrarySortPreference(userId: string): LibrarySortPreference {
+  const row = db.getLibraryPreference(userId);
+  if (!row || !isLibrarySort(row.sort)) {
+    return { sort: DEFAULT_LIBRARY_SORT, updatedAt: null };
+  }
+  return { sort: row.sort, updatedAt: row.updated_at };
+}
+
+export function saveLibrarySortPreference(userId: string, sort: LibrarySort): LibrarySortPreference {
+  const row = db.upsertLibraryPreference({
+    user_id: userId,
+    sort,
+    updated_at: new Date().toISOString(),
+  });
+  return { sort: row.sort, updatedAt: row.updated_at };
 }
 
 interface EntryInput {
@@ -513,11 +543,11 @@ export function listLibraryEntries(userId: string, filters: {
   sourceType?: string;
   page?: number;
   pageSize?: number;
-  sort?: 'title_asc' | 'title_desc' | 'updated_asc' | 'updated_desc' | 'created_asc' | 'created_desc';
+  sort?: LibrarySort;
 } = {}): { items: LibraryEntry[]; total: number; page: number; pageSize: number } {
   const page = Math.max(Math.floor(filters.page || 1), 1);
   const pageSize = Math.min(Math.max(Math.floor(filters.pageSize || 40), 1), 100);
-  const sort = filters.sort || 'updated_desc';
+  const sort = filters.sort || DEFAULT_LIBRARY_SORT;
   const titleSort = sort === 'title_asc' || sort === 'title_desc';
   const result = db.listLibraryEntries(userId, {
     q: filters.q,

@@ -1205,22 +1205,50 @@ function libraryBody(req: express.Request): Record<string, unknown> {
   return req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
 }
 
+app.get('/api/library/preferences', authenticate, (req, res) => {
+  try {
+    const userId = ((req as any).user as JwtPayload).userId;
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, preference: libraryService.getLibrarySortPreference(userId) });
+  } catch (error) {
+    sendLibraryError(res, error, '获取知识库排序偏好失败', 500);
+  }
+});
+
+app.put('/api/library/preferences', authenticate, (req, res) => {
+  try {
+    const body = libraryBody(req);
+    const unknownFields = Object.keys(body).filter(key => key !== 'sort');
+    if (unknownFields.length) return res.status(400).json({ success: false, error: { code: 'UNKNOWN_FIELD', message: `不允许的字段：${unknownFields.join(', ')}` } });
+    if (!libraryService.isLibrarySort(body.sort)) {
+      return res.status(400).json({ success: false, error: { code: 'INVALID_SORT', message: 'sort 不合法', field: 'sort' } });
+    }
+    const userId = ((req as any).user as JwtPayload).userId;
+    const preference = libraryService.saveLibrarySortPreference(userId, body.sort);
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ success: true, preference });
+  } catch (error) {
+    sendLibraryError(res, error, '保存知识库排序偏好失败', 500);
+  }
+});
+
 app.get('/api/library', authenticate, (req, res) => {
   try {
+    const userId = ((req as any).user as JwtPayload).userId;
     const kind = String(req.query.kind || 'all');
     const type = String(req.query.type || 'all');
     const status = String(req.query.status || 'active');
-    const sort = String(req.query.sort || 'updated_desc');
+    const requestedSort = req.query.sort === undefined ? undefined : String(req.query.sort);
+    const sort = requestedSort === undefined ? libraryService.getLibrarySortPreference(userId).sort : requestedSort;
     const allowedKind = ['all', ...libraryService.LIBRARY_KINDS];
     const allowedType = ['all', ...libraryService.LIBRARY_TYPES];
     const allowedStatus = ['all', ...libraryService.LIBRARY_STATUSES];
-    const allowedSort = ['title_asc', 'title_desc', 'updated_asc', 'updated_desc', 'created_asc', 'created_desc'];
     if (!allowedKind.includes(kind)) return res.status(400).json({ success: false, error: { code: 'INVALID_KIND', message: 'kind 不合法', field: 'kind' } });
     if (!allowedType.includes(type)) return res.status(400).json({ success: false, error: { code: 'INVALID_TYPE', message: 'type 不合法', field: 'type' } });
     if (!allowedStatus.includes(status)) return res.status(400).json({ success: false, error: { code: 'INVALID_STATUS', message: 'status 不合法', field: 'status' } });
-    if (!allowedSort.includes(sort)) return res.status(400).json({ success: false, error: { code: 'INVALID_SORT', message: 'sort 不合法', field: 'sort' } });
+    if (!libraryService.isLibrarySort(sort)) return res.status(400).json({ success: false, error: { code: 'INVALID_SORT', message: 'sort 不合法', field: 'sort' } });
     res.setHeader('Cache-Control', 'no-store');
-    const result = libraryService.listLibraryEntries((req as any).user.userId, {
+    const result = libraryService.listLibraryEntries(userId, {
       q: typeof req.query.q === 'string' ? req.query.q : undefined,
       kind,
       type,
@@ -1229,9 +1257,9 @@ app.get('/api/library', authenticate, (req, res) => {
       sourceType: typeof req.query.sourceType === 'string' ? req.query.sourceType : undefined,
       page: Number(req.query.page || 1),
       pageSize: Number(req.query.pageSize || 40),
-      sort: sort as 'title_asc' | 'title_desc' | 'updated_asc' | 'updated_desc' | 'created_asc' | 'created_desc',
+      sort,
     });
-    res.json({ success: true, ...result });
+    res.json({ success: true, sort, ...result });
   } catch (error) {
     sendLibraryError(res, error, '获取知识库失败', 500);
   }

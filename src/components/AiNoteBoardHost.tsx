@@ -39,7 +39,9 @@ export function useAiNoteBoard({ initialNoteId, onSendToAi }: UseAiNoteBoardOpti
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(() => (
+    typeof window !== 'undefined' && window.matchMedia('(min-width: 861px)').matches
+  ));
 
   useEffect(() => {
     if (initialNoteId) setDrawerOpen(true);

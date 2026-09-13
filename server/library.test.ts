@@ -112,6 +112,56 @@ test('知识库网页只读、评论隔离并可导出原始 Markdown 与关系'
   }
 });
 
+test('知识库排序偏好按账户保存，列表默认读取且显式排序不覆盖偏好', async () => {
+  const server = http.createServer(api.app);
+  const port = await listen(server);
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const request = (pathname: string, token: string, init: RequestInit = {}) => fetch(baseUrl + pathname, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, ...(init.headers || {}) },
+  });
+  const json = (body: unknown): RequestInit => ({ headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+  try {
+    const initial = await request('/api/library/preferences', userToken);
+    assert.equal(initial.status, 200);
+    assert.deepEqual((await initial.json()).preference, { sort: 'created_desc', updatedAt: null });
+
+    const otherInitial = await request('/api/library/preferences', otherToken);
+    assert.equal(otherInitial.status, 200);
+    assert.equal((await otherInitial.json()).preference.sort, 'created_desc');
+
+    const saved = await request('/api/library/preferences', userToken, { method: 'PUT', ...json({ sort: 'title_asc' }) });
+    assert.equal(saved.status, 200);
+    const savedPayload = await saved.json();
+    assert.equal(savedPayload.preference.sort, 'title_asc');
+    assert.match(savedPayload.preference.updatedAt, /^\d{4}-\d{2}-\d{2}T/);
+
+    const defaultList = await request('/api/library?status=all&pageSize=100', userToken);
+    assert.equal(defaultList.status, 200);
+    assert.equal((await defaultList.json()).sort, 'title_asc');
+
+    const explicitList = await request('/api/library?status=all&pageSize=100&sort=created_desc', userToken);
+    assert.equal(explicitList.status, 200);
+    assert.equal((await explicitList.json()).sort, 'created_desc');
+
+    const unchangedPreference = await request('/api/library/preferences', userToken);
+    assert.equal((await unchangedPreference.json()).preference.sort, 'title_asc');
+
+    const otherList = await request('/api/library?status=all&pageSize=100', otherToken);
+    assert.equal(otherList.status, 200);
+    assert.equal((await otherList.json()).sort, 'created_desc');
+
+    const invalid = await request('/api/library/preferences', userToken, { method: 'PUT', ...json({ sort: 'invalid_sort' }) });
+    assert.equal(invalid.status, 400);
+    const invalidPayload = await invalid.json();
+    assert.equal(invalidPayload.error.code, 'INVALID_SORT');
+    assert.equal(invalidPayload.error.field, 'sort');
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+  }
+});
+
 test('正式知识发布令牌只保存哈希、按 sourceId 幂等并保留版本', async () => {
   const server = http.createServer(api.app);
   const port = await listen(server);

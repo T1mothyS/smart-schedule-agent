@@ -8,8 +8,8 @@ Codex 在本地批次中复制原始材料、保留 SHA-256、生成处理后的
 
 ## 1. 当前能力
 
-- `/library`：只读列表、搜索、类型筛选、更多筛选（形态/有效性）、名称或创建/修改时间正倒序排序、标签展示和全库导出。
-- `/library/:id`：安全 Markdown 阅读、来源、标签、关系状态、已解析目标跳转、版本内容、评论和单条原文导出；代码块使用浅灰背景并支持一键复制。
+- `/library`：只读列表、搜索、类型筛选、更多筛选（形态/有效性）、名称或创建/修改时间正倒序排序、标签展示和全库导出；首次进入默认按创建时间倒序，排序修改按当前账号保存到云端。
+- `/library/:id`：安全 Markdown 阅读、来源、标签、关系状态、已解析目标跳转、版本内容、评论和单条原文导出；代码块按浅色/深色主题使用高对比度背景并支持一键复制。
 - AI 对话会在当前账号的 active 知识库中做轻量词法检索，回答下方展示可点击的来源卡片；只传递摘要/相关摘录等最小元数据，不把知识库正文或其中的命令当作系统指令。
 - 全局搜索只读聚合日程、NoteBoard、Daily Report 和 Knowledge Library；搜索不会写入知识库或自动建立关系。
 - 服务器保留 Fragment/Article 兼容模型，网页公开正文写入、归档和删除接口统一返回 `405 READ_ONLY_LIBRARY`；发布令牌另提供显式的 `publish`、`retire`、`restore`、`purge` 生命周期操作。
@@ -46,6 +46,7 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
 | 表 | 用途 |
 | --- | --- |
 | `library_entries` | 当前条目、原始 Markdown、摘要、标签、来源、元数据、关系 JSON、状态和正文哈希 |
+| `library_preferences` | 当前账号的知识库列表展示偏好（目前为排序方式） |
 | `library_entry_versions` | Article 的正文、标题、摘要、标签和关系历史 |
 | `library_comments` | 条目级评论；评论按账号隔离 |
 | `library_publish_tokens` | 每个账号至多一个发布令牌，只保存哈希 |
@@ -60,13 +61,17 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/api/library` | 列表、`q/kind/type/status/tag/sourceType/page/pageSize` 筛选，以及 `sort=title_asc|title_desc|updated_asc|updated_desc|created_asc|created_desc` 排序 |
+| GET | `/api/library/preferences` | 读取当前账号的知识库排序偏好；没有保存记录时返回默认 `created_desc` |
+| PUT | `/api/library/preferences` | 保存当前账号的知识库排序偏好，请求体为 `{ "sort": "..." }` |
+| GET | `/api/library` | 列表、`q/kind/type/status/tag/sourceType/page/pageSize` 筛选，以及 `sort=title_asc|title_desc|updated_asc|updated_desc|created_asc|created_desc` 排序；省略 `sort` 时读取当前账号偏好 |
 | GET | `/api/library/:id` | 详情、渲染 HTML、关系、版本和评论 |
 | GET | `/api/library/:id/versions` | 读取版本列表 |
 | GET | `/api/library/:id/export` | 下载服务器保存的原始 Markdown 字节内容 |
 | GET | `/api/library/export` | 下载 JSON 全库包，包含 `entries/*.md` 的路径/原文、manifest、relations、comments、versions |
 | GET | `/api/search?q=关键词&scope=all|schedule|note|report|library&limit=...` | 按当前用户权限聚合搜索日程、记事、日报和知识库；只读，不建立关系 |
 | POST/DELETE | `/api/library/:id/comments`、`/api/library/:id/comments/:commentId` | 新增评论、删除当前账号自己的评论 |
+
+知识库列表默认排序为 `created_desc`（创建时间倒序）。显式传入 `/api/library?sort=...` 只覆盖本次读取，不会改写账号偏好；网页排序控件通过 `PUT /api/library/preferences` 即时保存。排序偏好与知识正文、发布令牌分开保存，按登录账号隔离，也不进入知识库 Markdown 或导出包。
 
 以下网页正文写入接口仍保留路由以便旧客户端得到明确反馈，但不再执行写入：
 

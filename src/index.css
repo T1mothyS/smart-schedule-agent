@@ -2305,6 +2305,10 @@ t-chat-sender::part(send-btn):disabled,
 .library-markdown pre code { color: #111827 !important; background: transparent !important; }
 .library-code-copy { position: absolute; top: 8px; right: 8px; min-height: 26px; padding: 0 8px; color: #374151; border: 1px solid #d1d5db; border-radius: 6px; background: #fff; font-size: 11px; line-height: 24px; cursor: pointer; }
 .library-code-copy:hover { background: #e5e7eb; }
+.dark .library-markdown pre { color: var(--td-text-color-primary) !important; border-color: var(--td-component-stroke) !important; background: var(--td-bg-color-component) !important; }
+.dark .library-markdown pre code { color: var(--td-text-color-primary) !important; background: transparent !important; }
+.dark .library-markdown .library-code-copy { color: var(--td-text-color-primary); border-color: var(--td-component-stroke); background: var(--td-bg-color-container); }
+.dark .library-markdown .library-code-copy:hover { background: var(--td-bg-color-component-hover); }
 .library-markdown .library-internal-link { color: var(--td-brand-color); font-weight: 600; text-underline-offset: 3px; }
 .library-markdown .library-unresolved-link { color: var(--td-text-color-secondary); border-bottom: 1px dashed var(--td-text-color-placeholder); }
 .library-markdown blockquote { margin: 1em 0; padding: 8px 14px; border-left: 3px solid var(--td-brand-color); color: var(--td-text-color-secondary); background: var(--td-brand-color-light); }

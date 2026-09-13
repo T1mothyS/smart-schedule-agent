@@ -424,6 +424,15 @@ async function initDb(): Promise<void> {
   }
 
   db.run(`
+    CREATE TABLE IF NOT EXISTS library_preferences (
+      user_id TEXT PRIMARY KEY,
+      sort TEXT NOT NULL CHECK (sort IN ('title_asc', 'title_desc', 'updated_asc', 'updated_desc', 'created_asc', 'created_desc')),
+      updated_at TEXT NOT NULL,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS library_entry_versions (
       id TEXT PRIMARY KEY,
       entry_id TEXT NOT NULL,
@@ -788,6 +797,14 @@ export interface DbLibraryEntry {
   updated_at: string;
   published_at: string | null;
   archived_at: string | null;
+}
+
+export type DbLibrarySort = 'title_asc' | 'title_desc' | 'updated_asc' | 'updated_desc' | 'created_asc' | 'created_desc';
+
+export interface DbLibraryPreference {
+  user_id: string;
+  sort: DbLibrarySort;
+  updated_at: string;
 }
 
 export interface DbLibraryEntryVersion {
@@ -1376,12 +1393,32 @@ export interface DbLibraryListFilters {
   source_type?: string;
   limit?: number;
   offset?: number;
-  sort?: 'title_asc' | 'title_desc' | 'updated_asc' | 'updated_desc' | 'created_asc' | 'created_desc';
+  sort?: DbLibrarySort;
   fetchAll?: boolean;
 }
 
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, match => `\\${match}`);
+}
+
+export function getLibraryPreference(userId: string): DbLibraryPreference | undefined {
+  return queryOne<DbLibraryPreference>('SELECT user_id, sort, updated_at FROM library_preferences WHERE user_id = ?', [userId]);
+}
+
+export function upsertLibraryPreference(preference: DbLibraryPreference): DbLibraryPreference {
+  const existing = getLibraryPreference(preference.user_id);
+  if (existing) {
+    run(
+      'UPDATE library_preferences SET sort = ?, updated_at = ? WHERE user_id = ?',
+      [preference.sort, preference.updated_at, preference.user_id],
+    );
+  } else {
+    run(
+      'INSERT INTO library_preferences (user_id, sort, updated_at) VALUES (?, ?, ?)',
+      [preference.user_id, preference.sort, preference.updated_at],
+    );
+  }
+  return getLibraryPreference(preference.user_id) || preference;
 }
 
 export function getLibraryEntry(id: string, userId: string): DbLibraryEntry | undefined {
@@ -2229,6 +2266,7 @@ export function deleteUser(userId: string): boolean {
     run('DELETE FROM daily_report_tokens WHERE user_id = ?', [userId]);
     deleteDailyReportCloudData(userId);
     deleteOAuthUserData(userId);
+    run('DELETE FROM library_preferences WHERE user_id = ?', [userId]);
     run('DELETE FROM library_publish_tokens WHERE user_id = ?', [userId]);
     run('DELETE FROM library_comments WHERE user_id = ?', [userId]);
     run('DELETE FROM library_entry_versions WHERE user_id = ?', [userId]);
@@ -2257,6 +2295,7 @@ export function clearUserData(userId: string): { schedules: number; sessions: nu
     run('DELETE FROM user_mail_accounts WHERE user_id = ?', [userId]);
     deleteDailyReportCloudData(userId);
     deleteOAuthUserData(userId);
+    run('DELETE FROM library_preferences WHERE user_id = ?', [userId]);
     run('DELETE FROM library_publish_tokens WHERE user_id = ?', [userId]);
     run('DELETE FROM reminders WHERE user_id = ?', [userId]);
     run('DELETE FROM ai_schedule_messages WHERE user_id = ?', [userId]);

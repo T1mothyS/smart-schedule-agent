@@ -8,6 +8,7 @@ type LibraryType = 'knowledge' | 'insight' | 'framework' | 'experience' | 'tutor
 type LibraryStatus = 'draft' | 'active' | 'archived';
 type RelationStatus = 'confirmed' | 'suggested' | 'unresolved';
 type LibrarySort = 'title_asc' | 'title_desc' | 'updated_asc' | 'updated_desc' | 'created_asc' | 'created_desc';
+const DEFAULT_LIBRARY_SORT: LibrarySort = 'created_desc';
 
 interface LibraryRelation {
   sourceId: string;
@@ -92,6 +93,10 @@ const sortLabels: Record<LibrarySort, string> = {
   created_asc: '创建时间正序',
 };
 
+function isLibrarySort(value: unknown): value is LibrarySort {
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(sortLabels, value);
+}
+
 function formatTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -157,9 +162,31 @@ function LibraryHomePage() {
   const [kind, setKind] = useState<'all' | LibraryKind>('all');
   const [type, setType] = useState<'all' | LibraryType>('all');
   const [status, setStatus] = useState<'active' | 'all' | 'draft' | 'archived'>('active');
-  const [sort, setSort] = useState<LibrarySort>('updated_desc');
+  const [sort, setSort] = useState<LibrarySort>(DEFAULT_LIBRARY_SORT);
+  const [sortPreferenceReady, setSortPreferenceReady] = useState(false);
+  const [sortSaving, setSortSaving] = useState(false);
+  const [preferenceError, setPreferenceError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const loadPreference = useCallback(async () => {
+    setSortPreferenceReady(false);
+    setPreferenceError(null);
+    try {
+      const response = await fetch('/api/library/preferences', { headers: authHeaders() });
+      if (!response.ok) throw await readError(response, '排序偏好加载失败');
+      const data = await response.json();
+      const nextSort = data?.preference?.sort;
+      if (!isLibrarySort(nextSort)) throw new Error('服务返回的排序偏好无效');
+      setSort(nextSort);
+    } catch (preferenceLoadError) {
+      setSort(DEFAULT_LIBRARY_SORT);
+      const message = preferenceLoadError instanceof Error ? preferenceLoadError.message : '排序偏好加载失败';
+      setPreferenceError(`排序偏好加载失败，已使用默认排序：${message}`);
+    } finally {
+      setSortPreferenceReady(true);
+    }
+  }, [authHeaders]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -179,7 +206,31 @@ function LibraryHomePage() {
     }
   }, [authHeaders, kind, query, sort, status, type]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void loadPreference(); }, [loadPreference]);
+  useEffect(() => { if (sortPreferenceReady) void load(); }, [load, sortPreferenceReady]);
+
+  const saveSortPreference = async (nextSort: LibrarySort) => {
+    if (!sortPreferenceReady || sortSaving || nextSort === sort) return;
+    setSortSaving(true);
+    setPreferenceError(null);
+    try {
+      const response = await fetch('/api/library/preferences', {
+        method: 'PUT',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sort: nextSort }),
+      });
+      if (!response.ok) throw await readError(response, '排序偏好保存失败');
+      const data = await response.json();
+      const savedSort = data?.preference?.sort;
+      if (!isLibrarySort(savedSort)) throw new Error('服务返回的排序偏好无效');
+      setSort(savedSort);
+    } catch (preferenceSaveError) {
+      const message = preferenceSaveError instanceof Error ? preferenceSaveError.message : '排序偏好保存失败';
+      setPreferenceError(`排序偏好保存失败，当前仍按${sortLabels[sort]}显示：${message}`);
+    } finally {
+      setSortSaving(false);
+    }
+  };
 
   const downloadFullExport = async () => {
     try {
@@ -205,6 +256,7 @@ function LibraryHomePage() {
         </div>
       </header>
 
+      {preferenceError && <div className="library-notice error" role="alert">{preferenceError}<button type="button" onClick={() => void loadPreference()}>重试排序偏好</button></div>}
       {error && <div className="library-notice error" role="alert">{error}<button type="button" onClick={() => void load()}>重试</button></div>}
 
       <section className="library-toolbar" aria-label="知识库筛选">
@@ -228,7 +280,7 @@ function LibraryHomePage() {
               </select></label>
             </div>
           </details>
-          <select className="library-sort-select" value={sort} onChange={event => setSort(event.target.value as LibrarySort)} aria-label="知识库排序">
+          <select className="library-sort-select" value={sort} onChange={event => void saveSortPreference(event.target.value as LibrarySort)} disabled={!sortPreferenceReady || sortSaving} aria-busy={sortSaving} aria-label="知识库排序">
             {(Object.keys(sortLabels) as LibrarySort[]).map(option => <option key={option} value={option}>{sortLabels[option]}</option>)}
           </select>
         </div>
