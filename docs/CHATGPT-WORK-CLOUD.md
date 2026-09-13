@@ -1,6 +1,6 @@
 # ChatGPT Work Cloud 日报正式发布与并行回滚链路
 
-本文档描述把日报 V2 迁移到 ChatGPT Work Cloud 的并行与正式发布实现。当前代码已提供 OAuth/MCP、来源维度的生产写入、Cloud Context 边界和隔离的媒体准备批次；媒体准备服务的生产部署与真实 Work 选图验证需要按本轮验收记录单独确认。正式发布和本地链路切换仍未执行。
+本文档描述把日报 V2 迁移到 ChatGPT Work Cloud 的并行与正式发布实现。当前代码已提供 OAuth/MCP、来源维度的生产写入、Cloud Context 边界和隔离的媒体准备批次；媒体准备服务已部署并完成真实 Work 选图验证。正式发布和本地链路切换仍未执行。
 
 这里的“云端”指 ChatGPT Work 的后台任务运行环境；它不能直接读取本机 `日报-v2` worktree 或本地令牌。当前分支中的 Skill、结构化校验器和渲染器是待打包的源材料，尚未安装为 Work 可用的插件/Skill 资源，因此现在还不能仅凭本地文件路径创建可运行的 Work 定时任务。
 
@@ -107,9 +107,11 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。新
 
 ## 第二阶段第一轮状态（2026-09-13）
 
-- 已在本地实现并测试 `media_prepare_start`、`media_prepare`、`media_prepare_status`、批次归属/生命周期、候选 fallback、服务器受控抓取和严格批次发布检查。
-- 现有 Local V2 与 Cloud 兼容发布路径保留；`CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED` 未开启，正式 Work 定时任务未改写，relay 未部署。
-- 进入生产切换前仍需用真实生产服务器完成 10–20 个公开 URL 的来源分布/成功率验收，再用独立 Work 对话提交 3–5 个候选并确认不发布、不发信。
+- 本地已实现并测试 `media_prepare_start`、`media_prepare`、`media_prepare_status`、批次归属/生命周期、候选 fallback、服务器受控抓取和严格批次发布检查；生产基线为 commit `6767ae8`、版本 `0.20.4-260913.2139`。
+- 第一轮真实 Work 负向矩阵已完成：批次 `19f8cb8e-6a5c-433c-a498-1e8bc6af2f26` 处理 12 个 asset，`PREPARING`、`hostedCount=1`、`failedCount=11`、`totalBytes=30320`。`gstatic.com` 的 WebP 成功托管；HTTP 403/404、HTML/错误 MIME、SSRF/private IP 均由服务器归因。`upload.wikimedia.org` 在阿里云服务器侧连接超时，属于服务器到源站的网络不可达，不是 Work 没有提交 URL。
+- 正向真实 Work 复核已通过：新批次 `e61b22b4-2bf8-40f5-a433-73ebf7d9120d`、runId `cloud-media-1cd4ba3b-7a9a-4dab-8011-8c8063497202`，状态 `READY`，4/4 托管、0 失败、总计 `134598` bytes。`hero-fallback` 先收到 HTTP 404，再使用第二候选成功；PNG、JPEG、WebP 均返回服务器生成的 MIME、字节数、SHA-256 和 `hostedUrl`。Work 的 `media_prepare` 与 `media_prepare_status` 明细完全一致。
+- 服务器独立复核确认 4 个文件真实存在于 `data/daily-report-media`，磁盘 hash/大小与数据库一致，4 个 `hostedUrl` 均返回 HTTP 200 且 MIME/长度匹配；本轮发生过一次 OAuth 重新授权，未观察到人工审批。
+- 现有 Local V2 与 Cloud 兼容发布路径保留；`CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED` 未开启，正式 Work 定时任务未改写，relay 未部署。本轮未调用 publish、未入队、未发邮件。
 
 ## 当前运行证据（2026-09-09）
 
@@ -124,6 +126,9 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。新
 - 尚未完成至少 3 个日期的连续 shadow，也未覆盖 Calendar 无数据/不可用、邮箱部分失败或不可用和公开新闻源异常的对照测试。
 - 没有执行云端正式 `PUBLISHED`，也没有验证通知队列、SMTP/provider 或收件箱最终到达；当前任务仅用于 shadow dry-run。
 - 尚未证明 Work 侧已安装可执行的 `cloud_digest.py` 等打包资源；当前任务提示词已固化结构和安全边界，因此仍按候选 shadow 处理，不把一次 `VALIDATED_NOT_PUBLISHED` 当作迁移完成。
+- 已证明 Work 能把公开图片 URL 交给服务器受控抓取和托管；尚未证明所有新闻源在阿里云出口均可达，Wikimedia 本轮即为连接超时。正式日报仍需在实际新闻候选集合上做来源分布和成功率验收。
+- 尚未验证正式定时运行中的上传/发布是否会被工作区策略暂停等待人工审批；本轮仅验证了 Work 对话中的 OAuth 重新授权路径。
+- 暂存媒体的自动 GC 尚未实现；过期的未引用批次仍有短期文件积累风险。
 - 没有暂停、改写或删除现有 `v2-chatgpt` 本地任务。
 - 没有把本地公开资料采集器强行改成云端 prompt；Work 运行时需要按 Skill 使用云端网络重新核实新闻、市场和图片。
 
