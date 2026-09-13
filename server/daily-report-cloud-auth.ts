@@ -11,6 +11,7 @@ export const DAILY_REPORT_CLOUD_SCOPES = [
   'daily_report:read_context',
   'daily_report:read_history',
   'daily_report:publish',
+  'daily_report:media_probe',
   'offline_access',
 ] as const;
 
@@ -566,6 +567,7 @@ const SCOPE_LABELS: Record<string, string> = {
   'daily_report:read_context': '读取日报 Context 和活动证据',
   'daily_report:read_history': '读取最近日报的去重摘要',
   'daily_report:publish': '发布日报并按账号设置排队邮件',
+  'daily_report:media_probe': '使用隔离的 Work 媒体传输探针（不发布日报、不发邮件）',
   offline_access: '允许定时任务在登录后持续刷新授权',
 };
 

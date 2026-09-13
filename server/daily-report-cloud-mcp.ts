@@ -20,6 +20,12 @@ import { readUserMail } from './user-mail-service.js';
 import { assertHostedDailyReportMedia, localizeDailyDigestImages, summarizeDailyReportMedia } from './daily-report-media-service.js';
 import { validateDailyDigestMarkdown } from './daily-digest-template.js';
 import {
+  createWorkMediaProbe,
+  getWorkMediaProbeStatus,
+  isWorkMediaProbeEnabled,
+  WORK_MEDIA_PROBE_ROUTE,
+} from './work-media-probe-service.js';
+import {
   assertCloudDigestCompleteness,
   getCloudDigestCompletenessRequirements,
   summarizeCloudDigestCompletenessRequirements,
@@ -58,6 +64,8 @@ const TOOL_SCOPES: Record<string, DailyReportCloudScope[]> = {
   'daily_report.read_context': ['daily_report:read_context'],
   'daily_report.read_history': ['daily_report:read_history'],
   'daily_report.publish': ['daily_report:publish'],
+  'daily_report.media_probe_start': ['daily_report:media_probe'],
+  'daily_report.media_probe_status': ['daily_report:media_probe'],
 };
 
 function oauthSecurity(toolName: string): Array<{ type: 'oauth2'; scopes: string[] }> {
@@ -130,6 +138,31 @@ const toolDefinitions: McpTool[] = [
         date: { type: 'string', description: 'YYYY-MM-DD' },
         markdown: { type: 'string', description: '包含 daily-digest.v1 标记的清洗后 Markdown' },
         dry_run: { type: 'boolean', default: false },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'daily_report.media_probe_start',
+    securitySchemes: oauthSecurity('daily_report.media_probe_start'),
+    description: '创建一次隔离的 Work 文件传输探针。它只签发短期 raw HTTP PUT 上传票据并写入 data/work-media-probe，不接受 Base64 或伪造的 MCP 文件参数，也不会发布日报、排队邮件或发送 SMTP。Work 必须用实际可用的云端文件/网络能力把原始字节交给返回的 uploadUrlTemplate；如果只能提供 URL，则不能把它当作文件上传成功。X-Original-Filename 使用 URL 编码以兼容 HTTP 头，服务端会还原原始文件名。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        date: { type: 'string', description: '可选的 YYYY-MM-DD 关联日期；不触发日报生成或发布' },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'daily_report.media_probe_status',
+    securitySchemes: oauthSecurity('daily_report.media_probe_status'),
+    description: '读取当前账号拥有的隔离 Work 媒体探针结果，重新读取服务器文件并核对字节数、MIME 与 SHA-256；不会读取或修改正式日报媒体。',
+    inputSchema: {
+      type: 'object',
+      required: ['probeId'],
+      properties: {
+        probeId: { type: 'string', description: 'media_probe_start 返回的 Probe ID' },
       },
       additionalProperties: false,
     },
@@ -263,6 +296,48 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
       activity: listDailyReportCloudActivity(auth.userId, { limit: 100 }),
       history: listDailyReportCloudHistory(auth.userId, 7),
     };
+  }
+  if (name === 'daily_report.media_probe_start') {
+    if (!isWorkMediaProbeEnabled()) throw new Error('Work 文件传输探针当前未启用');
+    const ticket = createWorkMediaProbe({
+      userId: auth.userId,
+      clientId: auth.clientId,
+      date: stringValue(args.date) || undefined,
+    });
+    return {
+      status: 'PROBE_CREATED',
+      probeId: ticket.probeId,
+      runId: ticket.runId,
+      date: ticket.date,
+      createdAt: ticket.createdAt,
+      expiresAt: ticket.expiresAt,
+      transport: ticket.transport,
+      upload: {
+        method: 'PUT',
+        urlTemplate: `${dailyReportCloudIssuer()}${WORK_MEDIA_PROBE_ROUTE}/${ticket.probeId}/assets/{assetKey}`,
+        uploadToken: ticket.uploadToken,
+        requiredHeaders: ['Authorization: Bearer <uploadToken>', 'Content-Type', 'X-Original-Filename (URL-encode when non-ASCII)'],
+        assetKeyPattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$',
+      },
+      limits: {
+        mcpRequestMaxBytes: 1_000_000,
+        maxBytesPerFile: ticket.maxBytesPerFile,
+        maxFiles: ticket.maxFiles,
+        maxTotalBytes: ticket.maxTotalBytes,
+      },
+      safety: {
+        formalDailyReportMediaTouched: false,
+        publishCalled: false,
+        notificationQueued: false,
+        smtpCalled: false,
+      },
+    };
+  }
+  if (name === 'daily_report.media_probe_status') {
+    if (!isWorkMediaProbeEnabled()) throw new Error('Work 文件传输探针当前未启用');
+    const probeId = stringValue(args.probeId);
+    if (!probeId) throw new Error('probeId 不能为空');
+    return getWorkMediaProbeStatus(probeId, auth.userId);
   }
   if (name === 'daily_report.publish') {
     const date = stringValue(args.date);

@@ -217,13 +217,28 @@ export function storeProvidedDailyReportMedia(
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('日报媒体正文不能为空');
   if (buffer.length > DAILY_REPORT_MEDIA_MAX_BYTES) throw new Error('日报媒体超过大小限制');
   if (!STORED_MEDIA_FILENAME.test(filename)) throw new Error('日报媒体文件名不安全');
+  const validated = validateDailyReportMediaBuffer(buffer, declaredMime);
+  if (filename !== validated.filename) throw new Error('日报媒体文件名与内容哈希不一致');
+  return saveMedia(buffer, validated.mimeType, mediaRoot);
+}
+
+/**
+ * Validate an already received media body without touching the filesystem.
+ * Probe and formal local uploads must share this exact content contract.
+ */
+export function validateDailyReportMediaBuffer(buffer: Buffer, declaredMime = ''): StoredMedia {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('日报媒体正文不能为空');
+  if (buffer.length > DAILY_REPORT_MEDIA_MAX_BYTES) throw new Error('日报媒体超过大小限制');
   const detectedMime = detectedImageMime(buffer);
   if (!detectedMime || !ALLOWED_IMAGE_MIME.has(detectedMime)) throw new Error('日报媒体内容不是受支持的有效图片或 logo');
   assertDeclaredMime(normalizedDeclaredMime(declaredMime), detectedMime);
   const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
-  const expectedFilename = `${sha256}${extensionForMime(detectedMime)}`;
-  if (filename !== expectedFilename) throw new Error('日报媒体文件名与内容哈希不一致');
-  return saveMedia(buffer, detectedMime, mediaRoot);
+  return {
+    filename: `${sha256}${extensionForMime(detectedMime)}`,
+    mimeType: detectedMime,
+    sizeBytes: buffer.length,
+    sha256,
+  };
 }
 
 async function downloadAndStoreImage(url: string, options: Required<Pick<DailyReportMediaOptions, 'fetcher' | 'lookup' | 'mediaRoot' | 'timeoutMs'>>): Promise<StoredMedia> {
@@ -251,13 +266,9 @@ async function downloadAndStoreImage(url: string, options: Required<Pick<DailyRe
       }
       if (!response.ok) throw new Error(`图片上游返回 HTTP ${response.status}`);
       const body = await readBoundedBody(response, DAILY_REPORT_MEDIA_MAX_BYTES);
-      const mimeType = detectedImageMime(body);
-      if (!mimeType || !ALLOWED_IMAGE_MIME.has(mimeType)) throw new Error('图片内容不是受支持的有效图片');
-      const declaredMime = (response.headers.get('content-type') || '').split(';', 1)[0].trim().toLowerCase();
-      if (declaredMime && declaredMime !== 'application/octet-stream' && declaredMime !== mimeType && !(declaredMime === 'image/jpg' && mimeType === 'image/jpeg')) {
-        throw new Error('图片响应类型与内容不一致');
-      }
-      return saveMedia(body, mimeType, options.mediaRoot);
+      const declaredMime = response.headers.get('content-type') || '';
+      const validated = validateDailyReportMediaBuffer(body, declaredMime);
+      return saveMedia(body, validated.mimeType, options.mediaRoot);
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') throw new Error('图片下载超时');
       throw error;

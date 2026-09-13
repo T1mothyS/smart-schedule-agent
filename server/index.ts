@@ -44,6 +44,12 @@ import {
   storeProvidedDailyReportMedia,
   summarizeDailyReportMedia,
 } from './daily-report-media-service.js';
+import {
+  WORK_MEDIA_PROBE_MAX_BYTES,
+  WORK_MEDIA_PROBE_ROUTE,
+  isWorkMediaProbeEnabled,
+  uploadWorkMediaProbeAsset,
+} from './work-media-probe-service.js';
 import { deleteUserMailAccount, getUserMailAccountStatus, readUserMail, saveUserMailAccount } from './user-mail-service.js';
 import { createApiRateLimiter, securityHeaders } from './http-security.js';
 import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
@@ -2113,6 +2119,58 @@ app.get('/api/integrations/daily-report/mail', async (req, res) => {
 const dailyReportMediaRawBody = express.raw({
   type: ['image/jpeg', 'image/png', 'image/webp', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/svg+xml', 'application/octet-stream'],
   limit: `${DAILY_REPORT_MEDIA_MAX_BYTES}b`,
+});
+
+const workMediaProbeRawBody = express.raw({
+  type: () => true,
+  limit: `${WORK_MEDIA_PROBE_MAX_BYTES}b`,
+});
+
+// Work 文件能力验证的隔离接收端：只接受短期 Probe 票据和原始字节，绝不写入正式日报媒体目录。
+app.put(`${WORK_MEDIA_PROBE_ROUTE}/:probeId/assets/:assetKey`, (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!isWorkMediaProbeEnabled()) return res.status(404).json({ error: 'Work 文件传输探针未启用' });
+  workMediaProbeRawBody(req, res, error => {
+    if (error) {
+      const tooLarge = (error as { type?: string }).type === 'entity.too.large';
+      return res.status(tooLarge ? 413 : 400).json({
+        error: tooLarge ? 'Probe 单文件超过 5 MiB 限制' : 'Probe 请求正文无法作为原始文件读取',
+      });
+    }
+    next();
+  });
+}, (req, res) => {
+  const authorization = String(req.header('authorization') || '');
+  const match = authorization.match(/^Bearer\s+(.+)$/i);
+  try {
+    const asset = uploadWorkMediaProbeAsset({
+      probeId: String(req.params.probeId || ''),
+      uploadToken: match?.[1]?.trim() || '',
+      assetKey: String(req.params.assetKey || ''),
+      originalFilename: (() => {
+        const raw = String(req.header('x-original-filename') || '');
+        if (!raw) return '';
+        try {
+          return decodeURIComponent(raw);
+        } catch {
+          return raw;
+        }
+      })(),
+      declaredMime: String(req.header('content-type') || ''),
+      buffer: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
+    });
+    res.status(200).json({
+      status: 'RECEIVED',
+      probeId: String(req.params.probeId || ''),
+      ...asset,
+    });
+  } catch (error) {
+    const statusCode = error && typeof error === 'object' && 'statusCode' in error
+      ? Number((error as { statusCode?: unknown }).statusCode) || 400
+      : 400;
+    const message = error instanceof Error ? error.message : 'Probe 文件上传失败';
+    res.status(statusCode).json({ error: message });
+  }
 });
 
 // 独立日报项目先使用只读令牌上传本地校验过的媒体，再发布只引用本站媒体的 Markdown。

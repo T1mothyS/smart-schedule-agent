@@ -266,7 +266,7 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     });
     assert.equal(tools.status, 200);
     const toolsBody = await tools.json() as any;
-    assert.equal(toolsBody.result.tools.length, 6);
+    assert.equal(toolsBody.result.tools.length, 8);
     const toolScopes: Record<string, string[]> = {
       'daily_report.read_inputs': [
         'daily_report:read_calendar',
@@ -279,6 +279,8 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
       'daily_report.read_context': ['daily_report:read_context'],
       'daily_report.read_history': ['daily_report:read_history'],
       'daily_report.publish': ['daily_report:publish'],
+      'daily_report.media_probe_start': ['daily_report:media_probe'],
+      'daily_report.media_probe_status': ['daily_report:media_probe'],
     };
     for (const tool of toolsBody.result.tools as Array<any>) {
       assert.deepEqual(tool.securitySchemes, [{ type: 'oauth2', scopes: toolScopes[tool.name] }]);
