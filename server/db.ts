@@ -116,6 +116,16 @@ async function initDb(): Promise<void> {
     db.run('ALTER TABLE users ADD COLUMN admin_shared_api_enabled INTEGER NOT NULL DEFAULT 0');
   }
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS invite_codes (
+      role TEXT PRIMARY KEY CHECK (role IN ('admin', 'user')),
+      code_hash TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL,
+      rotated_at TEXT NOT NULL,
+      version INTEGER NOT NULL DEFAULT 1
+    )
+  `);
+
   const sessionColumns = queryAll<{ name: string }>('PRAGMA table_info(sessions)');
   if (!sessionColumns.some(column => column.name === 'user_id')) {
     db.run('ALTER TABLE sessions ADD COLUMN user_id TEXT');
@@ -584,6 +594,14 @@ export interface DbUser {
   created_at: string;
   updated_at: string;
   last_login_at?: string;
+}
+
+export interface DbInviteCode {
+  role: 'admin' | 'user';
+  code_hash: string;
+  created_at: string;
+  rotated_at: string;
+  version: number;
 }
 
 export interface DbEmailCode {
@@ -1113,6 +1131,31 @@ export function updateUserAdminApiSharing(id: string, enabled: number): boolean 
 export function updateUserLastLogin(id: string): boolean {
   const result = run('UPDATE users SET last_login_at = ? WHERE id = ?', [new Date().toISOString(), id]);
   return result.changes > 0;
+}
+
+export function getInviteCode(role: DbInviteCode['role']): DbInviteCode | undefined {
+  return queryOne<DbInviteCode>('SELECT role, code_hash, created_at, rotated_at, version FROM invite_codes WHERE role = ?', [role]);
+}
+
+export function listInviteCodes(): DbInviteCode[] {
+  return queryAll<DbInviteCode>(
+    "SELECT role, code_hash, created_at, rotated_at, version FROM invite_codes ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END",
+  );
+}
+
+export function upsertInviteCode(record: DbInviteCode): DbInviteCode {
+  if (getInviteCode(record.role)) {
+    run(
+      'UPDATE invite_codes SET code_hash = ?, created_at = ?, rotated_at = ?, version = ? WHERE role = ?',
+      [record.code_hash, record.created_at, record.rotated_at, record.version, record.role],
+    );
+  } else {
+    run(
+      'INSERT INTO invite_codes (role, code_hash, created_at, rotated_at, version) VALUES (?, ?, ?, ?, ?)',
+      [record.role, record.code_hash, record.created_at, record.rotated_at, record.version],
+    );
+  }
+  return getInviteCode(record.role) || record;
 }
 
 export function getUserPreferredModel(userId: string, fallback: string): string {

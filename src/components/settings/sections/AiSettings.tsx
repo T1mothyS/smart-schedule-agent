@@ -150,9 +150,12 @@ export function AiSettings({ authHeaders }: { authHeaders: SettingsAuthHeaders }
         </div>
       </SettingRow>
       <SettingRow label="个人 API Key" description="仅保存到当前账号，服务器不使用全局默认 Key。">
-        {!showEnvConfig ? <div className="settings-actions"><Button tag="button" variant="outline" loading={loadingConfig} disabled={loadingConfig || savingEnv} onClick={async () => { if (await loadUserApiKey()) setShowEnvConfig(true); }}>{loginStatus.hasApiKey && !loginStatus.usingSharedApi ? '修改 API Key' : '配置 API Key'}</Button></div> : (
+        {!showEnvConfig ? <div className="settings-actions">
+          <Button tag="button" variant="outline" loading={loadingConfig} disabled={loadingConfig || savingEnv} onClick={async () => { if (await loadUserApiKey()) setShowEnvConfig(true); }}>{loginStatus.hasApiKey && !loginStatus.usingSharedApi ? '修改 API Key' : '配置 API Key'}</Button>
+          <Button tag="a" variant="outline" href="https://www.workbuddy.cn/profile/keys" target="_blank" rel="noopener noreferrer">打开 WorkBuddy API 管理</Button>
+        </div> : (
           <div className="settings-stack">
-            <p className="settings-help">在 <a href="https://www.codebuddy.cn/profile/keys" target="_blank" rel="noopener noreferrer">API Key 管理页面</a> 创建或复制 Key，然后粘贴到下方。</p>
+            <p className="settings-help">在 <a href="https://www.workbuddy.cn/profile/keys" target="_blank" rel="noopener noreferrer">WorkBuddy API 管理页面</a> 创建或复制 Key，然后粘贴到下方。</p>
             <label className="settings-field-label" htmlFor="settings-api-key">API Key（必填）</label>
             <SettingInput id="settings-api-key" type="password" className="settings-monospace" value={envConfig.apiKey} onChange={v => setEnvConfig(prev => ({ ...prev, apiKey: String(v) }))} placeholder={loginStatus.hasApiKey ? '输入新的 API Key 以覆盖当前配置' : '输入 API Key'} autocomplete="new-password" disabled={savingEnv} />
             <label className="settings-field-label" htmlFor="settings-base-url">Base URL（可选）</label>

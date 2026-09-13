@@ -55,6 +55,13 @@ import { createDailyReportCloudMcpRouter } from './daily-report-cloud-mcp.js';
 import { createDailyReportCloudOAuthRouter } from './daily-report-cloud-auth.js';
 import * as dailyReportCloudStore from './daily-report-cloud-store.js';
 import {
+  getInviteCodeRole,
+  initializeInviteCodes,
+  listInviteCodeStatuses,
+  rotateInviteCode,
+  type InviteRole,
+} from './invite-code-service.js';
+import {
   buildAiPlanSnapshot,
   normaliseAiPlanOperations,
   previewAiPlanOperation as planOperationPreview,
@@ -67,6 +74,7 @@ import { AI_IMPORT_LINKAGE_RULES, AI_LINKAGE_GUIDE_VERSION, AI_LINKAGE_SYSTEM_RU
 // 数据库实例（等待初始化后赋值）
 let db: typeof dbModule;
 let dbInitialized = false;
+let inviteCodesInitialized = false;
 
 // 【关键修复】获取本地时区的日期字符串（YYYY-MM-DD）
 function getLocalDateString(date?: Date): string {
@@ -697,17 +705,13 @@ function requiredProductionConfig(name: string, fallback: string): string {
 const JWT_SECRET = requiredProductionConfig('JWT_SECRET', 'dev-only-jwt-secret');
 const JWT_EXPIRES_IN = '7d';
 
-// 固定邀请码
-const ADMIN_INVITE_CODE = requiredProductionConfig('ADMIN_INVITE_CODE', 'dev-admin-invite');
-const USER_INVITE_CODE = requiredProductionConfig('USER_INVITE_CODE', 'dev-user-invite');
+// 迁移期邀请码：仅用于首次初始化缺失的数据库记录；已有数据库记录不会被环境变量覆盖。
+const LEGACY_ADMIN_INVITE_CODE = process.env.ADMIN_INVITE_CODE?.trim() || (isProduction ? '' : 'dev-admin-invite');
+const LEGACY_USER_INVITE_CODE = process.env.USER_INVITE_CODE?.trim() || (isProduction ? '' : 'dev-user-invite');
 
 function validateRuntimeConfig(): void {
   if (isProduction) {
     if (JWT_SECRET.length < 32) throw new Error('[Config] JWT_SECRET 至少需要 32 个字符');
-    if (ADMIN_INVITE_CODE.length < 12 || USER_INVITE_CODE.length < 12) {
-      throw new Error('[Config] 生产邀请码至少需要 12 个字符');
-    }
-    if (ADMIN_INVITE_CODE === USER_INVITE_CODE) throw new Error('[Config] 管理员邀请码和普通用户邀请码不能相同');
   }
   const rawAppUrl = process.env.APP_URL || (isProduction ? '' : `http://localhost:${PORT}/today`);
   if (!rawAppUrl) throw new Error('[Config] 生产环境缺少必需配置: APP_URL');
@@ -789,9 +793,7 @@ app.post("/api/auth/send-register-code", async (req, res) => {
     }
     if (password.length < 8) return res.status(400).json({ error: '密码至少需要 8 位' });
     // 验证邀请码
-    let role: 'admin' | 'user' | null = null;
-    if (invite_code === ADMIN_INVITE_CODE) role = 'admin';
-    else if (invite_code === USER_INVITE_CODE) role = 'user';
+    const role = getInviteCodeRole(invite_code);
     if (!role) {
       return res.status(400).json({ error: '邀请码无效，请联系管理员获取有效邀请码' });
     }
@@ -842,9 +844,7 @@ app.post("/api/auth/register", async (req, res) => {
     }
     if (password.length < 8) return res.status(400).json({ error: '密码至少需要 8 位' });
     // 验证邀请码
-    let role: 'admin' | 'user' | null = null;
-    if (invite_code === ADMIN_INVITE_CODE) role = 'admin';
-    else if (invite_code === USER_INVITE_CODE) role = 'user';
+    const role = getInviteCodeRole(invite_code);
     if (!role) {
       return res.status(400).json({ error: '邀请码无效' });
     }
@@ -940,6 +940,42 @@ app.get("/api/admin/users", authenticate, requireAdmin, (req, res) => {
   const search = String(req.query.search || '').trim().slice(0, 200);
   const result = db.getUsersPaginated(page, pageSize, search);
   res.json(result);
+});
+
+// 邀请码只返回状态信息；明文只会在轮换成功的响应中返回一次。
+app.get("/api/admin/invite-codes", authenticate, requireAdmin, (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ codes: listInviteCodeStatuses() });
+});
+
+app.post("/api/admin/invite-codes/:role/rotate", authenticate, requireAdmin, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const role = String(req.params.role || '');
+  if (role !== 'admin' && role !== 'user') {
+    return res.status(400).json({ error: '邀请码角色必须是 admin 或 user' });
+  }
+
+  try {
+    const rotated = rotateInviteCode(role as InviteRole);
+    const payload = (req as any).user as JwtPayload;
+    addLog('info', 'auth', '管理员轮换邀请码', {
+      event: 'invite_code_rotated',
+      operatorUserId: payload.userId,
+      role,
+      rotatedAt: rotated.status.rotatedAt,
+    });
+    return res.json({
+      success: true,
+      role: rotated.role,
+      code: rotated.code,
+      createdAt: rotated.status.createdAt,
+      rotatedAt: rotated.status.rotatedAt,
+      version: rotated.status.version,
+    });
+  } catch (error) {
+    console.error('[InviteCode] Rotation failed:', error instanceof Error ? error.message : error);
+    return res.status(400).json({ error: error instanceof Error ? error.message : '轮换邀请码失败' });
+  }
 });
 
 // 修改用户角色（管理员）
@@ -4113,6 +4149,12 @@ export async function initializeServer(): Promise<void> {
   await dbModule.initDb();
   console.log('[Startup] 数据库初始化完成');
   db = dbModule;  // 赋值给全局 db 变量
+  const inviteCodeStatuses = initializeInviteCodes({
+    adminCode: LEGACY_ADMIN_INVITE_CODE,
+    userCode: LEGACY_USER_INVITE_CODE,
+    isProduction,
+  });
+  inviteCodesInitialized = inviteCodeStatuses.every(status => status.active);
 
   // 初始化日程数据库
   console.log('[Startup] 初始化日程数据库...');
@@ -4164,7 +4206,7 @@ async function startServer() {
         backgroundJobsEnabled,
         appTimezone: process.env.APP_TIMEZONE || 'Asia/Shanghai',
         email: getEmailConfigurationSummary(),
-        inviteCodesConfigured: Boolean(ADMIN_INVITE_CODE && USER_INVITE_CODE),
+        inviteCodesConfigured: inviteCodesInitialized,
       });
     });
   } catch (error) {

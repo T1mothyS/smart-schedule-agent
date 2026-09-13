@@ -27,6 +27,16 @@ interface User {
   last_login_at: string | null;
 }
 
+type InviteRole = 'admin' | 'user';
+
+interface InviteCodeStatus {
+  role: InviteRole;
+  active: boolean;
+  createdAt: string | null;
+  rotatedAt: string | null;
+  version: number | null;
+}
+
 interface LogEntry {
   timestamp: string;
   level: string;
@@ -37,6 +47,31 @@ interface LogEntry {
 
 const PRODUCTION_INVITE_COMMAND = `$sshKey = 'C:\\Users\\Elysia\\.ssh\\gotimothy_online_ed25519'
 & ssh -i $sshKey root@47.95.114.137 "grep -E '^(ADMIN_INVITE_CODE|USER_INVITE_CODE)=' /root/smart-schedule-agent/.env"`;
+
+async function copyText(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return;
+    } catch {
+      // 某些嵌入式浏览器会暴露 Clipboard API，但拒绝实际写入；继续使用兼容回退。
+    }
+  }
+  const input = document.createElement('textarea');
+  input.value = value;
+  input.setAttribute('readonly', 'true');
+  input.style.position = 'fixed';
+  input.style.opacity = '0';
+  document.body.appendChild(input);
+  input.select();
+  let copied = false;
+  try {
+    copied = document.execCommand('copy');
+  } finally {
+    input.remove();
+  }
+  if (!copied) throw new Error('当前浏览器不支持复制');
+}
 
 // ==================== 用户管理表格 ====================
 function UserManagementTab({ onClose }: { onClose?: () => void }) {
@@ -52,6 +87,12 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
   const [actionError, setActionError] = useState<string | null>(null);
   const [showInviteHelp, setShowInviteHelp] = useState(false);
   const [inviteCommandCopied, setInviteCommandCopied] = useState(false);
+  const [inviteStatuses, setInviteStatuses] = useState<InviteCodeStatus[]>([]);
+  const [inviteLoading, setInviteLoading] = useState(true);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [rotatingInviteRole, setRotatingInviteRole] = useState<InviteRole | null>(null);
+  const [revealedInvite, setRevealedInvite] = useState<{ role: InviteRole; code: string; rotatedAt: string } | null>(null);
+  const [revealedInviteCopied, setRevealedInviteCopied] = useState(false);
 
   // 使用 ref 存储 authHeaders 避免无限循环
   const authHeadersRef = React.useRef(authHeaders);
@@ -80,6 +121,31 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
   useEffect(() => {
     loadUsers();
   }, [loadUsers]);
+
+  const loadInviteCodes = useCallback(async () => {
+    setInviteLoading(true);
+    setInviteError(null);
+    try {
+      const res = await fetch('/api/admin/invite-codes', {
+        headers: authHeadersRef.current(),
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '加载邀请码状态失败');
+      if (!Array.isArray(data.codes)) throw new Error('邀请码状态格式不正确');
+      setInviteStatuses(data.codes as InviteCodeStatus[]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '加载邀请码状态失败';
+      setInviteError(message);
+      MessagePlugin.error(message);
+    } finally {
+      setInviteLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadInviteCodes();
+  }, [loadInviteCodes]);
 
   const isCurrentAccount = (target: User) => currentUser?.id === target.id;
   const isDangerousActionProtected = (target: User) => isCurrentAccount(target) || target.role === 'admin';
@@ -163,12 +229,58 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
 
   const copyInviteCommand = async () => {
     try {
-      await navigator.clipboard.writeText(PRODUCTION_INVITE_COMMAND);
+      await copyText(PRODUCTION_INVITE_COMMAND);
       setInviteCommandCopied(true);
       MessagePlugin.success('已复制');
       window.setTimeout(() => setInviteCommandCopied(false), 1800);
     } catch {
       MessagePlugin.error('自动复制失败，请手动选择命令');
+    }
+  };
+
+  const copyRevealedInvite = async () => {
+    if (!revealedInvite) return;
+    try {
+      await copyText(revealedInvite.code);
+      setRevealedInviteCopied(true);
+      MessagePlugin.success('新邀请码已复制');
+      window.setTimeout(() => setRevealedInviteCopied(false), 1800);
+    } catch {
+      MessagePlugin.error('自动复制失败，请手动选择新邀请码');
+    }
+  };
+
+  const handleRotateInviteCode = async (role: InviteRole) => {
+    const roleLabel = role === 'admin' ? '管理员' : '普通用户';
+    if (!window.confirm(`确定要轮换${roleLabel}邀请码吗？\n\n旧邀请码会立即失效，已有账号和登录状态不受影响。新邀请码只在成功后显示一次，请及时复制保存。`)) return;
+
+    setInviteError(null);
+    setRotatingInviteRole(role);
+    try {
+      const res = await fetch(`/api/admin/invite-codes/${role}/rotate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeadersRef.current() },
+        cache: 'no-store',
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '轮换邀请码失败');
+      if (typeof data.code !== 'string' || !data.code) throw new Error('服务器未返回新邀请码');
+      setRevealedInvite({ role, code: data.code, rotatedAt: String(data.rotatedAt || new Date().toISOString()) });
+      setRevealedInviteCopied(false);
+      setInviteStatuses(current => current.map(status => status.role === role ? {
+        ...status,
+        active: true,
+        createdAt: data.createdAt || status.createdAt,
+        rotatedAt: data.rotatedAt || status.rotatedAt,
+        version: typeof data.version === 'number' ? data.version : status.version,
+      } : status));
+      MessagePlugin.success(`${roleLabel}邀请码已轮换`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '轮换邀请码失败';
+      setInviteError(message);
+      MessagePlugin.error(message);
+    } finally {
+      setRotatingInviteRole(null);
     }
   };
 
@@ -294,73 +406,77 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
     {
       colKey: 'actions',
       title: '操作',
-      width: 420,
+      width: 380,
       cell: ({ row }: { row: User }) => (
-        <div className="flex items-center gap-1 flex-wrap" title={isCurrentAccount(row) ? '当前账户：不能修改自己的管理员身份、禁用、清空或删除' : row.role === 'admin' ? '其他管理员：请先降级为普通用户后再进行危险操作' : undefined}>
-          {/* 角色切换 */}
-          <Select
-            size="small"
-            value={row.role}
-            onChange={(v) => handleRoleChange(row.id, v as 'admin' | 'user')}
-            style={{ width: 90 }}
-            options={[
-              { label: '管理员', value: 'admin' },
-              { label: '用户', value: 'user' },
-            ]}
-            loading={loadingAction === `${row.id}:role`}
-            disabled={isCurrentAccount(row)}
-          />
-          {row.role === 'admin' && !isCurrentAccount(row) && <span className="admin-action-hint">先降级后操作</span>}
-          {/* 管理员 API 共享 */}
-          <Button
-            size="small"
-            variant="outline"
-            theme={row.admin_shared_api_enabled ? 'primary' : 'default'}
-            onClick={() => handleToggleAdminApiSharing(row)}
-            loading={loadingAction === `${row.id}:api-share`}
-          >
-            {row.admin_shared_api_enabled ? '取消共享' : '共享 API'}
-          </Button>
-          <span
-            className="text-xs px-2 py-0.5 rounded-full"
-            style={{
-              backgroundColor: row.admin_shared_api_enabled ? '#D1FAE5' : '#F3F4F6',
-              color: row.admin_shared_api_enabled ? '#047857' : '#6B7280',
-            }}
-          >
-            {row.admin_shared_api_enabled ? '已共享' : '未共享'}
-          </span>
-          {/* 启用/禁用 */}
-          <Button
-            size="small"
-            variant="outline"
-            onClick={() => handleToggleDisabled(row.id, !row.disabled)}
-            loading={loadingAction === `${row.id}:disabled`}
-            disabled={isDangerousActionProtected(row)}
-          >
-            {row.disabled ? '启用' : '禁用'}
-          </Button>
-          {/* 清空数据 */}
-          <Button
-            size="small"
-            variant="outline"
-            onClick={() => handleClearData(row)}
-            loading={loadingAction === `${row.id}:clear`}
-            disabled={isDangerousActionProtected(row)}
-          >
-            清空数据
-          </Button>
-          {/* 删除用户 */}
-          <Button
-            size="small"
-            variant="outline"
-            theme="danger"
-            onClick={() => handleDeleteUser(row)}
-            loading={loadingAction === `${row.id}:delete`}
-            disabled={isDangerousActionProtected(row)}
-          >
-            删除
-          </Button>
+        <div className="admin-user-actions" title={isCurrentAccount(row) ? '当前账户：不能修改自己的管理员身份、禁用、清空或删除' : row.role === 'admin' ? '其他管理员：请先降级为普通用户后再进行危险操作' : undefined}>
+          <div className="admin-user-actions-row">
+            {/* 角色切换 */}
+            <Select
+              size="small"
+              value={row.role}
+              onChange={(v) => handleRoleChange(row.id, v as 'admin' | 'user')}
+              style={{ width: 90 }}
+              options={[
+                { label: '管理员', value: 'admin' },
+                { label: '用户', value: 'user' },
+              ]}
+              loading={loadingAction === `${row.id}:role`}
+              disabled={isCurrentAccount(row)}
+            />
+            {row.role === 'admin' && !isCurrentAccount(row) && <span className="admin-action-hint">先降级后操作</span>}
+            {/* 管理员 API 共享 */}
+            <Button
+              size="small"
+              variant="outline"
+              theme={row.admin_shared_api_enabled ? 'primary' : 'default'}
+              onClick={() => handleToggleAdminApiSharing(row)}
+              loading={loadingAction === `${row.id}:api-share`}
+            >
+              {row.admin_shared_api_enabled ? '取消共享' : '共享 API'}
+            </Button>
+            <span
+              className="text-xs px-2 py-0.5 rounded-full"
+              style={{
+                backgroundColor: row.admin_shared_api_enabled ? '#D1FAE5' : '#F3F4F6',
+                color: row.admin_shared_api_enabled ? '#047857' : '#6B7280',
+              }}
+            >
+              {row.admin_shared_api_enabled ? '已共享' : '未共享'}
+            </span>
+          </div>
+          <div className="admin-user-actions-row">
+            {/* 启用/禁用 */}
+            <Button
+              size="small"
+              variant="outline"
+              onClick={() => handleToggleDisabled(row.id, !row.disabled)}
+              loading={loadingAction === `${row.id}:disabled`}
+              disabled={isDangerousActionProtected(row)}
+            >
+              {row.disabled ? '启用' : '禁用'}
+            </Button>
+            {/* 清空数据 */}
+            <Button
+              size="small"
+              variant="outline"
+              onClick={() => handleClearData(row)}
+              loading={loadingAction === `${row.id}:clear`}
+              disabled={isDangerousActionProtected(row)}
+            >
+              清空数据
+            </Button>
+            {/* 删除用户 */}
+            <Button
+              size="small"
+              variant="outline"
+              theme="danger"
+              onClick={() => handleDeleteUser(row)}
+              loading={loadingAction === `${row.id}:delete`}
+              disabled={isDangerousActionProtected(row)}
+            >
+              删除
+            </Button>
+          </div>
         </div>
       ),
     },
@@ -377,34 +493,96 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
 
   return (
     <div className="admin-user-management">
-      {/* 生产环境邀请码查询方法；这里只展示查询命令，不读取或回显邀请码。 */}
-      <section className="mb-4 rounded-lg border p-3" style={{ borderColor: 'var(--td-component-stroke)', backgroundColor: 'var(--td-bg-color-page)' }}>
-        <div className="flex items-center gap-2 mb-2">
-          <h3 className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>生产环境邀请码</h3>
-          <div className="relative">
-            <button
-              type="button"
-              aria-label="查看生产环境邀请码查询说明"
-              aria-expanded={showInviteHelp}
-              title="查看查询说明"
-              onClick={() => setShowInviteHelp(value => !value)}
-              className="inline-flex h-5 w-5 items-center justify-center rounded-full border text-xs font-semibold"
-              style={{ borderColor: 'var(--td-component-stroke)', color: 'var(--td-text-color-secondary)' }}
-            >
-              ?
-            </button>
-            {showInviteHelp && (
-              <div role="tooltip" className="absolute left-0 top-7 z-10 w-80 max-w-[calc(100vw-3rem)] rounded-lg border p-2 text-xs leading-5 shadow-lg" style={{ borderColor: 'var(--td-component-stroke)', color: 'var(--td-text-color-secondary)', backgroundColor: 'var(--td-bg-color-container)' }}>
-                通过 SSH 从生产服务器的 .env 文件读取当前管理员邀请码和用户邀请码。需要当前电脑已配置对应 SSH Key，并拥有服务器访问权限。
-              </div>
-            )}
+      <section className="admin-invite-panel mb-4 rounded-lg border p-3" style={{ borderColor: 'var(--td-component-stroke)', backgroundColor: 'var(--td-bg-color-page)' }}>
+        <div className="admin-invite-panel-heading">
+          <div>
+            <h3 className="text-sm font-medium" style={{ color: 'var(--td-text-color-primary)' }}>邀请码管理</h3>
+            <p>按角色手动轮换；旧邀请码会立即失效，已有账号和登录状态不受影响。</p>
           </div>
+          <span className="admin-invite-security-note">数据库只保存哈希</span>
         </div>
-        <div className="flex items-start gap-2 flex-wrap">
-          <pre className="min-w-0 flex-1 overflow-x-auto rounded-md border p-2 text-xs leading-5" style={{ borderColor: 'var(--td-component-stroke)', color: 'var(--td-text-color-primary)', backgroundColor: 'var(--td-bg-color-container)', whiteSpace: 'pre', fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}><code>{PRODUCTION_INVITE_COMMAND}</code></pre>
-          <Button size="small" variant="outline" icon={<CopyIcon />} onClick={copyInviteCommand}>
-            {inviteCommandCopied ? '已复制' : '复制命令'}
-          </Button>
+
+        {inviteError && (
+          <div className="admin-action-error admin-invite-error" role="alert">
+            <span>{inviteError}</span>
+            <Button size="small" variant="text" onClick={() => { void loadInviteCodes(); }}>重试</Button>
+          </div>
+        )}
+
+        <div className="admin-invite-role-grid" aria-label="邀请码角色状态">
+          {(['admin', 'user'] as InviteRole[]).map(role => {
+            const status = inviteStatuses.find(item => item.role === role);
+            const roleLabel = role === 'admin' ? '管理员' : '普通用户';
+            return (
+              <div key={role} className="admin-invite-role-card">
+                <div className="admin-invite-role-heading">
+                  <strong>{roleLabel}邀请码</strong>
+                  <span className={status?.active ? 'admin-invite-status active' : 'admin-invite-status'}>
+                    {inviteLoading ? '读取中…' : status?.active ? `已启用 · 第 ${status.version || 1} 版` : '未配置'}
+                  </span>
+                </div>
+                <p>{status?.rotatedAt ? `最近轮换：${formatDate(status.rotatedAt)}` : '尚未记录轮换时间'}</p>
+                <Button
+                  size="small"
+                  variant="outline"
+                  onClick={() => { void handleRotateInviteCode(role); }}
+                  loading={rotatingInviteRole === role}
+                  disabled={inviteLoading || !status?.active || (rotatingInviteRole !== null && rotatingInviteRole !== role)}
+                >
+                  轮换{roleLabel}邀请码
+                </Button>
+              </div>
+            );
+          })}
+        </div>
+
+        {revealedInvite && (
+          <div className="admin-invite-reveal" role="alert">
+            <div className="admin-invite-reveal-heading">
+              <strong>新{revealedInvite.role === 'admin' ? '管理员' : '普通用户'}邀请码已生成</strong>
+              <span>仅在本次操作后显示，请复制保存；关闭后页面不会再次显示。</span>
+            </div>
+            <div className="admin-invite-reveal-value">
+              <code>{revealedInvite.code}</code>
+              <Button size="small" variant="outline" icon={<CopyIcon />} onClick={copyRevealedInvite}>
+                {revealedInviteCopied ? '已复制' : '复制新邀请码'}
+              </Button>
+            </div>
+            <Button size="small" variant="text" onClick={() => { setRevealedInvite(null); setRevealedInviteCopied(false); }}>
+              我已保存，关闭
+            </Button>
+          </div>
+        )}
+
+        <div className="admin-invite-legacy">
+          <div className="admin-invite-legacy-heading">
+            <h4>迁移期 SSH 查询（只读）</h4>
+            <div className="relative">
+              <button
+                type="button"
+                aria-label="查看生产环境邀请码查询说明"
+                aria-expanded={showInviteHelp}
+                title="查看查询说明"
+                onClick={() => setShowInviteHelp(value => !value)}
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full border text-xs font-semibold"
+                style={{ borderColor: 'var(--td-component-stroke)', color: 'var(--td-text-color-secondary)' }}
+              >
+                ?
+              </button>
+              {showInviteHelp && (
+                <div role="tooltip" className="absolute left-0 top-7 z-10 w-80 max-w-[calc(100vw-3rem)] rounded-lg border p-2 text-xs leading-5 shadow-lg" style={{ borderColor: 'var(--td-component-stroke)', color: 'var(--td-text-color-secondary)', backgroundColor: 'var(--td-bg-color-container)' }}>
+                  这条命令只查看迁移期 .env 引导配置；数据库初始化或轮换后，当前生效值以数据库记录为准，网页不会读取或回显邀请码明文。
+                </div>
+              )}
+            </div>
+          </div>
+          <p>仅在首次迁移或服务器排障时使用，需要当前电脑已配置 SSH Key 并拥有服务器访问权限。</p>
+          <pre className="admin-invite-command"><code>{PRODUCTION_INVITE_COMMAND}</code></pre>
+          <div className="admin-invite-command-actions">
+            <Button size="small" variant="outline" icon={<CopyIcon />} onClick={copyInviteCommand}>
+              {inviteCommandCopied ? '已复制' : '复制命令'}
+            </Button>
+          </div>
         </div>
       </section>
       {/* 搜索栏 */}
@@ -464,35 +642,41 @@ function UserManagementTab({ onClose }: { onClose?: () => void }) {
               <span>登录 {formatDate(user.last_login_at)}</span>
             </div>
             <div className="admin-user-card-actions">
-              <Select
-                size="small"
-                value={user.role}
-                onChange={(value) => handleRoleChange(user.id, value as 'admin' | 'user')}
-                options={[{ label: '管理员', value: 'admin' }, { label: '用户', value: 'user' }]}
-                loading={loadingAction === `${user.id}:role`}
-                disabled={isCurrentAccount(user)}
-              />
-              <Button
-                size="small"
-                variant="outline"
-                theme={user.admin_shared_api_enabled ? 'primary' : 'default'}
-                onClick={() => handleToggleAdminApiSharing(user)}
-                loading={loadingAction === `${user.id}:api-share`}
-              >
-                {user.admin_shared_api_enabled ? '取消共享' : '共享 API'}
-              </Button>
-              <Button
-                size="small"
-                variant="outline"
-                onClick={() => handleToggleDisabled(user.id, !user.disabled)}
-                loading={loadingAction === `${user.id}:disabled`}
-                disabled={isDangerousActionProtected(user)}
-                title={isCurrentAccount(user) ? '不能禁用自己的账号' : user.role === 'admin' ? '请先降级为普通用户' : undefined}
-              >
-                {user.disabled ? '启用' : '禁用'}
-              </Button>
-              <Button size="small" variant="outline" onClick={() => handleClearData(user)} loading={loadingAction === `${user.id}:clear`} disabled={isDangerousActionProtected(user)}>清空数据</Button>
-              <Button size="small" variant="outline" theme="danger" onClick={() => handleDeleteUser(user)} loading={loadingAction === `${user.id}:delete`} disabled={isDangerousActionProtected(user)}>删除</Button>
+              <div className="admin-user-actions-row">
+                <Select
+                  size="small"
+                  value={user.role}
+                  onChange={(value) => handleRoleChange(user.id, value as 'admin' | 'user')}
+                  options={[{ label: '管理员', value: 'admin' }, { label: '用户', value: 'user' }]}
+                  loading={loadingAction === `${user.id}:role`}
+                  disabled={isCurrentAccount(user)}
+                />
+                {user.role === 'admin' && !isCurrentAccount(user) && <span className="admin-action-hint">先降级后操作</span>}
+                <Button
+                  size="small"
+                  variant="outline"
+                  theme={user.admin_shared_api_enabled ? 'primary' : 'default'}
+                  onClick={() => handleToggleAdminApiSharing(user)}
+                  loading={loadingAction === `${user.id}:api-share`}
+                >
+                  {user.admin_shared_api_enabled ? '取消共享' : '共享 API'}
+                </Button>
+                <span className="admin-user-card-share-status">{user.admin_shared_api_enabled ? '已共享' : '未共享'}</span>
+              </div>
+              <div className="admin-user-actions-row">
+                <Button
+                  size="small"
+                  variant="outline"
+                  onClick={() => handleToggleDisabled(user.id, !user.disabled)}
+                  loading={loadingAction === `${user.id}:disabled`}
+                  disabled={isDangerousActionProtected(user)}
+                  title={isCurrentAccount(user) ? '不能禁用自己的账号' : user.role === 'admin' ? '请先降级为普通用户' : undefined}
+                >
+                  {user.disabled ? '启用' : '禁用'}
+                </Button>
+                <Button size="small" variant="outline" onClick={() => handleClearData(user)} loading={loadingAction === `${user.id}:clear`} disabled={isDangerousActionProtected(user)}>清空数据</Button>
+                <Button size="small" variant="outline" theme="danger" onClick={() => handleDeleteUser(user)} loading={loadingAction === `${user.id}:delete`} disabled={isDangerousActionProtected(user)}>删除</Button>
+              </div>
             </div>
             {user.role === 'admin' && !isCurrentAccount(user) && <div className="admin-user-card-hint">先降级为普通用户后可禁用、清空或删除</div>}
           </article>

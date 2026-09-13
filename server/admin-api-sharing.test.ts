@@ -14,6 +14,7 @@ process.env.BACKUP_ENCRYPTION_KEY = 'local-test-backup-key';
 const db = await import('./db.js');
 await db.initDb();
 const api = await import('./index.js');
+const inviteCodes = await import('./invite-code-service.js');
 await api.initializeServer();
 
 const now = new Date().toISOString();
@@ -174,6 +175,62 @@ test('管理员 API 保护当前账户，并允许其他管理员完整降级后
     });
     assert.equal(remove.status, 200);
     assert.equal(db.getUserById(target.id), undefined);
+  } finally {
+    await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
+  }
+});
+
+test('邀请码管理接口只返回状态，轮换后旧邀请码立即失效且日志不含明文', async () => {
+  const current = db.createUser({
+    id: 'invite-route-admin',
+    email: 'invite-route-admin@example.com',
+    password_hash: 'not-a-real-password',
+    role: 'admin',
+    disabled: 0,
+    created_at: now,
+    updated_at: now,
+  });
+  const token = api.signUserToken(current);
+  const server = api.app;
+  const listener = server.listen(0, '127.0.0.1');
+  await new Promise<void>((resolve, reject) => {
+    listener.once('listening', () => resolve());
+    listener.once('error', reject);
+  });
+  const address = listener.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${(address as { port: number }).port}`;
+  const request = (pathname: string, init: RequestInit = {}) => fetch(baseUrl + pathname, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, ...(init.headers || {}) },
+  });
+
+  try {
+    const before = await request('/api/admin/invite-codes');
+    assert.equal(before.status, 200);
+    assert.equal(before.headers.get('cache-control'), 'no-store');
+    const beforeBody = await before.json();
+    assert.equal(Array.isArray(beforeBody.codes), true);
+    assert.equal(JSON.stringify(beforeBody).includes('dev-admin-invite'), false);
+    assert.equal(JSON.stringify(beforeBody).includes('dev-user-invite'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(beforeBody.codes[0], 'code'), false);
+
+    const rotated = await request('/api/admin/invite-codes/user/rotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    assert.equal(rotated.status, 200);
+    assert.equal(rotated.headers.get('cache-control'), 'no-store');
+    const rotatedBody = await rotated.json();
+    assert.equal(rotatedBody.role, 'user');
+    assert.ok(rotatedBody.code);
+    assert.equal(inviteCodes.getInviteCodeRole('dev-user-invite'), null);
+    assert.equal(inviteCodes.getInviteCodeRole(rotatedBody.code), 'user');
+
+    const logs = (await import('./log-service.js')).listLogs({ category: 'auth', limit: 100 }).logs;
+    const rotationLog = logs.find(log => log.data && (log.data as any).event === 'invite_code_rotated');
+    assert.ok(rotationLog);
+    assert.equal(JSON.stringify(rotationLog).includes(rotatedBody.code), false);
   } finally {
     await new Promise<void>((resolve, reject) => listener.close(error => error ? reject(error) : resolve()));
   }
