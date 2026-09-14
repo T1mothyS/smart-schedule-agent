@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { promisify } from 'node:util';
+import { DAILY_DIGEST_MARKDOWN_CONTRACT } from '../server/daily-digest-contract.js';
 
 const execFileAsync = promisify(execFile);
 const reportRootValue = process.env.DAILY_REPORT_V2_ROOT?.trim();
@@ -13,6 +14,12 @@ if (!reportRootValue) {
   throw new Error('跨项目日报测试需要设置 DAILY_REPORT_V2_ROOT，例如 C:\\Users\\Elysia\\Documents\\Codex\\2026-08-27\\日报-v2');
 }
 const reportRoot = path.resolve(reportRootValue);
+test('Cloud server contract matches the complete V2 scheduled template', () => {
+  const prompt = fs.readFileSync(path.join(reportRoot, 'prompts/cloud_scheduled_task.md'), 'utf8');
+  const template = /```markdown\r?\n([\s\S]*?)```/.exec(prompt)?.[1].replace(/\r\n?/g, '\n').trim();
+  assert.equal(DAILY_DIGEST_MARKDOWN_CONTRACT.markdownTemplate, template);
+  assert.ok(prompt.includes(DAILY_DIGEST_MARKDOWN_CONTRACT.contractVersion));
+});
 const publisherPath = path.join(reportRoot, 'scripts', 'publish_report.py');
 if (!fs.existsSync(publisherPath)) throw new Error(`日报 V2 publisher 不存在：${publisherPath}`);
 

@@ -3,10 +3,46 @@ import test from 'node:test';
 
 import {
   parseDailyDigestMarkdown,
+  DailyDigestParseError,
+  validateDailyDigestMarkdown,
   renderDailyDigestEmailPage,
   renderDailyDigestMarkdown,
   renderDailyDigestPlainText,
 } from './daily-digest-template.js';
+import { DAILY_DIGEST_MARKDOWN_CONTRACT } from './daily-digest-contract.js';
+
+test('Cloud contract example passes parser and content quality checks', () => {
+  const result = validateDailyDigestMarkdown(DAILY_DIGEST_MARKDOWN_CONTRACT.markdownTemplate);
+  assert.equal(result.digest.mailBriefings.length, 2);
+  assert.ok(result.digest.categories.some(category => category.name === '观察名单'));
+});
+
+test('Malformed Cloud Markdown returns actionable paths without echoing private content', () => {
+  const original = digestMarkdown();
+  const cases: Array<[string, string]> = [
+    [original.replace('# Daily Digest\n', '# Daily Digest\n\n'), 'header'],
+    [original.replace('#### What happened / 发生了什么', '#### 发生了什么'), 'leadStories[0].sections'],
+    [original.replace(/内容：[^\n]+/, '内容：太短'), 'leadStories[0].whatHappened'],
+    [original.replace('需要采取的措施：', '措施：'), 'mailBriefings[0].action'],
+    [original.replace('来源：BBC', '来源：' + '私'.repeat(61)), 'leadStories[0].source'],
+    [original.replace(/摘要：[^\n]+/, '摘要：' + '长'.repeat(121)), 'categories[0].items[0].summary'],
+    [original.replace('1. 贸易摩擦', '1. ' + '私'.repeat(91) + '贸易摩擦'), 'atAGlance.items'],
+  ];
+  for (const [markdown, path] of cases) {
+    assert.equal(parseDailyDigestMarkdown(markdown), null);
+    assert.throws(() => validateDailyDigestMarkdown(markdown), error => {
+      assert.ok(error instanceof DailyDigestParseError);
+      assert.equal(error.issues[0].path, path);
+      assert.ok(!error.message.includes('私私私'));
+      return true;
+    });
+  }
+});
+
+test('Invalid extra glance entry cannot disappear from an otherwise valid digest', () => {
+  const markdown = digestMarkdown().replace('## Lead Story', '4. 太短\n## Lead Story');
+  assert.throws(() => validateDailyDigestMarkdown(markdown), /atAGlance.items/);
+});
 
 const hostedLeadImage = `/daily-report-media/${'a'.repeat(64)}.jpg`;
 const hostedMarketImage = `/daily-report-media/${'b'.repeat(64)}.webp`;

@@ -149,7 +149,19 @@ function headingBlocks(lines: string[], prefix: string): Array<{ title: string; 
   return blocks;
 }
 
-function storyMeta(headline: string, body: string[]): StoryMeta | null {
+export interface DailyDigestParseIssue {
+  path: string;
+  expected: string;
+}
+
+export class DailyDigestParseError extends Error {
+  constructor(public readonly issues: DailyDigestParseIssue[]) {
+    super(`日报正文无法解析为 daily-digest.v1 结构：${issues.map(issue => `${issue.path}：${issue.expected}`).join('；')}`);
+    this.name = 'DailyDigestParseError';
+  }
+}
+
+function storyMeta(headline: string, body: string[], issues: DailyDigestParseIssue[], path: string): StoryMeta | null {
   const source = field(body[0], '来源：');
   const hasSourceLogo = body[1]?.startsWith('来源图标：') || false;
   const rawSourceLogoUrl = hasSourceLogo ? field(body[1], '来源图标：') : '';
@@ -163,6 +175,17 @@ function storyMeta(headline: string, body: string[]): StoryMeta | null {
   const sourceLogoUrl = rawSourceLogoUrl === null ? null : rawSourceLogoUrl ? dailyReportMediaPath(rawSourceLogoUrl) || null : '';
   const url = rawUrl === null ? null : safeUrl(rawUrl);
   const imageUrl = rawImageUrl === null ? null : safeUrl(rawImageUrl, false, true);
+  const checks: Array<[string, unknown, string]> = [
+    ['headline', cleanHeadline, '标题长度 4–100'],
+    ['source', cleanSource, '第一行 来源：，长度 0–60'],
+    ['publishedAt', cleanPublishedAt, '来源（及可选来源图标）之后为 时间：，长度 0–40'],
+    ['sourceLogoUrl', sourceLogoUrl, '来源图标只能为空或本站已托管媒体路径'],
+    ['url', url, '时间之后为 链接：，值为空或 HTTP(S) URL'],
+    ['imageUrl', imageUrl, '图片为空、HTTP(S) URL 或本站媒体路径'],
+  ];
+  for (const [key, value, expected] of checks) {
+    if (value === null) issues.push({ path: `${path}.${key}`, expected });
+  }
   if (cleanHeadline === null || cleanSource === null || cleanPublishedAt === null || sourceLogoUrl === null || url === null || imageUrl === null) return null;
   return { headline: cleanHeadline, source: cleanSource, sourceLogoUrl, publishedAt: cleanPublishedAt, url, imageUrl };
 }
@@ -172,15 +195,20 @@ export function isDailyDigestMarkdown(markdown: string): boolean {
   return normalized.startsWith(`${DIGEST_TITLE}\n${DIGEST_MARKER}`);
 }
 
-export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
+export function parseDailyDigestMarkdown(markdown: string, issues: DailyDigestParseIssue[] = []): DailyDigest | null {
+  // Only static field paths and constraints are reported; never echo private input.
+  const fail = (path: string, expected: string): null => {
+    issues.push({ path, expected });
+    return null;
+  };
   const normalized = markdown.replace(/\r\n?/g, '\n').trim();
-  if (!isDailyDigestMarkdown(normalized)) return null;
+  if (!isDailyDigestMarkdown(normalized)) return fail('header', '前两行必须连续为 # Daily Digest 和 <!-- daily-digest.v1 -->，无外层代码围栏或空行');
   const lines = normalized.split('\n').map(line => line.trim());
   const date = field(lines.find(line => line.startsWith('日期：')), '日期：');
   const theme = field(lines.find(line => line.startsWith('今日主题：')), '今日主题：');
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return fail('date', '日期：YYYY-MM-DD');
   const cleanTheme = theme === null ? null : normalizedText(theme, 8, 90);
-  if (!cleanTheme) return null;
+  if (!cleanTheme) return fail('theme', '今日主题：，长度 8–90');
 
   const glanceLines = section(lines, '## Today at a Glance', '## Lead Story');
   const leadLines = section(lines, '## Lead Story', '## Category Digest');
@@ -193,57 +221,63 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
       : '## Worth Your Time';
   const categoryLines = section(lines, '## Category Digest', categoryEndHeading);
   const worthLines = section(lines, '## Worth Your Time', '## Footer');
-  if (!glanceLines || !leadLines || !categoryLines || !worthLines) return null;
+  if (!glanceLines || !leadLines || !categoryLines || !worthLines) return fail('sections', '依次保留 ## Today at a Glance、## Lead Story、## Category Digest、可选 ## Mail Briefing、可选 ## Mail Tasks、## Worth Your Time、## Footer');
 
-  const atAGlance = glanceLines
+  const rawGlance = glanceLines
     .map(line => /^\d+[.)]\s+(.+)$/.exec(line)?.[1] || '')
-    .filter(Boolean)
-    .map(item => normalizedText(item, 8, 90))
-    .filter((item): item is string => item !== null);
-  if (atAGlance.length < 3 || atAGlance.length > 5) return null;
+    .filter(Boolean);
+  if (rawGlance.some(item => normalizedText(item, 8, 90) === null)) return fail('atAGlance.items', '每条编号概览长度 8–90；超长或过短条目不能被静默丢弃');
+  const atAGlance = rawGlance.map(item => normalizedText(item, 8, 90)!);
+  if (atAGlance.length < 3 || atAGlance.length > 5) return fail('atAGlance', '3–5 条，逐行使用 1. 内容 格式，每条长度 8–90');
 
   const leadStories: LeadStory[] = [];
   for (const block of headingBlocks(leadLines, '### ')) {
     const body = block.body.filter(Boolean);
-    const meta = storyMeta(block.title, body);
+    const path = `leadStories[${leadStories.length}]`;
+    const meta = storyMeta(block.title, body, issues, path);
     const happenedIndex = body.indexOf('#### What happened / 发生了什么');
     const mattersIndex = body.indexOf('#### Why it matters / 为什么重要');
     const watchIndex = body.indexOf('#### What to watch / 接下来关注什么');
-    if (!meta || happenedIndex < 0 || mattersIndex <= happenedIndex || watchIndex <= mattersIndex) return null;
+    if (!meta) return null;
+    if (happenedIndex < 0 || mattersIndex <= happenedIndex || watchIndex <= mattersIndex) return fail(`${path}.sections`, '依次使用 #### What happened / 发生了什么、#### Why it matters / 为什么重要、#### What to watch / 接下来关注什么');
     const rawWhatHappened = field(body[happenedIndex + 1], '内容：');
     const rawWhyItMatters = field(body[mattersIndex + 1], '内容：');
     const rawWhatToWatch = field(body[watchIndex + 1], '内容：');
     const whatHappened = rawWhatHappened === null ? null : normalizedText(rawWhatHappened, 20, 260);
     const whyItMatters = rawWhyItMatters === null ? null : normalizedText(rawWhyItMatters, 20, 260);
     const whatToWatch = rawWhatToWatch === null ? null : normalizedText(rawWhatToWatch, 12, 220);
-    if (!whatHappened || !whyItMatters || !whatToWatch) return null;
+    if (!whatHappened) return fail(`${path}.whatHappened`, '小标题下一行必须为 内容：，长度 20–260');
+    if (!whyItMatters) return fail(`${path}.whyItMatters`, '小标题下一行必须为 内容：，长度 20–260');
+    if (!whatToWatch) return fail(`${path}.whatToWatch`, '小标题下一行必须为 内容：，长度 12–220');
     leadStories.push({ ...meta, whatHappened, whyItMatters, whatToWatch });
   }
-  if (leadStories.length < 1 || leadStories.length > 2) return null;
+  if (leadStories.length < 1 || leadStories.length > 2) return fail('leadStories', '1–2 条，新闻标题使用 ### ');
 
   const categories: DigestCategory[] = [];
   for (const categoryBlock of headingBlocks(categoryLines, '### ')) {
     const name = normalizedText(categoryBlock.title, 2, 40);
-    if (!name) return null;
+    if (!name) return fail(`categories[${categories.length}].name`, '### 分类名，长度 2–40');
     const items: DigestItem[] = [];
     for (const itemBlock of headingBlocks(categoryBlock.body, '#### ')) {
       const body = itemBlock.body.filter(Boolean);
-      const meta = storyMeta(itemBlock.title, body);
+      const path = `categories[${categories.length}].items[${items.length}]`;
+      const meta = storyMeta(itemBlock.title, body, issues, path);
       const rawSummary = field(body.find(line => line.startsWith('摘要：')), '摘要：');
       const summary = rawSummary === null ? null : normalizedText(rawSummary, 8, 120);
-      if (!meta || !summary) return null;
+      if (!meta) return null;
+      if (!summary) return fail(`${path}.summary`, '摘要：，长度 8–120');
       items.push({ ...meta, summary });
     }
-    if (items.length < 1 || items.length > 6) return null;
+    if (items.length < 1 || items.length > 6) return fail(`categories[${categories.length}].items`, '1–6 条，分类下的新闻标题使用 #### ');
     categories.push({ name, items });
   }
-  if (categories.length < 1 || categories.length > 6) return null;
+  if (categories.length < 1 || categories.length > 6) return fail('categories', '1–6 个 ### 分类，金融与市场及观察名单也放在 Category Digest 内');
 
   const mailBriefings: MailBriefing[] = [];
   if (hasMailBriefingSection) {
     const mailEndHeading = hasMailTasksSection ? '## Mail Tasks' : '## Worth Your Time';
     const mailBriefingLines = section(lines, '## Mail Briefing', mailEndHeading);
-    if (!mailBriefingLines) return null;
+    if (!mailBriefingLines) return fail('mailBriefings', '## Mail Briefing 必须在 Mail Tasks / Worth Your Time 之前');
     for (const block of headingBlocks(mailBriefingLines, '### ')) {
       const body = block.body.filter(Boolean);
       const title = normalizedText(block.title, 4, 100);
@@ -259,16 +293,23 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
       const whyItMatters = rawWhyItMatters === null ? null : normalizedText(rawWhyItMatters, 8, 180);
       const action = rawAction === null ? null : normalizedText(rawAction, 4, 140);
       const due = rawDue === null ? null : normalizedText(rawDue, 0, 40, true);
-      if (!title || cleanSource === null || cleanReceivedAt === null || !summary || !whyItMatters || !action || due === null) return null;
+      const path = `mailBriefings[${mailBriefings.length}]`;
+      if (!title) return fail(`${path}.title`, '### 标题，长度 4–100');
+      if (cleanSource === null) return fail(`${path}.source`, '第一行 来源：，长度 0–60');
+      if (cleanReceivedAt === null) return fail(`${path}.receivedAt`, '第二行 时间：，长度 0–60');
+      if (!summary) return fail(`${path}.summary`, '摘要：，长度 8–220');
+      if (!whyItMatters) return fail(`${path}.whyItMatters`, '为什么值得看：，长度 8–180');
+      if (!action) return fail(`${path}.action`, '需要采取的措施：，长度 4–140；无动作写 无需立即行动');
+      if (due === null) return fail(`${path}.due`, '截止：，长度 0–40；无截止写 —');
       mailBriefings.push({ title, summary, whyItMatters, action, due, source: cleanSource, receivedAt: cleanReceivedAt });
     }
-    if (mailBriefings.length > 20) return null;
+    if (mailBriefings.length > 20) return fail('mailBriefings', '最多 20 条');
   }
 
   const mailTasks: MailTask[] = [];
   if (hasMailTasksSection) {
     const mailLines = section(lines, '## Mail Tasks', '## Worth Your Time');
-    if (!mailLines) return null;
+    if (!mailLines) return fail('mailTasks', '## Mail Tasks 必须在 ## Worth Your Time 之前');
     for (const block of headingBlocks(mailLines, '### ')) {
       const body = block.body.filter(Boolean);
       if (!body.length) continue;
@@ -283,10 +324,10 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
       const sourceLogoUrl = rawSourceLogoUrl === null ? null : rawSourceLogoUrl ? dailyReportMediaPath(rawSourceLogoUrl) || null : '';
       const cleanDue = due === null ? null : normalizedText(due, 0, 40, true);
       const cleanDetail = detail === null ? null : normalizedText(detail, 8, 220);
-      if (!title || cleanSource === null || sourceLogoUrl === null || cleanDue === null || !cleanDetail) return null;
+      if (!title || cleanSource === null || sourceLogoUrl === null || cleanDue === null || !cleanDetail) return fail(`mailTasks[${mailTasks.length}]`, '### 标题 4–100；依次 来源：0–60、可选本站来源图标、截止：0–40、详情：8–220');
       mailTasks.push({ title, source: cleanSource, sourceLogoUrl, due: cleanDue, detail: cleanDetail });
     }
-    if (mailTasks.length > 20) return null;
+    if (mailTasks.length > 20) return fail('mailTasks', '最多 20 条');
   }
 
   const worthYourTime: WorthLink[] = [];
@@ -303,10 +344,10 @@ export function parseDailyDigestMarkdown(markdown: string): DailyDigest | null {
     const sourceLogoUrl = rawSourceLogoUrl === null ? null : rawSourceLogoUrl ? dailyReportMediaPath(rawSourceLogoUrl) || null : '';
     const url = rawUrl === null ? null : safeUrl(rawUrl, true);
     const note = rawNote === null ? null : normalizedText(rawNote, 4, 90);
-    if (!title || source === null || sourceLogoUrl === null || !url || !note) return null;
+    if (!title || source === null || sourceLogoUrl === null || !url || !note) return fail(`worthYourTime[${worthYourTime.length}]`, '### 标题 4–100；依次 来源：0–60、可选本站来源图标、链接：有效 HTTP(S) URL、推荐理由：4–90');
     worthYourTime.push({ title, source, sourceLogoUrl, url, note });
   }
-  if (worthYourTime.length > 3) return null;
+  if (worthYourTime.length > 3) return fail('worthYourTime', '最多 3 条');
 
   return {
     schemaVersion: 'daily-digest.v1',
@@ -417,8 +458,9 @@ export function validateDailyDigestMarkdown(
   markdown: string,
   options: { requireHostedImages?: boolean; requireReliableImages?: boolean } = {},
 ): { digest: DailyDigest; quality: DailyDigestQuality } {
-  const digest = parseDailyDigestMarkdown(markdown);
-  if (!digest) throw new Error('日报正文无法解析为 daily-digest.v1 结构');
+  const issues: DailyDigestParseIssue[] = [];
+  const digest = parseDailyDigestMarkdown(markdown, issues);
+  if (!digest) throw new DailyDigestParseError(issues);
   return { digest, quality: validateDailyDigestQuality(digest, options) };
 }
 

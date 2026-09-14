@@ -395,6 +395,8 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     });
     assert.equal(inputsCall.status, 200);
     const inputsBody = await inputsCall.json() as any;
+    assert.equal(inputsBody.result.structuredContent.markdownContract.contractVersion, '2026-09-14.2');
+    assert.match(inputsBody.result.structuredContent.markdownContract.markdownTemplate, /#### What happened \/ 发生了什么/);
     assert.deepEqual(inputsBody.result.structuredContent.requirements, {
       unreadMailCount: 0,
       mailReadStatus: 'UNAVAILABLE',
@@ -595,7 +597,11 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
       } }),
     });
     assert.equal(failedPublish.status, 200);
-    assert.equal((await failedPublish.json() as any).result.isError, true);
+    const invalidResult = (await failedPublish.json() as any).result;
+    assert.equal(invalidResult.isError, true);
+    assert.equal(invalidResult.structuredContent.code, 'INVALID_DIGEST_FORMAT');
+    assert.equal(invalidResult.structuredContent.validationIssues[0].path, 'date');
+    assert.ok(!JSON.stringify(invalidResult).includes('127.0.0.1/internal.png'));
     assert.equal(cloudStore.listDailyReportCloudHistory(userId, 30).length, historyBeforeDryRun);
 
     const published = await request('/mcp', {

@@ -31,7 +31,9 @@ import {
   markDailyReportMediaBatchPendingRetry,
   prepareDailyReportMedia,
 } from './daily-report-media-prepare-service.js';
-import { validateDailyDigestMarkdown } from './daily-digest-template.js';
+import { DailyDigestParseError, validateDailyDigestMarkdown } from './daily-digest-template.js';
+import { DAILY_DIGEST_MARKDOWN_CONTRACT } from './daily-digest-contract.js';
+import { addLog } from './log-service.js';
 import {
   createWorkMediaProbe,
   getWorkMediaProbeStatus,
@@ -152,7 +154,7 @@ const toolDefinitions: McpTool[] = [
       required: ['date', 'markdown'],
       properties: {
         date: { type: 'string', description: 'YYYY-MM-DD' },
-        markdown: { type: 'string', description: '包含 daily-digest.v1 标记的清洗后 Markdown' },
+        markdown: { type: 'string', description: '严格遵循 read_inputs 返回的 markdownContract（精确标题、字段顺序和长度），不能只添加 daily-digest.v1 标记' },
         dry_run: { type: 'boolean', default: false },
         mediaBatchId: { type: 'string', description: '可选：media_prepare_start 返回的媒体批次 ID；提供后启用严格媒体批次路径' },
         runId: { type: 'string', description: '严格媒体批次路径绑定的 runId' },
@@ -395,6 +397,7 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
       mail,
       cloudContext,
       requirements: summarizeCloudDigestCompletenessRequirements(requirements),
+      markdownContract: DAILY_DIGEST_MARKDOWN_CONTRACT,
       activity: listDailyReportCloudActivity(auth.userId, { limit: 100 }),
       history: listDailyReportCloudHistory(auth.userId, 7),
     };
@@ -657,12 +660,23 @@ async function handleJsonRpc(request: JsonRpcRequest, auth: OAuthBearerContext):
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : '日报工具调用失败';
+      if (error instanceof DailyDigestParseError) {
+        addLog('warn', 'system', 'cloud_digest_parse_failed', { tool: name, issues: error.issues });
+      }
       return {
         jsonrpc: '2.0',
         id,
         result: {
           content: [{ type: 'text', text: message }],
           isError: true,
+          ...(error instanceof DailyDigestParseError ? {
+            structuredContent: {
+              code: 'INVALID_DIGEST_FORMAT',
+              validationIssues: error.issues,
+              contractVersion: DAILY_DIGEST_MARKDOWN_CONTRACT.contractVersion,
+              retryHint: '按 read_inputs.markdownContract 和 validationIssues 修正完整正文，再执行 dry_run=true；不要正式发布失败正文。',
+            },
+          } : {}),
           ...(error instanceof DailyReportCloudMcpAuthError
             ? {
                 _meta: {

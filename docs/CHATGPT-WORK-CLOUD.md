@@ -157,3 +157,13 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼
 - 随后对同一日期、同一正文执行唯一一次 `dry_run=false`，生产回执为 `status=PUBLISHED`、`source=cloud`、`reportStatus=CREATED`、`deliveryStatus=RECEIVED`，`contentHash=f0d226a11d6dcb435451bca8f1f761acc2a5643c9d73792947dfab8d8cc7d199`，媒体候选 5、成功 4、失败 1（`FETCH_ERROR`）。
 - Work 回执的邮件状态为 `QUEUED`；随后生产日志确认 SMTP `acceptedCount=1`、`rejectedCount=0`、`pendingCount=0` 并记录 `notification_sent`。这证明 SMTP/provider 接受，不证明目标收件箱最终到达；本轮未独立使用 IMAP 读取收件箱。
 - 本次发布是当前会话中的单次受控操作；正式 `16:40` Work 任务、本地日报任务和 V2 自动化均未修改，未调用 Media Prepare，未新增第二次发布。
+
+## Markdown 合同与解析诊断（contract 2026-09-14.2）
+
+`daily_report.read_inputs` 现在返回 `markdownContract`，包含与解析器验证过的完整合成示例、精确字段顺序和长度限制。运行端应使用该合同替换示例资料，不能把完整模板简写成“使用 daily-digest.v1”。金融与市场和观察名单是 `Category Digest` 下的三级分类标题。
+
+解析失败保持 `isError=true`，同时返回 `structuredContent.code=INVALID_DIGEST_FORMAT`、`validationIssues[{path,expected}]` 和合同版本。普通文本回执也包含同一定位信息，因此只读取 text 的客户端仍能修正。日志事件 `cloud_digest_parse_failed` 只记录固定字段路径与约束，不记录 Markdown、邮件、URL 或凭据。错误出现在媒体处理、入库和邮件排队之前。
+
+`parseDailyDigestMarkdown` 仍保持失败返回 null 的兼容接口；发布验证抛出带定位信息的错误。超长或过短的编号概览现在明确拒绝，避免静默删掉包含日程的条目后仍通过。正文完整性与既有媒体策略保持不变。
+
+验证包括有效模板、标题/字段/长度错误、隐私回执、MCP 错误结构和跨项目模板一致性；隔离集成测试不能证明生产 Work 已使用新合同。生产升级后仍需真实 dry-run，OAuth 需要跨 access token 过期后的真实刷新证据，正式发布与收件箱分别验收。
