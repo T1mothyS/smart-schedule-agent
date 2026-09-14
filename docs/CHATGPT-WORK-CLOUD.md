@@ -1,8 +1,8 @@
 # ChatGPT Work Cloud 日报正式发布与并行回滚链路
 
-本文档描述把日报 V2 迁移到 ChatGPT Work Cloud 的并行与正式发布实现。当前代码已提供 OAuth/MCP、来源维度的生产写入、Cloud Context 边界和隔离的媒体准备批次；媒体准备服务已部署并完成真实 Work 选图验证。正式发布和本地链路切换仍未执行。
+本文档描述把日报 V2 迁移到 ChatGPT Work Cloud 的并行与正式发布实现。当前代码已提供 OAuth/MCP、来源维度的生产写入、Cloud Context 边界和隔离的媒体准备批次；媒体准备服务已部署并完成真实 Work 选图验证。2026-09-14 的内容完整性优先与兼容媒体降级代码已按本地预构建路径上线，但正式 Work 发布和本地链路切换仍未执行。
 
-这里的“云端”指 ChatGPT Work 的后台任务运行环境；它不能直接读取本机 `日报-v2` worktree 或本地令牌。当前分支中的 Skill、结构化校验器和渲染器是待打包的源材料，尚未安装为 Work 可用的插件/Skill 资源，因此现在还不能仅凭本地文件路径创建可运行的 Work 定时任务。
+这里的“云端”指 ChatGPT Work 的后台任务运行环境；它不能直接读取本机 `日报-v2` worktree 或本地令牌。V2 的 Skill、结构化校验器和渲染器源材料及插件副本已经同步并通过本地验证，但本地文件路径不是 Work 资源安装证明；现有 Work 任务仍按已保存的 Shadow 边界运行。
 
 ## 目标架构
 
@@ -113,7 +113,17 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼
 - 服务器独立复核确认 4 个文件真实存在于 `data/daily-report-media`，磁盘 hash/大小与数据库一致，4 个 `hostedUrl` 均返回 HTTP 200 且 MIME/长度匹配；本轮发生过一次 OAuth 重新授权，未观察到人工审批。
 - 现有 Local V2 与 Cloud 兼容发布路径保留；`CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED` 未开启，正式 Work 定时任务未改写，relay 未部署。本轮未调用 publish、未入队、未发邮件。
 
-## 当前运行证据（2026-09-09）
+## 第三阶段：内容完整性优先与媒体降级（2026-09-14）
+
+- 主项目 `main` 已建立本地 checkpoint `9c039d5b1acc6ab92a6ab1fd75335b7e0bf956ae`，版本为 `0.20.5-260914.0808`；Cloud 兼容路径保留 Calendar 日程、Mail Briefing、金融与市场、观察名单和新闻结构硬闸门。每个 Calendar schedule 的标题必须出现在 `atAGlance`，避免日程在云端生成时被静默遗漏。
+- 未提供 `mediaBatchId` 的 Cloud 兼容路径改为逐图 Best Effort：失败图片/来源图标降级为空图片位，并返回 `candidateImageCount`、`mediaFailureCount` 和脱敏 `mediaFailures`；严格媒体批次路径仍保持 READY、文件归属、完整媒体和失败即阻断。生产 `CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED` 未开启，兼容路径保持 `false`，未改变批次语义。
+- V2 `main` checkpoint 为 `9dcee55`，插件清单版本为 `0.1.5`；源 Skill、插件副本、Prompt 和确定性渲染器已同步。V2 本地默认严格媒体规则不变，只有 Cloud 兼容路径放宽图片硬闸门。
+- 本地验证通过：主项目 Cloud 定向测试 `16/16`、全量 `npm test` `173/173`、`npm run typecheck`、临时 HTTPS `ELECTRON_APP_URL` 的 `npm run build`；V2 `python -m pytest -q` `73 passed`。构建保留既有主 JavaScript chunk 超过 500 kB 的警告。
+- 生产按 `DEPLOY.md §8.1` 使用本地预构建归档 `workspace-20260914-0808-cloud-best-effort.tar.gz`，217 个条目，SHA-256 `868371de4291ec615f08c73fb05d85463824c958d867489033405ba4d4fc1c73`；最终成功发布 ID 为 `workspace-20260914-0830-cloud-best-effort`。两次早期收尾校验假失败分别自动回滚，失败现场/备份保留，未丢失 `data`、`.env` 或 `node_modules`；服务器未执行安装、测试或构建。
+- 最终公网核验通过：`/api/health`、首页、`/today`、OAuth 保护资源元数据均为 HTTP `200`；实际静态 JS 为 `1,256,211` bytes、`application/javascript`，SHA-256 `4871FABE3B8884CDB914B84D6385E2DBBA0073F835F194D4EC4953E2B96063B2` 与本地构建一致；无凭据 `POST /mcp` 返回预期 `401`。
+- 正式 Work 任务 `日报 V2 Cloud Shadow` 仍保持每日 `16:40`、`Asia/Shanghai` 和 `dry_run=true` 边界；本轮没有调用云端正式 `publish`、没有入邮件队列或发送邮件，也没有把本地插件文件路径冒充为 Work 侧已安装证明。
+
+## 既有 Work 运行证据（2026-09-09）
 
 - 生产候选服务：`gotimothy.online` 当前发布标识为 `workspace-20260909-cloud-mcp-11`，基于 Calendar 候选分支的 `fb77c8a`；公网 health、OAuth metadata、保护资源和未授权 `/mcp` 已完成状态检查。
 - Work 连接：已完成 OAuth 授权并确认 Daily Report Cloud 工具可调用；脱敏 Cloud Context 已通过设置页导入，云端显示版本 `v1`。本地临时导出文件已删除，原始本地 Context 仍是编辑源。
@@ -121,11 +131,11 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼
 - Work 调度：已创建并启用 `日报 V2 Cloud Shadow`，任务编辑器显示每天 `16:40`，提示词固定使用 `Asia/Shanghai`，并明确禁止 `dry_run=false`、正式发布、发邮件和修改本地链路。
 - 并行边界：本地 `v2-chatgpt` 任务和本地采集/发布链路未修改，生产服务保留部署前备份和 rollback 目录。
 
-## 目前未做的事情
+## 当前仍未完成的事情（2026-09-14）
 
 - 尚未完成至少 3 个日期的连续 shadow，也未覆盖 Calendar 无数据/不可用、邮箱部分失败或不可用和公开新闻源异常的对照测试。
-- 没有执行云端正式 `PUBLISHED`，也没有验证通知队列、SMTP/provider 或收件箱最终到达；当前任务仅用于 shadow dry-run。
-- 尚未证明 Work 侧已安装可执行的 `cloud_digest.py` 等打包资源；当前任务提示词已固化结构和安全边界，因此仍按候选 shadow 处理，不把一次 `VALIDATED_NOT_PUBLISHED` 当作迁移完成。
+- 没有执行云端正式 `PUBLISHED`，也没有验证通知队列、SMTP/provider 或收件箱最终到达；本轮公网 200、`QUEUED` 或服务健康均不替代这些分层验收。
+- 尚未证明当前 Work 侧已安装并执行本地 `cloud_digest.py` 等打包资源；当前任务仍按 Shadow 处理，不把本地插件同步或一次 `VALIDATED_NOT_PUBLISHED` 当作迁移完成。
 - 已证明 Work 能把公开图片 URL 交给服务器受控抓取和托管；尚未证明所有新闻源在阿里云出口均可达，Wikimedia 本轮即为连接超时。正式日报仍需在实际新闻候选集合上做来源分布和成功率验收。
 - 尚未验证正式定时运行中的上传/发布是否会被工作区策略暂停等待人工审批；本轮仅验证了 Work 对话中的 OAuth 重新授权路径。
 - 暂存媒体的自动 GC 尚未实现；过期的未引用批次仍有短期文件积累风险。
