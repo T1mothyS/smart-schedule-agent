@@ -415,6 +415,7 @@ function issueTokens(
   resource: string,
   includeRefresh: boolean,
   familyId: string = crypto.randomUUID(),
+  existingRefreshToken?: string,
 ): OAuthTokenResponse {
   const scope = serializeScopes(scopes);
   const now = new Date().toISOString();
@@ -437,20 +438,22 @@ function issueTokens(
     scope,
   };
   if (includeRefresh) {
-    const refreshToken = randomToken();
-    db.createOAuthRefreshToken({
-      token_hash: hashValue(refreshToken),
-      family_id: familyId,
-      client_id: clientId,
-      user_id: userId,
-      scope,
-      resource,
-      expires_at: isoAfter(REFRESH_TOKEN_TTL_SECONDS),
-      created_at: now,
-      last_used_at: null,
-      revoked_at: null,
-      rotated_at: null,
-    });
+    const refreshToken = existingRefreshToken ?? randomToken();
+    if (!existingRefreshToken) {
+      db.createOAuthRefreshToken({
+        token_hash: hashValue(refreshToken),
+        family_id: familyId,
+        client_id: clientId,
+        user_id: userId,
+        scope,
+        resource,
+        expires_at: isoAfter(REFRESH_TOKEN_TTL_SECONDS),
+        created_at: now,
+        last_used_at: null,
+        revoked_at: null,
+        rotated_at: null,
+      });
+    }
     response.refresh_token = refreshToken;
   }
   return response;
@@ -520,10 +523,20 @@ export function refreshDailyReportCloudAccessToken(input: unknown): OAuthTokenRe
   if (requestedScopes.some(scope => !originalScopes.includes(scope))) {
     throw new DailyReportCloudOAuthError('invalid_scope', '不能扩大 refresh_token 的授权范围');
   }
-  if (!db.rotateOAuthRefreshToken(row.token_hash)) {
-    throw new DailyReportCloudOAuthError('invalid_grant', 'refresh_token 已被轮换');
+  // ChatGPT Work 的定时任务可能不会持久化 token 响应中的新 refresh_token。
+  // 在 30 天有效期内保持原 refresh_token 不变，避免访问令牌到期后因客户端仍持有旧值而反复要求重连。
+  if (!db.markOAuthRefreshTokenUsed(row.token_hash)) {
+    throw new DailyReportCloudOAuthError('invalid_grant', 'refresh_token 已被撤销');
   }
-  return issueTokens(client.client_id, row.user_id, requestedScopes, row.resource, requestedScopes.includes('offline_access'), row.family_id);
+  return issueTokens(
+    client.client_id,
+    row.user_id,
+    requestedScopes,
+    row.resource,
+    originalScopes.includes('offline_access'),
+    row.family_id,
+    rawRefresh,
+  );
 }
 
 export function revokeDailyReportCloudToken(rawToken: unknown): void {

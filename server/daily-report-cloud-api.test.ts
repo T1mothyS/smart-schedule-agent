@@ -566,21 +566,24 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     assert.equal(refreshed.status, 200);
     const refreshedBody = await refreshed.json() as { access_token: string; refresh_token: string };
     assert.notEqual(refreshedBody.access_token, tokenBody.access_token);
-    assert.notEqual(refreshedBody.refresh_token, tokenBody.refresh_token);
+    assert.equal(refreshedBody.refresh_token, tokenBody.refresh_token);
 
-    const replay = await request('/oauth/token', formBody({
+    const secondRefresh = await request('/oauth/token', formBody({
       grant_type: 'refresh_token',
       client_id: client.client_id,
       refresh_token: tokenBody.refresh_token!,
       resource: 'http://127.0.0.1:0/mcp',
     }));
-    assert.equal(replay.status, 400);
+    assert.equal(secondRefresh.status, 200);
+    const secondRefreshBody = await secondRefresh.json() as { access_token: string; refresh_token: string };
+    assert.notEqual(secondRefreshBody.access_token, refreshedBody.access_token);
+    assert.equal(secondRefreshBody.refresh_token, tokenBody.refresh_token);
 
-    const revoked = await request('/oauth/revoke', formBody({ token: refreshedBody.access_token }));
+    const revoked = await request('/oauth/revoke', formBody({ token: secondRefreshBody.access_token }));
     assert.equal(revoked.status, 200);
     const rejected = await request('/mcp', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${refreshedBody.access_token}`, 'Content-Type': 'application/json' },
+      headers: { Authorization: `Bearer ${secondRefreshBody.access_token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 5, method: 'tools/list' }),
     });
     assert.equal(rejected.status, 401);
@@ -595,7 +598,7 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     const disabledRefresh = await request('/oauth/token', formBody({
       grant_type: 'refresh_token',
       client_id: client.client_id,
-      refresh_token: refreshedBody.refresh_token,
+      refresh_token: secondRefreshBody.refresh_token,
       resource: 'http://127.0.0.1:0/mcp',
     }));
     assert.equal(disabledRefresh.status, 400);

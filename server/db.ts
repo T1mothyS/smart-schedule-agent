@@ -2431,12 +2431,10 @@ export function getOAuthRefreshToken(tokenHash: string): DbOAuthRefreshToken | u
   return queryOne<DbOAuthRefreshToken>('SELECT * FROM oauth_refresh_tokens WHERE token_hash = ?', [tokenHash]);
 }
 
-export function rotateOAuthRefreshToken(tokenHash: string, rotatedAt = new Date().toISOString()): boolean {
+export function markOAuthRefreshTokenUsed(tokenHash: string, usedAt = new Date().toISOString()): boolean {
   return run(
-    `UPDATE oauth_refresh_tokens
-     SET revoked_at = ?, rotated_at = ?, last_used_at = ?
-     WHERE token_hash = ? AND revoked_at IS NULL`,
-    [rotatedAt, rotatedAt, rotatedAt, tokenHash],
+    'UPDATE oauth_refresh_tokens SET last_used_at = ? WHERE token_hash = ? AND revoked_at IS NULL',
+    [usedAt, tokenHash],
   ).changes > 0;
 }
 
