@@ -150,3 +150,10 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼
 - 根因范围已收窄：当前正式 Work 任务仍保存旧版且相互冲突的 Markdown 模板，要求空置 `Worth Your Time`，但没有把 `Mail Briefing`、`Mail Tasks`、`金融与市场`、`观察名单` 和 Calendar 标题覆盖写成同一份可执行结构；该模板与已部署的 Cloud 内容完整性 contract 不一致。服务端当前返回的是解析阶段的通用错误，未暴露具体缺失行，因此不能把某一个字段缺失写成已确认的唯一原因。
 - 第二轮使用单次消息明确补齐当前 parser 顺序和 Mail/Market/Watchlist/Calendar 要求，并只要求 `dry_run=true`；但 Work 在调用生产 MCP 前提示 `Daily Report Cloud` OAuth 连接已过期，未执行任何新的 `read_inputs` 或 `publish`。重连入口已打开到账号登录页；本次未代填账号、密码或授权。
 - 结论：生产部署与本地兼容媒体实现仍有效；当前业务复测阻塞在 Work OAuth 会话，正式 Work 定时任务没有修改，也没有调用 `dry_run=false`、入队或发信。完成登录后应先复跑同一单次结构验证，再根据 `VALIDATED_NOT_PUBLISHED` 决定是否进入单次正式发布验收。
+
+## 第三阶段受控正式发布记录（2026-09-14）
+
+- 重连后同一单次结构验证返回 `VALIDATED_NOT_PUBLISHED`：Calendar、Mail、Context、History、Public News 均 OK；5 个图片候选中 4 个成功、1 个 HTTP 404，`mediaFailureCount=1`，失败未阻断正文校验。
+- 随后对同一日期、同一正文执行唯一一次 `dry_run=false`，生产回执为 `status=PUBLISHED`、`source=cloud`、`reportStatus=CREATED`、`deliveryStatus=RECEIVED`，`contentHash=f0d226a11d6dcb435451bca8f1f761acc2a5643c9d73792947dfab8d8cc7d199`，媒体候选 5、成功 4、失败 1（`FETCH_ERROR`）。
+- Work 回执的邮件状态为 `QUEUED`；随后生产日志确认 SMTP `acceptedCount=1`、`rejectedCount=0`、`pendingCount=0` 并记录 `notification_sent`。这证明 SMTP/provider 接受，不证明目标收件箱最终到达；本轮未独立使用 IMAP 读取收件箱。
+- 本次发布是当前会话中的单次受控操作；正式 `16:40` Work 任务、本地日报任务和 V2 自动化均未修改，未调用 Media Prepare，未新增第二次发布。
