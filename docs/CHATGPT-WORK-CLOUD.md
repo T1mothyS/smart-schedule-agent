@@ -143,3 +143,10 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼
 - 没有把本地公开资料采集器强行改成云端 prompt；Work 运行时需要按 Skill 使用云端网络重新核实新闻、市场和图片。
 
 切换前按 V2 分支的 `skills/daily-report-cloud/references/cutover.md` 执行至少三个日期的 shadow、故障矩阵、通知分层和回滚演练。
+
+## 第三阶段单次 Work 排障记录（2026-09-14）
+
+- 第一轮部署后单次 Shadow 已实际到达生产 MCP：`read_inputs`、Work 公开新闻核实和 Calendar/Mail/Context/History/Market/Watchlist 输入均返回可用；输入显示有 `3` 条未读邮件。`daily_report.publish(dry_run=true)` 在媒体处理前返回 `INVALID_ARGUMENT`，错误为正文无法解析为 `daily-digest.v1`，因此没有 `contentHash`、媒体完成统计或邮件状态。这不是媒体降级路径失败。
+- 根因范围已收窄：当前正式 Work 任务仍保存旧版且相互冲突的 Markdown 模板，要求空置 `Worth Your Time`，但没有把 `Mail Briefing`、`Mail Tasks`、`金融与市场`、`观察名单` 和 Calendar 标题覆盖写成同一份可执行结构；该模板与已部署的 Cloud 内容完整性 contract 不一致。服务端当前返回的是解析阶段的通用错误，未暴露具体缺失行，因此不能把某一个字段缺失写成已确认的唯一原因。
+- 第二轮使用单次消息明确补齐当前 parser 顺序和 Mail/Market/Watchlist/Calendar 要求，并只要求 `dry_run=true`；但 Work 在调用生产 MCP 前提示 `Daily Report Cloud` OAuth 连接已过期，未执行任何新的 `read_inputs` 或 `publish`。重连入口已打开到账号登录页；本次未代填账号、密码或授权。
+- 结论：生产部署与本地兼容媒体实现仍有效；当前业务复测阻塞在 Work OAuth 会话，正式 Work 定时任务没有修改，也没有调用 `dry_run=false`、入队或发信。完成登录后应先复跑同一单次结构验证，再根据 `VALIDATED_NOT_PUBLISHED` 决定是否进入单次正式发布验收。
