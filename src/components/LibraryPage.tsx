@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import katex from 'katex';
+import 'katex/dist/katex.min.css';
 import { ArrowLeft, BookOpen, Download, Link2, RefreshCw, Search, Send, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
@@ -146,6 +148,20 @@ async function copyText(text: string): Promise<boolean> {
   try { copied = document.execCommand('copy'); } catch { copied = false; }
   textarea.remove();
   return copied;
+}
+
+let libraryMermaidRenderId = 0;
+
+function richContentSource(host: HTMLElement): HTMLElement | null {
+  return host.querySelector<HTMLElement>('.library-rich-content-source');
+}
+
+function showRichContentError(host: HTMLElement, sourceElement: HTMLElement, message: string, errorClass: string): void {
+  sourceElement.hidden = false;
+  const error = document.createElement('span');
+  error.className = `library-rich-content-error ${errorClass}`;
+  error.textContent = message;
+  host.replaceChildren(error, sourceElement);
 }
 
 function relationItems(detail: LibraryDetail): LibraryRelation[] {
@@ -340,6 +356,94 @@ function LibraryDetailPage({ id }: { id: string }) {
   }, [authHeaders, id]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    const root = markdownRef.current;
+    if (!root) return;
+    let cancelled = false;
+    let renderGeneration = 0;
+
+    const isCurrent = (generation: number): boolean => !cancelled && generation === renderGeneration;
+
+    const renderRichContent = async () => {
+      const generation = ++renderGeneration;
+      const mathHosts = Array.from(root.querySelectorAll<HTMLElement>('[data-library-math]'));
+      for (const host of mathHosts) {
+        if (!isCurrent(generation)) return;
+        const sourceElement = richContentSource(host);
+        if (!sourceElement) continue;
+        const source = sourceElement.textContent || '';
+        const displayMode = host.dataset.libraryMath === 'display';
+        try {
+          const rendered = document.createElement(displayMode ? 'div' : 'span');
+          rendered.className = 'library-rich-content-rendered';
+          rendered.innerHTML = katex.renderToString(source, {
+            displayMode,
+            throwOnError: false,
+            trust: false,
+            strict: 'ignore',
+          });
+          sourceElement.hidden = true;
+          host.classList.remove('library-rich-content-error');
+          host.replaceChildren(rendered, sourceElement);
+        } catch {
+          if (isCurrent(generation)) showRichContentError(host, sourceElement, '公式暂时无法渲染，已保留原始公式源码。', 'library-math-error');
+        }
+      }
+
+      const mermaidHosts = Array.from(root.querySelectorAll<HTMLElement>('[data-library-mermaid]'));
+      if (!mermaidHosts.length) return;
+
+      let mermaid: typeof import('mermaid').default;
+      try {
+        mermaid = (await import('mermaid')).default;
+      } catch {
+        if (!isCurrent(generation)) return;
+        mermaidHosts.forEach(host => {
+          const sourceElement = richContentSource(host);
+          if (sourceElement) showRichContentError(host, sourceElement, '流程图组件加载失败，已保留原始 Mermaid 源码。', 'library-mermaid-error');
+        });
+        return;
+      }
+      if (!isCurrent(generation)) return;
+
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: document.documentElement.classList.contains('dark') ? 'dark' : 'default',
+        flowchart: { htmlLabels: true, useMaxWidth: true },
+      });
+
+      for (const host of mermaidHosts) {
+        if (!isCurrent(generation)) return;
+        const sourceElement = richContentSource(host);
+        if (!sourceElement) continue;
+        const source = sourceElement.textContent || '';
+        try {
+          const result = await mermaid.render(`library-mermaid-${++libraryMermaidRenderId}`, source.replace(/\\n/g, '<br/>'));
+          if (!isCurrent(generation)) return;
+          const rendered = document.createElement('div');
+          rendered.className = 'library-mermaid-rendered';
+          rendered.setAttribute('role', 'img');
+          rendered.setAttribute('aria-label', 'Mermaid 流程图');
+          rendered.innerHTML = result.svg;
+          sourceElement.hidden = true;
+          host.classList.remove('library-rich-content-error');
+          host.replaceChildren(rendered, sourceElement);
+        } catch {
+          if (isCurrent(generation)) showRichContentError(host, sourceElement, '流程图暂时无法渲染，已保留原始 Mermaid 源码。', 'library-mermaid-error');
+        }
+      }
+    };
+
+    void renderRichContent();
+    const themeObserver = new MutationObserver(() => { void renderRichContent(); });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    return () => {
+      cancelled = true;
+      themeObserver.disconnect();
+    };
+  }, [detail?.entry.html]);
 
   useEffect(() => {
     const root = markdownRef.current;

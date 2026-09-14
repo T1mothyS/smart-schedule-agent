@@ -23,8 +23,31 @@ function normaliseLinkKey(value: string): string {
   return value.trim().toLocaleLowerCase('zh-CN');
 }
 
+function richContentSource(source: string): string {
+  return `<span class="library-rich-content-source">${escapeHtml(source)}</span>`;
+}
+
+function renderMathPlaceholder(source: string, displayMode: boolean): string {
+  const tag = displayMode ? 'div' : 'span';
+  const mode = displayMode ? 'display' : 'inline';
+  return `<${tag} class="library-math library-math-${mode}" data-library-math="${mode}">${richContentSource(source)}</${tag}>`;
+}
+
+function renderMermaidPlaceholder(source: string): string {
+  return `<div class="library-mermaid" data-library-mermaid="true">${richContentSource(source)}</div>`;
+}
+
+function isMermaidSource(value: string): boolean {
+  return /^\s*(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)\b/i.test(value);
+}
+
+function isDisplayMathStart(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === '\\[' || trimmed === '$$';
+}
+
 function renderInline(value: string, linkTargets: LibraryLinkTargets): string {
-  const pattern = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]|!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__/g;
+  const pattern = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]|!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|__([^_]+)__|\\\((.+?)\\\)/g;
   let output = '';
   let cursor = 0;
   for (const match of value.matchAll(pattern)) {
@@ -51,6 +74,8 @@ function renderInline(value: string, linkTargets: LibraryLinkTargets): string {
         : `<span class="library-unsafe-link">${label}</span>`;
     } else if (match[7] !== undefined) {
       output += `<code>${escapeHtml(match[7])}</code>`;
+    } else if (match[10] !== undefined) {
+      output += renderMathPlaceholder(match[10], false);
     } else {
       output += `<strong>${escapeHtml(match[8] ?? match[9] ?? '')}</strong>`;
     }
@@ -104,8 +129,24 @@ export function renderLibraryMarkdown(markdown: string, linkTargets: LibraryLink
         index += 1;
       }
       if (index < lines.length) index += 1;
-      blocks.push(`<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ''}>${escapeHtml(code.join('\n'))}</code></pre>`);
+      const source = code.join('\n');
+      if (language.toLowerCase() === 'mermaid' || (!language && isMermaidSource(source))) {
+        blocks.push(renderMermaidPlaceholder(source));
+      } else {
+        blocks.push(`<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ''}>${escapeHtml(source)}</code></pre>`);
+      }
       continue;
+    }
+    if (isDisplayMathStart(line)) {
+      const opening = line.trim();
+      const closing = opening === '$$' ? '$$' : '\\]';
+      let end = index + 1;
+      while (end < lines.length && lines[end].trim() !== closing) end += 1;
+      if (end < lines.length) {
+        blocks.push(renderMathPlaceholder(lines.slice(index + 1, end).join('\n'), true));
+        index = end + 1;
+        continue;
+      }
     }
     const heading = line.match(/^(#{1,6})\s+(.+?)\s*#*$/);
     if (heading) {
@@ -159,7 +200,7 @@ export function renderLibraryMarkdown(markdown: string, linkTargets: LibraryLink
     }
     const paragraph: string[] = [];
     while (index < lines.length && lines[index].trim()) {
-      if (paragraph.length && (/^(#{1,6})\s+/.test(lines[index]) || /^```/.test(lines[index].trim()) || /^\s*[-*+]\s+/.test(lines[index]) || /^\s*\d+[.)]\s+/.test(lines[index]) || /^>\s?/.test(lines[index]))) break;
+      if (paragraph.length && (/^(#{1,6})\s+/.test(lines[index]) || /^```/.test(lines[index].trim()) || isDisplayMathStart(lines[index]) || /^\s*[-*+]\s+/.test(lines[index]) || /^\s*\d+[.)]\s+/.test(lines[index]) || /^>\s?/.test(lines[index]))) break;
       if (paragraph.length && index + 1 < lines.length && lines[index].includes('|') && isTableSeparator(lines[index + 1])) break;
       paragraph.push(lines[index]);
       index += 1;
