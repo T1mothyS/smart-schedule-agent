@@ -17,7 +17,12 @@ import {
 } from './daily-report-cloud-store.js';
 import { getSchedulesByDate } from './schedule-store.js';
 import { readUserMail } from './user-mail-service.js';
-import { assertHostedDailyReportMedia, localizeDailyDigestImages, summarizeDailyReportMedia } from './daily-report-media-service.js';
+import {
+  assertHostedDailyReportMedia,
+  localizeDailyDigestImages,
+  summarizeDailyReportMedia,
+  type DailyReportMediaFailure,
+} from './daily-report-media-service.js';
 import {
   assertDailyReportMediaBatchReadyForPublish,
   commitDailyReportMediaBatch,
@@ -141,7 +146,7 @@ const toolDefinitions: McpTool[] = [
   {
     name: 'daily_report.publish',
     securitySchemes: oauthSecurity('daily_report.publish'),
-    description: '在生产服务端校验并发布 Cloud 日报；服务端固定将来源标记为 cloud。新媒体批次路径必须先调用 media_prepare_start/media_prepare，之后在 dry_run 和正式发布时提供 mediaBatchId、runId 与 requiredAssetKeys；未完成正式切换前仍保留旧版兼容路径。',
+    description: '在生产服务端校验并发布 Cloud 日报；内容完整性始终是硬闸门，服务端固定将来源标记为 cloud。默认兼容路径逐图尝试托管媒体，失败项降级为空图片位并返回失败代码，不阻断完整内容发布；如提供 mediaBatchId，则使用严格媒体批次路径。',
     inputSchema: {
       type: 'object',
       required: ['date', 'markdown'],
@@ -149,15 +154,15 @@ const toolDefinitions: McpTool[] = [
         date: { type: 'string', description: 'YYYY-MM-DD' },
         markdown: { type: 'string', description: '包含 daily-digest.v1 标记的清洗后 Markdown' },
         dry_run: { type: 'boolean', default: false },
-        mediaBatchId: { type: 'string', description: 'media_prepare_start 返回的媒体批次 ID；新 Cloud 路径必填' },
-        runId: { type: 'string', description: '媒体批次绑定的 runId；新 Cloud 路径必填' },
+        mediaBatchId: { type: 'string', description: '可选：media_prepare_start 返回的媒体批次 ID；提供后启用严格媒体批次路径' },
+        runId: { type: 'string', description: '严格媒体批次路径绑定的 runId' },
         requiredAssetKeys: {
           type: 'array',
           minItems: 1,
           maxItems: 20,
           uniqueItems: true,
           items: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' },
-          description: 'Markdown 中使用的已托管媒体 assetKey 列表',
+          description: '严格媒体批次路径中 Markdown 使用的已托管媒体 assetKey 列表',
         },
       },
       additionalProperties: false,
@@ -344,6 +349,14 @@ function cloudMediaBatchRequired(): boolean {
   return process.env.CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED === 'true';
 }
 
+function summarizeMediaFailures(failures: DailyReportMediaFailure[]): Array<Record<string, unknown>> {
+  return failures.map(failure => ({
+    label: failure.label,
+    code: failure.code,
+    ...(failure.httpStatus === undefined ? {} : { httpStatus: failure.httpStatus }),
+  }));
+}
+
 async function callTool(auth: OAuthBearerContext, name: string, rawArguments: unknown): Promise<Record<string, unknown>> {
   if (!toolScopeAllowed(auth, name)) throw new DailyReportCloudMcpAuthError(TOOL_SCOPES[name] || []);
   const args = objectValue(rawArguments);
@@ -372,12 +385,13 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
     const timezone = db.getReminder(auth.userId)?.timezone || process.env.APP_TIMEZONE || 'Asia/Shanghai';
     const date = validDateOrToday(args.date, timezone);
     const [mail] = await Promise.all([readMail(auth.userId, 20)]);
+    const calendar = readCalendar(auth.userId, date);
     const cloudContext = getDailyReportCloudContext(auth.userId);
-    const requirements = getCloudDigestCompletenessRequirements({ mail, cloudContext: cloudContext.context });
+    const requirements = getCloudDigestCompletenessRequirements({ mail, calendar, cloudContext: cloudContext.context });
     return {
       date,
       generatedAt: new Date().toISOString(),
-      calendar: readCalendar(auth.userId, date),
+      calendar,
       mail,
       cloudContext,
       requirements: summarizeCloudDigestCompletenessRequirements(requirements),
@@ -443,13 +457,14 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
   if (name === 'daily_report.publish') {
     const date = stringValue(args.date);
     assertCloudMarkdown(date, args.markdown);
-    // 先验证新闻数量、来源、分类角度、图片覆盖和头版候选，再进入媒体下载。
-    const initialValidation = validateDailyDigestMarkdown(args.markdown);
+    // 先验证内容数量、来源、分类角度和软媒体候选，再进入媒体下载。
+    const initialValidation = validateDailyDigestMarkdown(args.markdown, { requireReliableImages: false });
     const [mail, cloudContext] = await Promise.all([
       readMail(auth.userId, 20),
       Promise.resolve(getDailyReportCloudContext(auth.userId)),
     ]);
-    const requirements = getCloudDigestCompletenessRequirements({ mail, cloudContext: cloudContext.context });
+    const calendar = readCalendar(auth.userId, date);
+    const requirements = getCloudDigestCompletenessRequirements({ mail, calendar, cloudContext: cloudContext.context });
     assertCloudDigestCompleteness(initialValidation.digest, requirements);
 
     const mediaBatchId = stringValue(args.mediaBatchId);
@@ -515,16 +530,28 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
       }
     }
 
-    // dry-run 也在服务端完成媒体下载、签名校验和哈希缓存，保证正式调用不会才发现云端无法托管图片/logo。
+    // 兼容路径逐图完成媒体下载、签名校验和哈希缓存；单张失败降级为空图片位，不阻断内容发布。
+    const candidateMedia = summarizeDailyReportMedia(args.markdown);
+    const mediaFailures: DailyReportMediaFailure[] = [];
     const localizedMarkdown = await localizeDailyDigestImages(args.markdown, {
       requireHostedMedia: false,
-      requireAllMedia: true,
+      requireAllMedia: false,
       // Cloud 只托管调用方明确提供的媒体；自动推断的可选图标不应成为发布的外部依赖。
       inferSourceLogos: false,
+      onFailure: failure => mediaFailures.push(failure),
     });
     assertHostedDailyReportMedia(localizedMarkdown);
-    const validated = validateDailyDigestMarkdown(localizedMarkdown, { requireHostedImages: true });
+    const validated = validateDailyDigestMarkdown(localizedMarkdown, {
+      requireHostedImages: true,
+      requireReliableImages: false,
+    });
     const media = summarizeDailyReportMedia(localizedMarkdown);
+    const mediaReceipt = {
+      candidateMediaCount: candidateMedia.mediaCount,
+      candidateImageCount: candidateMedia.imageCount,
+      mediaFailureCount: mediaFailures.length,
+      mediaFailures: summarizeMediaFailures(mediaFailures),
+    };
     if (args.dry_run === true) {
       return {
         status: 'VALIDATED_NOT_PUBLISHED',
@@ -535,6 +562,7 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
         logoCount: media.logoCount,
         featuredHeadline: validated.quality.featured.headline,
         featuredImageUrl: validated.quality.featured.imageUrl,
+        ...mediaReceipt,
       };
     }
     const result = await publishDailyReport(auth.userId, date, localizedMarkdown, { requireHostedMedia: true, source: 'cloud' });
@@ -551,6 +579,7 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
       logoCount: media.logoCount,
       featuredHeadline: validated.quality.featured.headline,
       featuredImageUrl: validated.quality.featured.imageUrl,
+      ...mediaReceipt,
       report: {
         headline: result.report.headline,
         excerpt: result.report.excerpt,

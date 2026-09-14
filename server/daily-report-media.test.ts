@@ -87,10 +87,12 @@ test('HTTP 403、HTML 响应和错误图片内容都降级为无图，不把上�
   const htmlUrl = 'https://images.example/html';
   const forbiddenUrl = 'https://images.example/forbidden';
   const invalidImageUrl = 'https://images.example/invalid';
+  const failures: Array<{ label: string; code: string; httpStatus?: number }> = [];
   const localized = await localizeDailyDigestImages(markdownFor(htmlUrl, forbiddenUrl, invalidImageUrl), {
     mediaRoot,
     publicOrigin: 'https://gotimothy.online',
     lookup: publicLookup,
+    onFailure: failure => failures.push(failure),
     fetcher: async input => {
       const url = String(input);
       if (url.endsWith('/forbidden')) return new Response('<!DOCTYPE html>', { status: 403, headers: { 'content-type': 'text/html' } });
@@ -102,15 +104,20 @@ test('HTTP 403、HTML 响应和错误图片内容都降级为无图，不把上�
   assert.equal((localized.match(/图片：—/g) || []).length, 3);
   assert.doesNotMatch(localized, /images\.example/);
   assert.deepEqual(fs.readdirSync(mediaRoot), []);
+  assert.equal(failures.length, 3);
+  assert.equal(failures.filter(failure => failure.code === 'HTTP_ERROR' && failure.httpStatus === 403).length, 1);
+  assert.equal(failures.filter(failure => failure.code === 'INVALID_MIME').length, 2);
 });
 
 test('服务端下载图片前拒绝本机和内网地址', async () => {
   const mediaRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'aicalendar-daily-report-media-ssrf-'));
   let fetchCalls = 0;
+  const failures: Array<{ code: string }> = [];
   const localized = await localizeDailyDigestImages(markdownFor('http://127.0.0.1:8080/private.jpg', 'https://metadata.google.internal/token'), {
     mediaRoot,
     publicOrigin: 'https://gotimothy.online',
     lookup: async () => [{ address: '93.184.216.34', family: 4 as const }],
+    onFailure: failure => failures.push(failure),
     fetcher: async () => {
       fetchCalls += 1;
       return new Response(onePixelPng, { status: 200, headers: { 'content-type': 'image/png' } });
@@ -120,6 +127,7 @@ test('服务端下载图片前拒绝本机和内网地址', async () => {
   assert.equal(fetchCalls, 0);
   assert.equal((localized.match(/图片：—/g) || []).length, 2);
   assert.deepEqual(fs.readdirSync(mediaRoot), []);
+  assert.deepEqual(failures.map(failure => failure.code).sort(), ['SSRF_BLOCKED', 'SSRF_BLOCKED']);
 });
 
 test('没有 Daily Digest 标记的旧日报不触发图片下载', async () => {

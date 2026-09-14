@@ -9,6 +9,10 @@ interface WatchlistStockRequirement {
   tokens: string[];
 }
 
+interface CalendarScheduleRequirement {
+  title: string;
+}
+
 export interface CloudDigestCompletenessRequirements {
   unreadMailCount: number;
   mailReadStatus: string;
@@ -17,11 +21,14 @@ export interface CloudDigestCompletenessRequirements {
   requiredCategories: string[];
   watchlistStockCount: number;
   watchlistStocks: WatchlistStockRequirement[];
+  calendarScheduleCount: number;
+  calendarSchedules: CalendarScheduleRequirement[];
 }
 
 export interface CloudDigestCompletenessInput {
   mail: { messages?: unknown; unreadCount?: unknown; status?: unknown; configured?: unknown; enabled?: unknown };
   cloudContext: Record<string, unknown>;
+  calendar?: { schedules?: unknown };
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {
@@ -58,6 +65,22 @@ function watchlistStocks(context: Record<string, unknown>): WatchlistStockRequir
   return result;
 }
 
+function calendarSchedules(calendar: CloudDigestCompletenessInput['calendar']): CalendarScheduleRequirement[] {
+  const rawSchedules = Array.isArray(calendar?.schedules) ? calendar.schedules : [];
+  const seen = new Set<string>();
+  const result: CalendarScheduleRequirement[] = [];
+  for (const rawSchedule of rawSchedules) {
+    const schedule = objectValue(rawSchedule);
+    if (!schedule) continue;
+    const title = textValue(schedule.title) || textValue(schedule.summary) || textValue(schedule.name);
+    const key = title.toLocaleLowerCase();
+    if (!title || seen.has(key)) continue;
+    seen.add(key);
+    result.push({ title });
+  }
+  return result;
+}
+
 export function getCloudDigestCompletenessRequirements(
   input: CloudDigestCompletenessInput,
 ): CloudDigestCompletenessRequirements {
@@ -66,6 +89,7 @@ export function getCloudDigestCompletenessRequirements(
   const unreadMailCount = Math.max(messagesCount, reportedUnreadCount);
   const mailReadStatus = textValue(input.mail.status).toUpperCase() || 'UNKNOWN';
   const stocks = watchlistStocks(input.cloudContext);
+  const schedules = calendarSchedules(input.calendar);
   return {
     unreadMailCount,
     mailReadStatus,
@@ -74,17 +98,26 @@ export function getCloudDigestCompletenessRequirements(
     requiredCategories: [CLOUD_MARKET_CATEGORY, ...(stocks.length ? [CLOUD_WATCHLIST_CATEGORY] : [])],
     watchlistStockCount: stocks.length,
     watchlistStocks: stocks,
+    calendarScheduleCount: schedules.length,
+    calendarSchedules: schedules,
   };
 }
 
 export function summarizeCloudDigestCompletenessRequirements(
   requirements: CloudDigestCompletenessRequirements,
-): { unreadMailCount: number; mailReadStatus: string; requiredCategories: string[]; watchlistStockCount: number } {
+): {
+  unreadMailCount: number;
+  mailReadStatus: string;
+  requiredCategories: string[];
+  watchlistStockCount: number;
+  calendarScheduleCount: number;
+} {
   return {
     unreadMailCount: requirements.unreadMailCount,
     mailReadStatus: requirements.mailReadStatus,
     requiredCategories: [...requirements.requiredCategories],
     watchlistStockCount: requirements.watchlistStockCount,
+    calendarScheduleCount: requirements.calendarScheduleCount,
   };
 }
 
@@ -106,6 +139,16 @@ export function assertCloudDigestCompleteness(
     throw new Error(
       `云端日报缺少未读邮件简报：当前输入有 ${requirements.unreadMailCount} 封未读邮件，但只生成了 ${digest.mailBriefings.length} 条邮件简报`,
     );
+  }
+
+  if (requirements.calendarSchedules.length) {
+    const glanceText = digest.atAGlance.join('\n').replace(/\s+/g, ' ').toLocaleLowerCase();
+    const unmatched = requirements.calendarSchedules.filter(schedule =>
+      !glanceText.includes(schedule.title.replace(/\s+/g, ' ').toLocaleLowerCase()),
+    );
+    if (unmatched.length) {
+      throw new Error(`云端日报今日速览缺少 ${unmatched.length} 项当天日程覆盖，未发布`);
+    }
   }
 
   const categories = new Map(digest.categories.map(category => [category.name.trim(), category]));

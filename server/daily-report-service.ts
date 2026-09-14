@@ -146,7 +146,7 @@ function legacyExcerpt(markdown: string): string {
 function reportPresentation(markdown: string): { headline: string | null; heroImageUrl: string | null; excerpt: string } {
   const digest = parseDailyDigestMarkdown(markdown);
   if (digest) {
-    const featured = selectDailyDigestFeaturedStory(digest);
+    const featured = selectDailyDigestFeaturedStory(digest, { requireImage: false });
     const overview = digest.atAGlance.slice(0, 3).join('；');
     return {
       headline: featured?.headline || null,

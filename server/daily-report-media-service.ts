@@ -50,6 +50,7 @@ export interface DailyReportMediaOptions {
   requireAllMedia?: boolean;
   inferSourceLogos?: boolean;
   persistMedia?: (buffer: Buffer, validated: StoredMedia) => StoredMedia;
+  onFailure?: (failure: DailyReportMediaFailure) => void;
 }
 
 export interface StoredMedia {
@@ -74,6 +75,12 @@ export type DailyReportMediaFailureCode =
   | 'FETCH_ERROR'
   | 'PERSISTENCE_ERROR'
   | 'BATCH_TOTAL_LIMIT';
+
+export interface DailyReportMediaFailure {
+  label: '图片' | '来源图标';
+  code: DailyReportMediaFailureCode;
+  httpStatus?: number;
+}
 
 export class DailyReportMediaFetchError extends Error {
   constructor(
@@ -561,6 +568,10 @@ export async function localizeDailyDigestImages(markdown: string, options: Daily
   const fetcher = options.fetcher || fetch;
   const lookup = options.lookup || defaultLookup;
   const timeoutMs = options.timeoutMs || DAILY_REPORT_MEDIA_TIMEOUT_MS;
+  const labels = new Map<string, ReportMediaReference['label']>();
+  for (const reference of listDailyReportMediaReferences(sourceMarkdown)) {
+    if (!labels.has(reference.value)) labels.set(reference.value, reference.label);
+  }
   const values = [...new Set(allMediaValues(sourceMarkdown))];
   const replacements = new Map<string, string>();
   const pending: string[] = [];
@@ -575,15 +586,36 @@ export async function localizeDailyDigestImages(markdown: string, options: Daily
     }
   }
 
-  const failures: string[] = [];
+  const failures: DailyReportMediaFailure[] = [];
+  const recordFailure = (value: string, error: unknown, fallbackCode: DailyReportMediaFailureCode = 'FETCH_ERROR'): void => {
+    const mediaError = error instanceof DailyReportMediaFetchError
+      ? error
+      : new DailyReportMediaFetchError(fallbackCode, error instanceof Error ? error.message : '图片托管失败');
+    const failure: DailyReportMediaFailure = {
+      label: labels.get(value) || '图片',
+      code: mediaError.code,
+      ...(mediaError.httpStatus === undefined ? {} : { httpStatus: mediaError.httpStatus }),
+    };
+    failures.push(failure);
+    try {
+      options.onFailure?.(failure);
+    } catch {
+      // 失败回调仅用于记录，不应改变媒体降级结果。
+    }
+  };
+  for (const value of values) {
+    if (replacements.get(value) === '—' && !pending.includes(value)) {
+      recordFailure(value, new DailyReportMediaFetchError('BATCH_TOTAL_LIMIT', '日报媒体数量超过上限'));
+    }
+  }
   await mapWithConcurrency(pending, DAILY_REPORT_MEDIA_CONCURRENCY, async value => {
     try {
       const stored = await downloadAndStoreImage(value, { fetcher, lookup, mediaRoot, timeoutMs });
       replacements.set(value, `${publicOrigin}${DAILY_REPORT_MEDIA_ROUTE}/${stored.filename}`);
-    } catch {
+    } catch (error) {
       // 单张图片失败不应阻断整份日报；失败项明确降级为空图片位。
       replacements.set(value, '—');
-      failures.push(value);
+      recordFailure(value, error);
     }
   });
 

@@ -14,10 +14,10 @@ AI Calendar /mcp
     ├─ read_inputs -> Calendar / QQ 未读摘要 / Cloud Context / 日报历史
     ├─ Work Cloud 网络 -> 公开新闻、市场和可靠媒体候选 URL
     ├─ Work Skill -> daily-digest.v1 JSON
-    ├─ media_prepare_start/media_prepare -> 服务端受控抓取、校验、哈希和托管
-    └─ publish(dry_run=true|false, mediaBatchId=...)
+    ├─ 可选 media_prepare_start/media_prepare -> 严格批次受控抓取、校验、哈希和托管
+    └─ publish(dry_run=true|false)
              ├─ true  -> VALIDATED_NOT_PUBLISHED（不写日报、不入邮件队列）
-             └─ false -> 仅使用 READY 批次媒体 -> PUBLISHED
+             └─ false -> 内容完整性 + 逐图媒体 Best Effort -> PUBLISHED
                                       └─ source=cloud 日报记录
                                            ├─ RECEIVED -> 正式网页 + Cloud 邮件队列
                                            └─ CANDIDATE -> 候选对照（不进正式网页/邮件）
@@ -92,18 +92,18 @@ V2 本地 Context 仍是当前本地链路的编辑源。一次性迁移时：
 
 Work 必须先生成 `daily-digest.v1` JSON，再调用已经随 Work Skill 提供的等价确定性渲染器（当前 V2 分支的 `scripts/cloud_digest.py` 是待打包源材料）生成 Markdown。不能让 Work 任务引用本地路径，也不能把“模型直接写 Markdown”当作渲染器替代。
 
-新媒体路径先调用 `daily_report.media_prepare_start`，再将每个新闻条目的 `assetKey` 和 1–5 个候选 URL 交给 `daily_report.media_prepare`。服务器执行：
+严格媒体批次路径先调用 `daily_report.media_prepare_start`，再将每个新闻条目的 `assetKey` 和 1–5 个候选 URL 交给 `daily_report.media_prepare`。默认 Cloud 兼容路径不要求预先创建批次，而是在 `daily_report.publish` 内逐图尝试媒体托管。服务器执行：
 
 - redirect、DNS/IP/SSRF、超时和大小限制；
 - HTTP `Content-Type` 与图片 magic bytes 双重校验；
 - SHA-256 去重、原子写入和批次归属记录；
 - 每个候选的成功/失败结果和 fallback 过程。
 
-带 `mediaBatchId` 的 `daily_report.publish` 会要求 `runId`、`requiredAssetKeys`、READY 批次、真实文件校验和 Markdown 中所有媒体均属于该批次；该分支不会在 publish 阶段抓取外链或静默替换为空。环境变量 `CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED` 默认保持 `false`，用于在正式 Work 提示词切换前保留旧版兼容路径；通过隔离验收后才可单独启用。
+带 `mediaBatchId` 的 `daily_report.publish` 会要求 `runId`、`requiredAssetKeys`、READY 批次、真实文件校验和 Markdown 中所有媒体均属于该批次；该分支不会在 publish 阶段抓取外链或静默替换为空。未提供批次时，服务端对每个显式图片逐图执行受控抓取，失败项替换为 `图片：—`/`来源图标：—` 并返回失败代码，不阻断通过内容完整性校验的日报。环境变量 `CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED` 默认保持 `false`，用于保留兼容路径；通过隔离验收后才可单独启用严格批次。
 
-`daily_report.publish` 的 `dry_run=true` 会在服务端执行日期、结构化标记、内容完整性和批次媒体检查：
+`daily_report.publish` 的 `dry_run=true` 会在服务端执行日期、结构化标记、内容完整性和媒体检查：
 
-dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。新媒体批次中任何必需图片失败都会停留在非 READY 状态，Work 应更换候选后重试，不得降低图片质量要求。正式调用必须使用 `dry_run=false`，并以返回 `status=PUBLISHED` 作为“已写入生产服务器”的硬性回执；`source` 必须由服务端标记为 `cloud`。随后 `deliveryStatus=RECEIVED` 或 `CANDIDATE` 只表示是否进入正式网页和邮件，`QUEUED` 只代表邮件已入队，不代表 SMTP accepted 或收件箱到达。
+dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼容路径允许 `imageCount=0`，但必须如实保留 `candidateImageCount`、`mediaFailureCount` 和 `mediaFailures`；严格媒体批次中任何必需图片失败仍会停留在非 READY 状态，不能降低该批次质量要求。正式调用必须使用 `dry_run=false`，并以返回 `status=PUBLISHED` 作为“已写入生产服务器”的硬性回执；`source` 必须由服务端标记为 `cloud`。随后 `deliveryStatus=RECEIVED` 或 `CANDIDATE` 只表示是否进入正式网页和邮件，`QUEUED` 只代表邮件已入队，不代表 SMTP accepted 或收件箱到达。
 
 ## 第二阶段第一轮状态（2026-09-13）
 

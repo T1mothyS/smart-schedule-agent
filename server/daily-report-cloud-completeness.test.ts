@@ -134,3 +134,22 @@ test('Cloud 缺少关注名单或未覆盖股票时拒绝发布', () => {
     /未覆盖/,
   );
 });
+
+test('Cloud 当天日程必须覆盖到今日速览', () => {
+  const scheduleRequirements = getCloudDigestCompletenessRequirements({
+    mail: { messages: [] },
+    calendar: { schedules: [{ title: '项目评审' }, { title: '客户同步' }] },
+    cloudContext: {},
+  });
+  assert.doesNotThrow(() => assertCloudDigestCompleteness(digest({
+    atAGlance: ['项目评审安排在上午，客户同步安排在下午。'],
+    categories: [marketCategory],
+  }), scheduleRequirements));
+  assert.throws(
+    () => assertCloudDigestCompleteness(digest({
+      atAGlance: ['项目评审安排在上午。'],
+      categories: [marketCategory],
+    }), scheduleRequirements),
+    /今日速览缺少/,
+  );
+});

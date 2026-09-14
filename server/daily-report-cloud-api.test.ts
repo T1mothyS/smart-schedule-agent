@@ -337,6 +337,7 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
       mailReadStatus: 'UNAVAILABLE',
       requiredCategories: ['金融与市场'],
       watchlistStockCount: 0,
+      calendarScheduleCount: 0,
     });
 
     const limitedAccessToken = crypto.randomBytes(32).toString('base64url');
@@ -459,8 +460,46 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     });
     assert.equal(twoImageRun.status, 200);
     const twoImageBody = await twoImageRun.json() as any;
-    assert.equal(twoImageBody.result.isError, true);
-    assert.match(twoImageBody.result.content?.[0]?.text || '', /至少需要 3 张可靠图片/);
+    assert.equal(twoImageBody.result.structuredContent.status, 'VALIDATED_NOT_PUBLISHED');
+    assert.equal(twoImageBody.result.structuredContent.imageCount, 2);
+    assert.equal(twoImageBody.result.structuredContent.logoCount, 1);
+    assert.equal(twoImageBody.result.structuredContent.mediaCount, 3);
+    assert.equal(twoImageBody.result.structuredContent.mediaFailureCount, 0);
+    assert.equal(activity.listNotifications(userId).length, notificationsBeforeDryRun);
+
+    let allMediaFailedMarkdown = cloudMarkdown;
+    for (const [original, replacement] of [
+      [cloudMediaUrls[0], 'http://127.0.0.1:1/failure-a.jpg'],
+      [cloudMediaUrls[1], 'http://127.0.0.1:1/failure-b.jpg'],
+      [cloudMediaUrls[2], 'http://127.0.0.1:1/failure-c.jpg'],
+      [cloudMediaUrls[3], 'http://127.0.0.1:1/failure-d.jpg'],
+      [cloudMediaUrls[4], 'http://127.0.0.1:1/failure-e.jpg'],
+    ] as const) {
+      allMediaFailedMarkdown = allMediaFailedMarkdown.replaceAll(original, replacement);
+    }
+    allMediaFailedMarkdown = allMediaFailedMarkdown.replace('来源图标：' + cloudMarketLogoUrl + '\n', '');
+    const allMediaFailedRun = await request('/mcp', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + tokenBody.access_token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 'all-media-failed', method: 'tools/call', params: {
+        name: 'daily_report.publish',
+        arguments: { date: '2026-09-09', markdown: allMediaFailedMarkdown, dry_run: true },
+      } }),
+    });
+    assert.equal(allMediaFailedRun.status, 200);
+    const allMediaFailedBody = await allMediaFailedRun.json() as any;
+    assert.equal(allMediaFailedBody.result.structuredContent.status, 'VALIDATED_NOT_PUBLISHED');
+    assert.equal(allMediaFailedBody.result.structuredContent.candidateMediaCount, 5);
+    assert.equal(allMediaFailedBody.result.structuredContent.candidateImageCount, 5);
+    assert.equal(allMediaFailedBody.result.structuredContent.mediaCount, 0);
+    assert.equal(allMediaFailedBody.result.structuredContent.imageCount, 0);
+    assert.equal(allMediaFailedBody.result.structuredContent.mediaFailureCount, 5);
+    assert.deepEqual(
+      [...new Set(allMediaFailedBody.result.structuredContent.mediaFailures.map((failure: any) => failure.code))],
+      ['SSRF_BLOCKED'],
+    );
+    assert.equal(allMediaFailedBody.result.structuredContent.featuredImageUrl, '');
+    assert.equal(cloudStore.listDailyReportCloudHistory(userId, 30).length, historyBeforeDryRun);
     assert.equal(activity.listNotifications(userId).length, notificationsBeforeDryRun);
 
     const missingMediaMarkdown = cloudMarkdown.replace(
