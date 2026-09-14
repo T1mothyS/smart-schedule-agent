@@ -2324,6 +2324,10 @@ export function setOAuthAuthorizationRequestUser(id: string, userId: string): bo
   return run('UPDATE oauth_authorization_requests SET user_id = ? WHERE id = ?', [userId, id]).changes > 0;
 }
 
+export function setOAuthAuthorizationRequestScope(id: string, scope: string): boolean {
+  return run('UPDATE oauth_authorization_requests SET scope = ? WHERE id = ?', [scope, id]).changes > 0;
+}
+
 export function deleteOAuthAuthorizationRequest(id: string): boolean {
   return run('DELETE FROM oauth_authorization_requests WHERE id = ?', [id]).changes > 0;
 }
@@ -2424,6 +2428,17 @@ export function getActiveOAuthRefreshToken(tokenHash: string): DbOAuthRefreshTok
      JOIN users u ON u.id = t.user_id
      WHERE t.token_hash = ? AND t.revoked_at IS NULL AND u.disabled = 0`,
     [tokenHash],
+  );
+}
+
+export function getActiveOAuthRefreshTokenForClientUser(clientId: string, userId: string): DbOAuthRefreshToken | undefined {
+  return queryOne<DbOAuthRefreshToken>(
+    `SELECT * FROM oauth_refresh_tokens
+     WHERE client_id = ? AND user_id = ? AND revoked_at IS NULL AND expires_at > ?
+       AND (' ' || scope || ' ') LIKE '% offline_access %'
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [clientId, userId, new Date().toISOString()],
   );
 }
 

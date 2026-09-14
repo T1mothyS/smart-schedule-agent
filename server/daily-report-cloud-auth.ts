@@ -358,6 +358,13 @@ export function completeDailyReportCloudLogin(requestId: string, csrfToken: stri
   const valid = bcrypt.compareSync(password, user.password_hash);
   if (!valid) return false;
   db.setOAuthAuthorizationRequestUser(request.id, user.id);
+  const requestedScopes = parseScopes(request.scope);
+  const existingGrant = db.getActiveOAuthRefreshTokenForClientUser(request.client_id, user.id);
+  // Work 的 scope 增量授权请求可能不会重复携带 offline_access。若该账号此前已明确授予
+  // 同一 client 的持续刷新权限，则把它带回本次 consent，让新的 scope 升级仍可获得稳定 refresh token。
+  if (!requestedScopes.includes('offline_access') && existingGrant && parseScopes(existingGrant.scope).includes('offline_access')) {
+    db.setOAuthAuthorizationRequestScope(request.id, serializeScopes([...requestedScopes, 'offline_access']));
+  }
   db.updateUserLastLogin(user.id);
   return true;
 }

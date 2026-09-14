@@ -251,6 +251,69 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     assert.ok(tokenBody.access_token);
     assert.ok(tokenBody.refresh_token);
 
+    const upgradeVerifier = 'u'.repeat(43);
+    const upgradeChallenge = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(upgradeVerifier))).toString('base64url');
+    const upgradeScopes = ['daily_report:media_prepare', 'daily_report:media_probe'];
+    const upgradeAuthorize = await request(`/oauth/authorize?response_type=code&client_id=${encodeURIComponent(client.client_id)}&redirect_uri=${encodeURIComponent('https://chatgpt.example/callback')}&scope=${encodeURIComponent(upgradeScopes.join(' '))}&state=state-upgrade&code_challenge=${upgradeChallenge}&code_challenge_method=S256&resource=${encodeURIComponent('http://127.0.0.1:0/mcp')}`);
+    assert.equal(upgradeAuthorize.status, 200);
+    const upgradeLoginPage = await upgradeAuthorize.text();
+    const upgradeRequestId = upgradeLoginPage.match(/name="request_id" value="([^"]+)"/)?.[1];
+    const upgradeCsrf = upgradeLoginPage.match(/name="csrf" value="([^"]+)"/)?.[1];
+    assert.ok(upgradeRequestId);
+    assert.ok(upgradeCsrf);
+
+    const upgradeLogin = await request('/oauth/authorize/login', formBody({
+      request_id: upgradeRequestId!,
+      csrf: upgradeCsrf!,
+      email: user.email,
+      password,
+    }));
+    assert.equal(upgradeLogin.status, 200);
+    const upgradeConsentPage = await upgradeLogin.text();
+    assert.match(upgradeConsentPage, /允许定时任务在登录后持续刷新授权/);
+    const upgradedRequest = db.getOAuthAuthorizationRequest(upgradeRequestId!);
+    assert.ok(upgradedRequest);
+    assert.match(upgradedRequest!.scope, /daily_report:media_prepare/);
+    assert.match(upgradedRequest!.scope, /daily_report:media_probe/);
+    assert.match(upgradedRequest!.scope, /offline_access/);
+
+    const upgradeConsent = await request('/oauth/authorize/consent', {
+      ...formBody({ request_id: upgradeRequestId!, csrf: upgradeCsrf!, approved: 'true' }),
+      redirect: 'manual',
+    });
+    assert.equal(upgradeConsent.status, 302);
+    const upgradeCallback = new URL(upgradeConsent.headers.get('location')!);
+    const upgradeCode = upgradeCallback.searchParams.get('code');
+    assert.equal(upgradeCallback.searchParams.get('state'), 'state-upgrade');
+    assert.ok(upgradeCode);
+
+    const upgradeTokenResponse = await request('/oauth/token', formBody({
+      grant_type: 'authorization_code',
+      client_id: client.client_id,
+      redirect_uri: 'https://chatgpt.example/callback',
+      code: upgradeCode!,
+      code_verifier: upgradeVerifier,
+      resource: 'http://127.0.0.1:0/mcp',
+    }));
+    assert.equal(upgradeTokenResponse.status, 200);
+    const upgradeTokenBody = await upgradeTokenResponse.json() as { scope: string; refresh_token?: string };
+    assert.ok(upgradeTokenBody.refresh_token);
+    assert.match(upgradeTokenBody.scope, /daily_report:media_prepare/);
+    assert.match(upgradeTokenBody.scope, /daily_report:media_probe/);
+    assert.match(upgradeTokenBody.scope, /offline_access/);
+
+    const upgradeRefreshResponse = await request('/oauth/token', formBody({
+      grant_type: 'refresh_token',
+      client_id: client.client_id,
+      refresh_token: upgradeTokenBody.refresh_token!,
+      resource: 'http://127.0.0.1:0/mcp',
+    }));
+    assert.equal(upgradeRefreshResponse.status, 200);
+    const upgradeRefreshBody = await upgradeRefreshResponse.json() as { refresh_token: string; scope: string };
+    assert.equal(upgradeRefreshBody.refresh_token, upgradeTokenBody.refresh_token);
+    assert.match(upgradeRefreshBody.scope, /daily_report:media_prepare/);
+    assert.match(upgradeRefreshBody.scope, /daily_report:media_probe/);
+
     const initialize = await request('/mcp', {
       method: 'POST',
       headers: { Authorization: `Bearer ${tokenBody.access_token}`, 'Content-Type': 'application/json' },
