@@ -12,7 +12,7 @@ import { createApp, registerSpaFallback } from './app.js';
 import { createAuth, type JwtPayload } from './auth.js';
 import { readRuntimeConfig } from './runtime/config.js';
 import { createBackgroundJobs } from './runtime/jobs.js';
-import { describeError, describeErrorData, notificationLogCategory } from './runtime/logging.js';
+import { describeError, describeErrorData } from './runtime/logging.js';
 import { executeOnce } from './operation-service.js';
 import { withPersistenceTransaction } from './persistence.js';
 import express from "express";
@@ -31,7 +31,6 @@ import { generateCode, getEmailConfigurationSummary, sendDailyReminderEmail, sen
 import * as activityStore from "./activity-store.js";
 import { getActionCenter } from "./action-center.js";
 import * as attachmentService from "./attachment-service.js";
-import { processNotificationQueue, type NotificationLogger } from "./notification-service.js";
 import * as backupService from "./backup-service.js";
 import { parseAiImport, type AiImportDraft } from "./ai-import-service.js";
 import { buildCodeBuddyEnv, normaliseCodeBuddyBaseUrl } from "./codebuddy-env.js";
@@ -58,7 +57,7 @@ import {
 import { deleteUserMailAccount, getUserMailAccountStatus, readUserMail, saveUserMailAccount } from './user-mail-service.js';
 import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
 import { shiftScheduleDateValue } from './schedule-actions.js';
-import { addLog, allLogs, clearLogs, listLogs, type LogCategory } from './log-service.js';
+import { addLog, allLogs, clearLogs, listLogs } from './log-service.js';
 import { searchLibraryForAi, type KnowledgeSearchMatch } from './search-service.js';
 import { createDailyReportCloudMcpRouter } from './daily-report-cloud-mcp.js';
 import { createDailyReportCloudOAuthRouter } from './daily-report-cloud-auth.js';

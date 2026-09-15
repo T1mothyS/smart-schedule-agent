@@ -72,19 +72,34 @@ const runtimes = new WeakMap<Express, ReturnType<typeof createRuntime>>();
 export async function startRuntime(deps: RuntimeDependencies) {
   let runtime = runtimes.get(deps.app);
   if (!runtime) {
-    runtime = createRuntime(deps);
-    runtimes.set(deps.app, runtime);
+    const owned = createRuntime(deps);
+    let attached = false;
+    const detach = () => {
+      process.off('SIGINT', shutdown);
+      process.off('SIGTERM', shutdown);
+      attached = false;
+    };
     const shutdown = () => {
       void runtime!.stop().catch(error => {
         console.error('[Shutdown] 服务器关闭失败:', error);
         process.exitCode = 1;
-      }).finally(() => {
-        process.off('SIGINT', shutdown);
-        process.off('SIGTERM', shutdown);
       });
     };
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
+    runtime = {
+      async start() {
+        if (!attached) {
+          process.on('SIGINT', shutdown);
+          process.on('SIGTERM', shutdown);
+          attached = true;
+        }
+        try { return await owned.start(); }
+        catch (error) { detach(); throw error; }
+      },
+      async stop() {
+        try { await owned.stop(); } finally { detach(); }
+      },
+    };
+    runtimes.set(deps.app, runtime);
   }
   const server = await runtime.start();
   console.log('[Startup] API 服务器已启动', server.address());
