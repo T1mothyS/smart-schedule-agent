@@ -85,3 +85,21 @@ test('startup undo record restores all affected disk files before opening stores
   assert.ok(schedule.getSchedule('kept-operation'));
   assert.equal(activity.listCompletions('u', { sourceId: 'completion-failure' }).length, 1);
 });
+
+const operations = await import('./operation-service.js');
+test('execution receipt failure rolls back business changes; retry and reload replay the same result', async t => {
+  let once = false;
+  const rename = fs.renameSync;
+  const mock = t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
+    if (!once && String(to) === path.join(root, 'chat.db')) { once = true; throw new Error('receipt failure'); }
+    return rename(from, to);
+  });
+  assert.throws(() => operations.executeOnce('u', 'ai-plan', 'plan-1', () => { makeSchedule('receipt-schedule'); return { id: 'receipt-schedule' }; }), /receipt failure/);
+  mock.mock.restore();
+  assert.equal(schedule.getSchedule('receipt-schedule'), null);
+  assert.equal(db.getOperationResult('u', 'ai-plan', 'plan-1'), undefined);
+  const result = operations.executeOnce('u', 'ai-plan', 'plan-1', () => { makeSchedule('receipt-schedule'); return { id: 'receipt-schedule' }; });
+  await db.initDb(); await schedule.initScheduleDb();
+  assert.deepEqual(operations.executeOnce('u', 'ai-plan', 'plan-1', () => { throw new Error('must not execute twice'); }), result);
+  assert.equal(db.getOperationResult('foreign', 'ai-plan', 'plan-1'), undefined);
+});

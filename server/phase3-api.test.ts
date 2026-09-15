@@ -1,0 +1,40 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aicalendar-phase3-api-'));
+process.env.DATA_DIR = root;
+process.env.NODE_ENV = 'test';
+process.env.APP_ENV = 'development';
+process.env.BACKGROUND_JOBS_ENABLED = 'false';
+process.env.BACKUP_ENCRYPTION_KEY = 'synthetic-backup-key';
+const api = await import('./index.js');
+await api.initializeServer();
+const db = await import('./db.js');
+const activity = await import('./activity-store.js');
+const schedules = await import('./schedule-store.js');
+const stamp = new Date().toISOString();
+const users = ['owner', 'other'].map(id => db.createUser({ id, email: id + '@example.invalid', password_hash: 'synthetic', role: 'user', disabled: 0, created_at: stamp, updated_at: stamp }));
+test('import confirmation is durable, account scoped and safe to retry after receipt failure', async t => {
+  const listener = api.app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => listener.once('listening', resolve));
+  const base = 'http://127.0.0.1:' + (listener.address() as { port: number }).port;
+  const request = (id: string, user = 0) => fetch(base + '/api/ai/imports/' + id + '/confirm', { method: 'POST', headers: { Authorization: 'Bearer ' + api.signUserToken(users[user]), 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+  try {
+    const draft = activity.createAiImport({ userId: 'owner', sourceType: 'text', inputText: 'synthetic', draft: { kind: 'once', title: 'retry import', dueDate: '2026-12-25', reminderOffsets: [] } });
+    assert.equal((await request(draft.id, 1)).status, 404);
+    let failed = false;
+    const rename = fs.renameSync;
+    const mock = t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => { if (!failed && String(to) === path.join(root, 'chat.db')) { failed = true; throw new Error('injected receipt failure'); } return rename(from, to); });
+    assert.equal((await request(draft.id)).status, 400);
+    mock.mock.restore();
+    assert.equal(activity.getAiImport(draft.id, 'owner')?.status, 'draft');
+    assert.equal(schedules.getAllSchedules('owner').length, 0);
+    const first = await request(draft.id); assert.equal(first.status, 200); const result = await first.json();
+    await db.initDb(); await activity.initActivityDb(); await schedules.initScheduleDb();
+    const second = await request(draft.id); assert.equal(second.status, 200); assert.deepEqual(await second.json(), result);
+    assert.equal(schedules.getAllSchedules('owner').length, 1);
+    assert.equal((await request(draft.id, 1)).status, 404);
+  } finally { listener.closeAllConnections(); await new Promise<void>(resolve => listener.close(() => resolve())); }
+});

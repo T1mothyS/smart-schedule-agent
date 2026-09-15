@@ -50,6 +50,12 @@ async function initDb(): Promise<void> {
   // sql.js 以内存数据库运行并整体导出文件，不能消费原生 SQLite WAL。
   db.run('PRAGMA journal_mode = DELETE');
 
+  db.run(`CREATE TABLE IF NOT EXISTS operation_results (
+    user_id TEXT NOT NULL, scope TEXT NOT NULL, operation_id TEXT NOT NULL,
+    result TEXT NOT NULL, created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, scope, operation_id)
+  )`);
+
   // 初始化表
   db.run(`
     CREATE TABLE IF NOT EXISTS sessions (
@@ -2488,6 +2494,7 @@ export function deleteOAuthUserData(userId: string): void {
 
 export function deleteUser(userId: string): boolean {
   try {
+    deleteUserOperationResults(userId);
     run('DELETE FROM daily_report_tokens WHERE user_id = ?', [userId]);
     deleteDailyReportCloudData(userId);
     deleteOAuthUserData(userId);
@@ -2516,6 +2523,7 @@ export function deleteUser(userId: string): boolean {
 
 export function clearUserData(userId: string): { schedules: number; sessions: number } {
   try {
+    deleteUserOperationResults(userId);
     run('DELETE FROM user_api_keys WHERE user_id = ?', [userId]);
     run('DELETE FROM user_mail_accounts WHERE user_id = ?', [userId]);
     deleteDailyReportCloudData(userId);
@@ -2543,3 +2551,15 @@ export { initDb };
 
 // 导出默认数据库访问（异步初始化后可用）
 export default { initDb };
+
+// Execution receipts are committed with business changes; retries never execute the same plan twice.
+export function getOperationResult(userId: string, scope: string, operationId: string): unknown | undefined {
+  const row = queryOne<{ result: string }>('SELECT result FROM operation_results WHERE user_id = ? AND scope = ? AND operation_id = ?', [userId, scope, operationId]);
+  return row ? JSON.parse(row.result) : undefined;
+}
+export function saveOperationResult(userId: string, scope: string, operationId: string, result: unknown): void {
+  run('INSERT INTO operation_results (user_id, scope, operation_id, result, created_at) VALUES (?, ?, ?, ?, ?)', [userId, scope, operationId, JSON.stringify(result), new Date().toISOString()]);
+}
+export function deleteUserOperationResults(userId: string): void {
+  run('DELETE FROM operation_results WHERE user_id = ?', [userId]);
+}

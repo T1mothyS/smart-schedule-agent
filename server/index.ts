@@ -1,3 +1,4 @@
+import { executeOnce } from './operation-service.js';
 import { withPersistenceTransaction } from './persistence.js';
 import 'dotenv/config';
 import express from "express";
@@ -2605,10 +2606,13 @@ app.get("/api/ai/imports/:id", authenticate, (req, res) => {
 app.post("/api/ai/imports/:id/confirm", authenticate, (req, res) => {
   try {
     const userId = (req as any).user.userId;
+    const replay = dbModule.getOperationResult(userId, 'ai-import', req.params.id);
+    if (replay !== undefined) return res.json(replay);
     const current = activityStore.getAiImport(req.params.id, userId);
     if (!current || current.status !== 'draft') return res.status(404).json({ error: '导入草稿不存在或已经处理' });
     const draft = { ...current.draft, ...req.body.draft } as unknown as AiImportDraft;
     if (!draft.title || !/^\d{4}-\d{2}-\d{2}$/.test(draft.dueDate)) return res.status(400).json({ error: '标题和到期日期不能为空' });
+    const response = executeOnce(userId, 'ai-import', req.params.id, () => {
     let created: unknown;
     if (draft.kind === 'recurring') {
       const date = draft.dueDate;
@@ -2659,7 +2663,9 @@ app.post("/api/ai/imports/:id/confirm", authenticate, (req, res) => {
       });
     }
     const confirmed = activityStore.confirmAiImport(req.params.id, userId, draft as unknown as Record<string, unknown>);
-    res.json({ import: confirmed, created });
+    return { import: confirmed, created };
+    });
+    res.json(response);
   } catch (error: any) {
     res.status(400).json({ error: error?.message || '确认导入失败' });
   }
@@ -3531,6 +3537,7 @@ function hydratePendingAiSchedulePlans(userId: string, messages: dbModule.DbAiSc
       operations,
       expiresAt: Date.parse(String(snapshot.expiresAt)),
       historyMessageId: message.id,
+      confirmedResult: dbModule.getOperationResult(userId, 'ai-plan', String(snapshot.id)),
     });
   }
 }
@@ -3556,6 +3563,27 @@ function buildAiPlanWarnings(text: string, operations: any[], modelWarnings: unk
 }
 
 function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
+  const aggregate: ReturnType<typeof executeAiScheduleOperationBatch> = { createdSchedules: [], updatedSchedules: [], deletedIds: [], createdReminderTasks: [], failures: [], changed: false };
+  for (const [index, operation] of plan.operations.entries()) {
+    try {
+      const result = withPersistenceTransaction(() => {
+        const item = executeAiScheduleOperationBatch({ ...plan, operations: [operation] });
+        if (item.failures.length) throw new Error(item.failures.map(failure => failure.message).join('；'));
+        return item;
+      });
+      aggregate.createdSchedules.push(...result.createdSchedules);
+      aggregate.updatedSchedules.push(...result.updatedSchedules);
+      aggregate.deletedIds.push(...result.deletedIds);
+      aggregate.createdReminderTasks.push(...result.createdReminderTasks);
+      aggregate.changed ||= result.changed;
+    } catch (error: any) {
+      aggregate.failures.push({ index, type: String(operation.type), message: error?.message || '操作失败' });
+    }
+  }
+  return aggregate;
+}
+
+function executeAiScheduleOperationBatch(plan: PendingAiSchedulePlan) {
   const createdSchedules: any[] = [];
   const updatedSchedules: any[] = [];
   const deletedIds: string[] = [];
@@ -3588,7 +3616,7 @@ function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
         } as Omit<scheduleStore.Schedule, 'created_at' | 'updated_at'>);
         if (created) {
           createdSchedules.push(created);
-          addLog('info', 'schedule', 'AI 计划确认后创建日程', { id: created.id, planId: plan.id });
+          addLog('info', 'schedule', 'AI 确认事务暂存日程', { id: created.id, planId: plan.id });
         }
       } catch (error: any) {
         failures.push({ index, type: 'create', message: error?.message || '创建日程失败' });
@@ -3621,7 +3649,7 @@ function executeAiScheduleOperations(plan: PendingAiSchedulePlan) {
           }),
         });
         createdReminderTasks.push(task);
-        addLog('info', 'reminder', 'AI 计划确认后创建周期事项', { taskId: task.id, planId: plan.id });
+        addLog('info', 'reminder', 'AI 确认事务暂存周期事项', { taskId: task.id, planId: plan.id });
         try {
           reminderCalendarSync.syncReminderTaskToCalendar(task);
         } catch (syncError: any) {
@@ -4168,15 +4196,19 @@ priority 识别：
 });
 
 app.post("/api/ai-chat/confirm", authenticate, (req, res) => {
+  try {
   cleanupExpiredAiScheduleState();
   const planId = String(req.body?.planId || '');
   const userId = ((req as any).user as JwtPayload).userId;
+  const replay = dbModule.getOperationResult(userId, 'ai-plan', planId);
+  if (replay !== undefined) return res.json(replay);
   const plan = aiSchedulePlans.get(planId);
   if (!plan || plan.userId !== userId) {
     return res.status(404).json({ error: '待确认计划不存在或已过期，请重新生成。' });
   }
 
   if (!plan.confirmedResult) {
+    plan.confirmedResult = executeOnce(userId, 'ai-plan', planId, () => {
     const result = executeAiScheduleOperations(plan);
     const scheduleItems = [...result.createdSchedules, ...result.updatedSchedules];
     const failureSummary = result.failures.length
@@ -4185,7 +4217,7 @@ app.post("/api/ai-chat/confirm", authenticate, (req, res) => {
         return `- ${title}：${String(failure.message || '执行失败').slice(0, 180)}`;
       }).join('\n')}`
       : '';
-    plan.confirmedResult = {
+    return {
       success: true,
       intent: plan.intent,
       reply: `已确认并执行：创建 ${result.createdSchedules.length} 项日程、${result.createdReminderTasks.length} 项周期事项，更新 ${result.updatedSchedules.length} 项，删除 ${result.deletedIds.length} 项。${failureSummary}`,
@@ -4200,17 +4232,21 @@ app.post("/api/ai-chat/confirm", authenticate, (req, res) => {
       },
       partial: result.failures.length > 0,
     };
+    });
     addLog('info', 'ai', 'AI 计划已确认执行', {
       planId,
       userId,
-      created: result.createdSchedules.length,
-      recurring: result.createdReminderTasks.length,
-      updated: result.updatedSchedules.length,
-      deleted: result.deletedIds.length,
-      failed: result.failures.length,
+      created: plan.confirmedResult.changedDetails.created.length,
+      recurring: plan.confirmedResult.changedDetails.recurring.length,
+      updated: plan.confirmedResult.changedDetails.updated.length,
+      deleted: plan.confirmedResult.changedDetails.deleted.length,
+      failed: plan.confirmedResult.changedDetails.failures.length,
     });
   }
   res.json(plan.confirmedResult);
+  } catch (error: any) {
+    res.status(500).json({ error: error?.message || '确认保存失败，请重试' });
+  }
 });
 
 // 获取某日日程（供 AI 对话上下文）
