@@ -103,3 +103,49 @@ test('execution receipt failure rolls back business changes; retry and reload re
   assert.deepEqual(operations.executeOnce('u', 'ai-plan', 'plan-1', () => { throw new Error('must not execute twice'); }), result);
   assert.equal(db.getOperationResult('foreign', 'ai-plan', 'plan-1'), undefined);
 });
+
+const backups = await import('./backup-service.js');
+const attachments = await import('./attachment-service.js');
+test('user restore rolls back four stores on a later write failure and preserves old attachment files', t => {
+  db.createUser({ id: 'restore-user', email: 'restore@example.invalid', password_hash: 'synthetic', role: 'user', disabled: 0, created_at: '2026-09-15', updated_at: '2026-09-15' });
+  const proof = activity.createCompletion({ userId: 'restore-user', sourceType: 'schedule', sourceId: 'old' });
+  const file = attachments.saveBase64Attachment({ userId: 'restore-user', completionId: proof.id, originalName: 'proof.pdf', mimeType: 'application/pdf', base64: Buffer.from('%PDF-1.4 synthetic proof').toString('base64') });
+  const encrypted = backups.createUserBackup('restore-user', 'synthetic-password');
+  const before = [db.exportChatDb(), schedule.exportScheduleDb(), reminder.exportReminderDb(), activity.exportActivityDb()];
+  let failed = false; const rename = fs.renameSync;
+  const mock = t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => { if (!failed && String(to) === path.join(root, 'activity.db')) { failed = true; throw new Error('restore second file failure'); } return rename(from, to); });
+  assert.throws(() => backups.restoreUserBackup('restore-user', encrypted, 'synthetic-password', 'replace'), /restore second file/);
+  mock.mock.restore();
+  assert.deepEqual([db.exportChatDb(), schedule.exportScheduleDb(), reminder.exportReminderDb(), activity.exportActivityDb()], before);
+  assert.equal(fs.existsSync(path.join(root, file.storagePath)), true);
+  const restored = backups.restoreUserBackup('restore-user', encrypted, 'synthetic-password', 'replace');
+  assert.equal(restored.partial, false);
+  assert.equal(attachments.readAttachment(activity.listAttachments('restore-user')[0]).toString(), '%PDF-1.4 synthetic proof');
+});
+
+test('legacy user backup reports damaged attachments and missing hosted media as partial with details', () => {
+  const encrypted = backups.createUserBackup('restore-user', 'synthetic-password');
+  const payload = backups.decryptBackup<any>(encrypted, 'synthetic-password');
+  delete payload.noteItems; delete payload.libraryEntries; delete payload.dailyReportCloudContext;
+  payload.files.push({ completionId: null, importId: null, originalName: 'broken.pdf', mimeType: 'application/pdf', base64: Buffer.from('invalid pdf').toString('base64') });
+  payload.activity.dailyReports = [{ id: 'missing-media', report_date: '2026-09-15', source: 'local', markdown: '![](/daily-report-media/' + 'a'.repeat(64) + '.png)', content_hash: 'synthetic', published_at: new Date().toISOString(), updated_at: new Date().toISOString() }];
+  const result = backups.restoreUserBackup('restore-user', backups.encryptBackup(payload, 'synthetic-password'), 'synthetic-password', 'merge') as any;
+  assert.equal(result.status, 'PARTIAL');
+  assert.equal(result.attachmentFailures[0].originalName, 'broken.pdf');
+  assert.equal(result.missingMedia.length, 1);
+});
+
+test('failed compensation retains recovery record and blocks queries until recovery', t => {
+  makeSchedule('blocked-failure');
+  const rename = fs.renameSync;
+  const mock = t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
+    if (String(to) === path.join(root, 'activity.db')) throw new Error('persistent disk failure');
+    return rename(from, to);
+  });
+  assert.throws(() => completionService.toggleScheduleCompletion('blocked-failure', 'u'), /回滚未完成/);
+  assert.throws(() => schedule.getSchedule('blocked-failure'), /已停止数据库访问/);
+  assert.equal(fs.existsSync(path.join(root, '.persistence-undo.json')), true);
+  mock.mock.restore();
+  transactions.recoverPersistence(root);
+  assert.equal(schedule.getSchedule('blocked-failure')?.is_completed, false);
+});

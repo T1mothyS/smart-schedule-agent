@@ -1,3 +1,5 @@
+import { atomicWriteFile, withPersistenceTransaction, blockPersistenceUntilRestart } from './persistence.js';
+import { SYSTEM_RESTORE_JOURNAL, type RestoreEntry } from './restore-journal.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import https from 'https';
@@ -276,56 +278,75 @@ export function restoreUserBackup(userId: string, buffer: Buffer, password: stri
   const payload = isForeignAccount ? remapForeignUserPayload(decrypted) : decrypted;
   const safetyCopy = createUserBackup(userId, password);
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
-  fs.writeFileSync(path.join(BACKUP_DIR, 'pre-user-restore-' + userId + '-' + Date.now() + '.aicalendar-backup'), safetyCopy);
+  atomicWriteFile(path.join(BACKUP_DIR, 'pre-user-restore-' + userId + '-' + Date.now() + '.aicalendar-backup'), safetyCopy);
   const oldAttachments = mode === 'replace' ? activityStore.listAttachments(userId) : [];
-  const schedule = scheduleStore.restoreUserScheduleData(userId, payload.schedule, mode);
-  const reminder = reminderStore.restoreUserReminderData(userId, payload.reminder, mode);
-  const noteItems = db.restoreUserNoteItems(userId, payload.noteItems || [], mode);
-  const libraryEntries = db.restoreUserLibraryEntries(userId, payload.libraryEntries || [], mode);
-  const activity = activityStore.restoreUserActivity(userId, payload.activity, mode);
-  if (payload.dailyReportCloudContext !== undefined) {
-    dailyReportCloudStore.replaceDailyReportCloudContext(userId, payload.dailyReportCloudContext.context);
-  }
-  if (mode === 'replace') attachmentService.deleteUserAttachmentFiles(oldAttachments);
-  const preference = payload.account.reminder as any;
-  if (preference) {
-    const current = db.getReminder(userId);
-    const restoredPreference = mode === 'replace' || !current ? preference : current;
-    db.upsertReminder({
-      ...restoredPreference,
-      id: current?.id || preference.id,
-      user_id: userId,
-      reminder_email: restoredPreference.reminder_email,
-      created_at: current?.created_at || preference.created_at || new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-  }
-  let attachments = 0;
-  for (const file of payload.files) {
-    try {
-      attachmentService.saveBase64Attachment({
-        userId,
-        completionId: file.completionId,
-        importId: file.importId,
-        originalName: file.originalName,
-        mimeType: file.mimeType,
-        base64: file.base64,
-      });
-      attachments++;
-    } catch {
-      // 单个损坏附件不会使结构化数据恢复失败，结果中会体现数量差异。
+  const attachmentFailures: Array<{ originalName: string; error: string }> = [];
+  const missingMedia = [...new Set((payload.activity.dailyReports || []).flatMap((row: any) => [...String(row.markdown || '').matchAll(/\/daily-report-media\/([a-f0-9]{64}\.(?:jpg|png|webp|ico|svg))/g)].map(match => match[1])))].filter(name => !fs.existsSync(path.join(dailyReportMediaRoot(), name)));
+  const result = withPersistenceTransaction(() => {
+    if (mode === 'replace') db.deleteUserOperationResults(userId);
+    const schedule = scheduleStore.restoreUserScheduleData(userId, payload.schedule, mode);
+    const reminder = reminderStore.restoreUserReminderData(userId, payload.reminder, mode);
+    const noteItems = db.restoreUserNoteItems(userId, payload.noteItems || [], mode);
+    const libraryEntries = db.restoreUserLibraryEntries(userId, payload.libraryEntries || [], mode);
+    const activity = activityStore.restoreUserActivity(userId, payload.activity, mode);
+    if (payload.dailyReportCloudContext !== undefined) {
+      dailyReportCloudStore.replaceDailyReportCloudContext(userId, payload.dailyReportCloudContext.context);
     }
+    // Keep old files until structured data and attachment metadata commit together.
+    const preference = payload.account.reminder as any;
+    if (preference) {
+      const current = db.getReminder(userId);
+      const restoredPreference = mode === 'replace' || !current ? preference : current;
+      db.upsertReminder({
+        ...restoredPreference,
+        id: current?.id || preference.id,
+        user_id: userId,
+        reminder_email: restoredPreference.reminder_email,
+        created_at: current?.created_at || preference.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    }
+    let attachments = 0;
+    for (const file of payload.files) {
+      try {
+        withPersistenceTransaction(() => attachmentService.saveBase64Attachment({
+          userId,
+          completionId: file.completionId,
+          importId: file.importId,
+          originalName: file.originalName,
+          mimeType: file.mimeType,
+          base64: file.base64,
+        }));
+        attachments++;
+      } catch (error) {
+        attachmentFailures.push({ originalName: file.originalName, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return {
+      schedule,
+      reminder,
+      noteItems,
+      libraryEntries,
+      activity,
+      attachments,
+      dailyReportCloudContext: payload.dailyReportCloudContext !== undefined,
+      mode,
+      idsRemapped: isForeignAccount,
+      partial: attachmentFailures.length > 0 || missingMedia.length > 0,
+      status: attachmentFailures.length || missingMedia.length ? 'PARTIAL' : 'COMPLETED',
+      attachmentFailures,
+      missingMedia,
+    };
+  });
+  // Metadata is now durable. Reused content-addressed files must not be deleted.
+  const cleanupFailures: string[] = [];
+  for (const record of oldAttachments) {
+    try { attachmentService.deleteAttachmentFileIfUnused(record); }
+    catch { cleanupFailures.push(record.id); }
   }
   return {
-    schedule,
-    reminder,
-    noteItems,
-    libraryEntries,
-    activity,
-    attachments,
-    dailyReportCloudContext: payload.dailyReportCloudContext !== undefined,
-    mode,
-    idsRemapped: isForeignAccount,
+    ...result, cleanupFailures, partial: result.partial || cleanupFailures.length > 0,
+    status: result.partial || cleanupFailures.length ? 'PARTIAL' : 'COMPLETED'
   };
 }
 
@@ -448,6 +469,7 @@ export function readSystemSnapshot(filename: string): Buffer {
 
 export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): void {
   if (process.env.MAINTENANCE_MODE !== 'true') throw new Error('全站恢复只允许在 MAINTENANCE_MODE=true 时执行');
+  if (process.env.BACKGROUND_JOBS_ENABLED === 'true') throw new Error('全站恢复前必须关闭后台任务并重启到维护模式');
   if (confirmation !== 'RESTORE AI CALENDAR') throw new Error('恢复确认文字不正确');
   const password = process.env.BACKUP_ENCRYPTION_KEY || '';
   const payload = decryptBackup<SystemBackupPayload>(buffer, password);
@@ -527,6 +549,12 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
 
     // 所有输入完整暂存后，先生成当前状态的恢复点，再开始跨库切换。
     createSystemSnapshot(false);
+    const restoreEntries: RestoreEntry[] = [
+      ...databaseFiles.map(file => ({ target: file.name, previous: path.basename(file.previous), existed: fs.existsSync(file.target) })),
+      { target: path.basename(attachmentRoot), previous: path.basename(attachmentPrevious), existed: fs.existsSync(attachmentRoot) },
+      ...(shouldRestoreMedia ? [{ target: path.basename(reportMediaRoot), previous: path.basename(reportMediaPrevious), existed: fs.existsSync(reportMediaRoot) }] : []),
+    ];
+    atomicWriteFile(path.join(DATA_DIR, SYSTEM_RESTORE_JOURNAL), Buffer.from(JSON.stringify(restoreEntries)));
     for (const file of databaseFiles) {
       if (fs.existsSync(file.target)) {
         fs.renameSync(file.target, file.previous);
@@ -551,7 +579,9 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
       fs.renameSync(reportMediaTemp, reportMediaRoot);
       reportMediaActivated = true;
     }
+    fs.unlinkSync(path.join(DATA_DIR, SYSTEM_RESTORE_JOURNAL));
     committed = true;
+    blockPersistenceUntilRestart();
   } catch (error) {
     if (!committed) {
       const rollbackErrors: string[] = [];
@@ -582,10 +612,13 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
         }
       }
       if (rollbackErrors.length) {
+        blockPersistenceUntilRestart();
         const original = error instanceof Error ? error.message : String(error);
         throw new Error(`系统恢复失败：${original}；自动回滚未完全成功：${rollbackErrors.join('；')}`);
       }
     }
+    const marker = path.join(DATA_DIR, SYSTEM_RESTORE_JOURNAL);
+    if (fs.existsSync(marker)) fs.unlinkSync(marker);
     throw error;
   } finally {
     for (const file of databaseFiles) {

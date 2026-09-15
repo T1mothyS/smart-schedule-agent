@@ -1699,41 +1699,41 @@ app.get("/api/history", authenticate, (req, res) => {
 app.post("/api/completions", authenticate, (req, res) => {
   try {
     const outcome = withPersistenceTransaction(() => {
-    const userId = (req as any).user.userId;
-    const sourceType = req.body.sourceType as activityStore.ActionSource;
-    const sourceId = String(req.body.sourceId || '');
-    const instanceId = req.body.instanceId ? String(req.body.instanceId) : null;
-    if (sourceType === 'schedule') {
-      const schedule = scheduleStore.getSchedule(sourceId);
-      if (!schedule || schedule.user_id !== userId) return { status: 404, body: { error: '日程不存在' } };
-      scheduleStore.updateSchedule(sourceId, { is_completed: true });
-    } else if (sourceType === 'reminder') {
-      if (!instanceId) return { status: 400, body: { error: '周期编号不能为空' } };
-      const completedDate = req.body.completedAt
-        ? String(req.body.completedAt).slice(0, 10)
-        : reminderStore.todayInTimezone();
-      const task = reminderStore.completeReminderCycle(sourceId, userId, instanceId, completedDate, req.body.note);
-      if (!task) return { status: 404, body: { error: '周期事务不存在' } };
-      const completedCycle = reminderStore.getReminderHistory(task.id, userId).find(cycle => cycle.id === instanceId);
-      if (completedCycle) reminderCalendarSync.syncReminderCycleToCalendar(task, completedCycle);
-      reminderCalendarSync.syncReminderTaskToCalendar(task);
-    } else {
-      return { status: 400, body: { error: '完成记录来源不正确' } };
-    }
-    const completionInput = {
-      completedAt: req.body.completedAt,
-      note: req.body.note,
-      amountCents: req.body.amountCents == null ? null : Number(req.body.amountCents),
-      currency: req.body.currency == null ? 'CNY' : String(req.body.currency),
-      billDate: req.body.billDate,
-    };
-    const existingCompletion = activityStore.listCompletions(userId, { sourceType, sourceId })
-      .find(item => item.instanceId === instanceId && !item.reopenedAt);
-    const completion = existingCompletion
-      ? activityStore.updateCompletion(existingCompletion.id, userId, completionInput)
-      : activityStore.createCompletion({ userId, sourceType, sourceId, instanceId, ...completionInput });
-    if (!completion) throw new Error('保存完成记录失败');
-    return { status: 200, body: { completion } };
+      const userId = (req as any).user.userId;
+      const sourceType = req.body.sourceType as activityStore.ActionSource;
+      const sourceId = String(req.body.sourceId || '');
+      const instanceId = sourceType === 'reminder' && req.body.instanceId ? String(req.body.instanceId) : null;
+      if (sourceType === 'schedule') {
+        const schedule = scheduleStore.getSchedule(sourceId);
+        if (!schedule || schedule.user_id !== userId) return { status: 404, body: { error: '日程不存在' } };
+        scheduleStore.updateSchedule(sourceId, { is_completed: true });
+      } else if (sourceType === 'reminder') {
+        if (!instanceId) return { status: 400, body: { error: '周期编号不能为空' } };
+        const completedDate = req.body.completedAt
+          ? String(req.body.completedAt).slice(0, 10)
+          : reminderStore.todayInTimezone();
+        const task = reminderStore.completeReminderCycle(sourceId, userId, instanceId, completedDate, req.body.note);
+        if (!task) return { status: 404, body: { error: '周期事务不存在' } };
+        const completedCycle = reminderStore.getReminderHistory(task.id, userId).find(cycle => cycle.id === instanceId);
+        if (completedCycle) reminderCalendarSync.syncReminderCycleToCalendar(task, completedCycle);
+        reminderCalendarSync.syncReminderTaskToCalendar(task);
+      } else {
+        return { status: 400, body: { error: '完成记录来源不正确' } };
+      }
+      const completionInput = {
+        completedAt: req.body.completedAt,
+        note: req.body.note,
+        amountCents: req.body.amountCents == null ? null : Number(req.body.amountCents),
+        currency: req.body.currency == null ? 'CNY' : String(req.body.currency),
+        billDate: req.body.billDate,
+      };
+      const existingCompletion = activityStore.listCompletions(userId, { sourceType, sourceId })
+        .find(item => item.instanceId === instanceId && !item.reopenedAt);
+      const completion = existingCompletion
+        ? activityStore.updateCompletion(existingCompletion.id, userId, completionInput)
+        : activityStore.createCompletion({ userId, sourceType, sourceId, instanceId, ...completionInput });
+      if (!completion) throw new Error('保存完成记录失败');
+      return { status: 200, body: { completion } };
     });
     res.status(outcome.status).json(outcome.body);
   } catch (error: any) {
@@ -1744,19 +1744,24 @@ app.post("/api/completions", authenticate, (req, res) => {
 app.post("/api/completions/:id/reopen", authenticate, (req, res) => {
   try {
     const outcome = withPersistenceTransaction(() => {
-  const userId = (req as any).user.userId;
-  const current = activityStore.getCompletion(req.params.id, userId);
-  if (!current) return { status: 404, body: { error: '完成记录不存在' } };
-  if (current.sourceType === 'schedule') scheduleStore.updateSchedule(current.sourceId, { is_completed: false });
-  else if (current.instanceId) {
-    const task = reminderStore.reopenReminderCycle(current.sourceId, userId, current.instanceId);
-    const reopenedCycle = task
-      ? reminderStore.getReminderHistory(task.id, userId).find(cycle => cycle.id === current.instanceId)
-      : null;
-    if (task && reopenedCycle) reminderCalendarSync.syncReminderCycleToCalendar(task, reopenedCycle);
-    if (task) reminderCalendarSync.syncReminderTaskToCalendar(task);
-  }
-  return { status: 200, body: { completion: activityStore.reopenCompletion(current.id, userId) } };
+      const userId = (req as any).user.userId;
+      const current = activityStore.getCompletion(req.params.id, userId);
+      if (!current) return { status: 404, body: { error: '完成记录不存在' } };
+      if (current.sourceType === 'schedule') {
+        const source = scheduleStore.getSchedule(current.sourceId);
+        if (!source || source.user_id !== userId) return { status: 404, body: { error: '日程不存在' } };
+        scheduleStore.updateSchedule(current.sourceId, { is_completed: false });
+      }
+      else if (current.instanceId) {
+        const task = reminderStore.reopenReminderCycle(current.sourceId, userId, current.instanceId);
+        if (!task) return { status: 404, body: { error: '周期事务不存在' } };
+        const reopenedCycle = task
+          ? reminderStore.getReminderHistory(task.id, userId).find(cycle => cycle.id === current.instanceId)
+          : null;
+        if (task && reopenedCycle) reminderCalendarSync.syncReminderCycleToCalendar(task, reopenedCycle);
+        if (task) reminderCalendarSync.syncReminderTaskToCalendar(task);
+      }
+      return { status: 200, body: { completion: activityStore.reopenCompletion(current.id, userId) } };
 
     });
     res.status(outcome.status).json(outcome.body);
@@ -2493,43 +2498,45 @@ app.delete("/api/cycle-reminders/:id", authenticate, (req, res) => {
 app.post("/api/cycle-reminders/:id/complete", authenticate, (req, res) => {
   try {
     const outcome = withPersistenceTransaction(() => {
-    const userId = (req as any).user.userId;
-    const completedDate = req.body.completedDate || reminderStore.todayInTimezone();
-    if (!validDateOnly(completedDate)) return { status: 400, body: { error: '完成日期格式不正确' } };
-    const task = reminderStore.completeReminderCycle(
-      req.params.id,
-      userId,
-      String(req.body.cycleId || ''),
-      completedDate,
-      req.body.note,
-    );
-    if (!task) return { status: 404, body: { error: '任务或周期不存在' } };
-    const completedCycle = reminderStore.getReminderHistory(task.id, userId)
-      .find(cycle => cycle.id === String(req.body.cycleId || ''));
-    if (completedCycle) reminderCalendarSync.syncReminderCycleToCalendar(task, completedCycle);
-    reminderCalendarSync.syncReminderTaskToCalendar(task);
-    const existingCompletion = activityStore.listCompletions(userId, { sourceType: 'reminder', sourceId: task.id })
-      .find(item => item.instanceId === String(req.body.cycleId || '') && !item.reopenedAt);
-    const completionInput = {
-      completedAt: new Date(completedDate + 'T12:00:00+08:00').toISOString(),
-      note: req.body.note == null ? null : String(req.body.note),
-      amountCents: req.body.amountCents == null ? null : Number(req.body.amountCents),
-      currency: req.body.currency == null ? 'CNY' : String(req.body.currency),
-      billDate: req.body.billDate == null ? null : String(req.body.billDate),
-    };
-    const completion = existingCompletion
-      ? activityStore.updateCompletion(existingCompletion.id, userId, completionInput)
-      : activityStore.createCompletion({
+      const userId = (req as any).user.userId;
+      const completedDate = req.body.completedDate || reminderStore.todayInTimezone();
+      if (!validDateOnly(completedDate)) return { status: 400, body: { error: '完成日期格式不正确' } };
+      const task = reminderStore.completeReminderCycle(
+        req.params.id,
+        userId,
+        String(req.body.cycleId || ''),
+        completedDate,
+        req.body.note,
+      );
+      if (!task) return { status: 404, body: { error: '任务或周期不存在' } };
+      const completedCycle = reminderStore.getReminderHistory(task.id, userId)
+        .find(cycle => cycle.id === String(req.body.cycleId || ''));
+      if (completedCycle) reminderCalendarSync.syncReminderCycleToCalendar(task, completedCycle);
+      reminderCalendarSync.syncReminderTaskToCalendar(task);
+      const existingCompletion = activityStore.listCompletions(userId, { sourceType: 'reminder', sourceId: task.id })
+        .find(item => item.instanceId === String(req.body.cycleId || '') && !item.reopenedAt);
+      const completionInput = {
+        completedAt: new Date(completedDate + 'T12:00:00+08:00').toISOString(),
+        note: req.body.note == null ? null : String(req.body.note),
+        amountCents: req.body.amountCents == null ? null : Number(req.body.amountCents),
+        currency: req.body.currency == null ? 'CNY' : String(req.body.currency),
+        billDate: req.body.billDate == null ? null : String(req.body.billDate),
+      };
+      const completion = existingCompletion
+        ? activityStore.updateCompletion(existingCompletion.id, userId, completionInput)
+        : activityStore.createCompletion({
           userId,
           sourceType: 'reminder',
           sourceId: task.id,
           instanceId: String(req.body.cycleId || ''),
           ...completionInput,
         });
-    if (!completion) throw new Error('保存完成记录失败');
-    addLog('info', 'reminder', '标记周期提醒完成', { taskId: task.id, completedDate });
-    return { status: 200, body: { task, completion } };
+      if (!completion) throw new Error('保存完成记录失败');
+      return { status: 200, body: { task, completion } };
     });
+    if (outcome.status === 200 && 'task' in outcome.body && outcome.body.task) {
+      addLog('info', 'reminder', '标记周期提醒完成', { taskId: outcome.body.task.id });
+    }
     res.status(outcome.status).json(outcome.body);
   } catch (error: any) {
     res.status(400).json({ error: error?.message || '保存完成状态失败，请重试' });
@@ -2613,57 +2620,57 @@ app.post("/api/ai/imports/:id/confirm", authenticate, (req, res) => {
     const draft = { ...current.draft, ...req.body.draft } as unknown as AiImportDraft;
     if (!draft.title || !/^\d{4}-\d{2}-\d{2}$/.test(draft.dueDate)) return res.status(400).json({ error: '标题和到期日期不能为空' });
     const response = executeOnce(userId, 'ai-import', req.params.id, () => {
-    let created: unknown;
-    if (draft.kind === 'recurring') {
-      const date = draft.dueDate;
-      const task = reminderStore.createReminderTask({
-        userId,
-        type: 'generic',
-        name: draft.title,
-        timezone: reminderStore.DEFAULT_CYCLE_REMINDER_TIMEZONE,
-        config: normaliseReminderConfig('generic', {
-          templateKey: draft.templateKey,
-          rule: {
-            frequency: draft.recurrence?.frequency || 'once',
-            anchorDate: date,
-            dayOfMonth: Number(date.slice(8, 10)),
-            month: Number(date.slice(5, 7)),
-            interval: draft.recurrence?.interval || 1,
-            unit: draft.recurrence?.unit || 'day',
-            advancePolicy: draft.recurrence?.advancePolicy || 'calendar',
-          },
-          reminderOffsets: draft.reminderOffsets,
-          reminderTime: draft.dueTime || reminderStore.DEFAULT_CYCLE_REMINDER_TIME,
-          actionGuide: draft.actionGuide,
+      let created: unknown;
+      if (draft.kind === 'recurring') {
+        const date = draft.dueDate;
+        const task = reminderStore.createReminderTask({
+          userId,
+          type: 'generic',
+          name: draft.title,
+          timezone: reminderStore.DEFAULT_CYCLE_REMINDER_TIMEZONE,
+          config: normaliseReminderConfig('generic', {
+            templateKey: draft.templateKey,
+            rule: {
+              frequency: draft.recurrence?.frequency || 'once',
+              anchorDate: date,
+              dayOfMonth: Number(date.slice(8, 10)),
+              month: Number(date.slice(5, 7)),
+              interval: draft.recurrence?.interval || 1,
+              unit: draft.recurrence?.unit || 'day',
+              advancePolicy: draft.recurrence?.advancePolicy || 'calendar',
+            },
+            reminderOffsets: draft.reminderOffsets,
+            reminderTime: draft.dueTime || reminderStore.DEFAULT_CYCLE_REMINDER_TIME,
+            actionGuide: draft.actionGuide,
+            priority: 'medium',
+          }),
+        });
+        reminderCalendarSync.syncReminderTaskToCalendar(task);
+        created = task;
+      } else {
+        created = scheduleStore.createSchedule({
+          id: uuidv4(),
+          user_id: userId,
+          calendar_id: 'personal',
+          type: 'todo',
+          title: draft.title,
+          description: draft.notes || undefined,
+          start_time: draft.dueDate + 'T' + (draft.dueTime || '09:00') + ':00',
+          end_time: undefined,
+          all_day: !draft.dueTime,
+          location: undefined,
+          notes: draft.actionGuide || undefined,
+          category: 'other',
           priority: 'medium',
-        }),
-      });
-      reminderCalendarSync.syncReminderTaskToCalendar(task);
-      created = task;
-    } else {
-      created = scheduleStore.createSchedule({
-        id: uuidv4(),
-        user_id: userId,
-        calendar_id: 'personal',
-        type: 'todo',
-        title: draft.title,
-        description: draft.notes || undefined,
-        start_time: draft.dueDate + 'T' + (draft.dueTime || '09:00') + ':00',
-        end_time: undefined,
-        all_day: !draft.dueTime,
-        location: undefined,
-        notes: draft.actionGuide || undefined,
-        category: 'other',
-        priority: 'medium',
-        is_completed: false,
-        is_repeated: false,
-        repeat_rule: undefined,
-        reminders: (draft.reminderOffsets || []).map(value => String(value)),
-        is_high_risk: false,
-      });
-    }
-    const confirmed = activityStore.confirmAiImport(req.params.id, userId, draft as unknown as Record<string, unknown>);
-    return { import: confirmed, created };
+          is_completed: false,
+          is_repeated: false,
+          repeat_rule: undefined,
+          reminders: (draft.reminderOffsets || []).map(value => String(value)),
+          is_high_risk: false,
+        });
+      }
+      const confirmed = activityStore.confirmAiImport(req.params.id, userId, draft as unknown as Record<string, unknown>);
+      return { import: confirmed, created };
     });
     res.json(response);
   } catch (error: any) {
@@ -3656,9 +3663,9 @@ function executeAiScheduleOperationBatch(plan: PendingAiSchedulePlan) {
           failures.push({
             index,
             type: 'create_recurring_calendar_sync',
-            message: `周期事项已创建，但日历同步失败：${syncError?.message || '未知错误'}`,
+            message: `周期事项及日历同步未提交：${syncError?.message || '未知错误'}`,
           });
-          addLog('warn', 'reminder', 'AI 周期事项已创建但日历同步失败', {
+          addLog('warn', 'reminder', 'AI 周期事项同步失败，将回滚该操作', {
             taskId: task.id,
             planId: plan.id,
             error: syncError?.message,
@@ -4197,53 +4204,53 @@ priority 识别：
 
 app.post("/api/ai-chat/confirm", authenticate, (req, res) => {
   try {
-  cleanupExpiredAiScheduleState();
-  const planId = String(req.body?.planId || '');
-  const userId = ((req as any).user as JwtPayload).userId;
-  const replay = dbModule.getOperationResult(userId, 'ai-plan', planId);
-  if (replay !== undefined) return res.json(replay);
-  const plan = aiSchedulePlans.get(planId);
-  if (!plan || plan.userId !== userId) {
-    return res.status(404).json({ error: '待确认计划不存在或已过期，请重新生成。' });
-  }
+    cleanupExpiredAiScheduleState();
+    const planId = String(req.body?.planId || '');
+    const userId = ((req as any).user as JwtPayload).userId;
+    const replay = dbModule.getOperationResult(userId, 'ai-plan', planId);
+    if (replay !== undefined) return res.json(replay);
+    const plan = aiSchedulePlans.get(planId);
+    if (!plan || plan.userId !== userId) {
+      return res.status(404).json({ error: '待确认计划不存在或已过期，请重新生成。' });
+    }
 
-  if (!plan.confirmedResult) {
-    plan.confirmedResult = executeOnce(userId, 'ai-plan', planId, () => {
-    const result = executeAiScheduleOperations(plan);
-    const scheduleItems = [...result.createdSchedules, ...result.updatedSchedules];
-    const failureSummary = result.failures.length
-      ? `另有 ${result.failures.length} 项未执行。\n失败原因：\n${result.failures.map(failure => {
-        const title = planOperationPreview(plan.operations[failure.index], failure.index).title;
-        return `- ${title}：${String(failure.message || '执行失败').slice(0, 180)}`;
-      }).join('\n')}`
-      : '';
-    return {
-      success: true,
-      intent: plan.intent,
-      reply: `已确认并执行：创建 ${result.createdSchedules.length} 项日程、${result.createdReminderTasks.length} 项周期事项，更新 ${result.updatedSchedules.length} 项，删除 ${result.deletedIds.length} 项。${failureSummary}`,
-      scheduleItems,
-      changed: result.changed,
-      changedDetails: {
-        created: result.createdSchedules,
-        updated: result.updatedSchedules,
-        deleted: result.deletedIds,
-        recurring: result.createdReminderTasks,
-        failures: result.failures,
-      },
-      partial: result.failures.length > 0,
-    };
-    });
-    addLog('info', 'ai', 'AI 计划已确认执行', {
-      planId,
-      userId,
-      created: plan.confirmedResult.changedDetails.created.length,
-      recurring: plan.confirmedResult.changedDetails.recurring.length,
-      updated: plan.confirmedResult.changedDetails.updated.length,
-      deleted: plan.confirmedResult.changedDetails.deleted.length,
-      failed: plan.confirmedResult.changedDetails.failures.length,
-    });
-  }
-  res.json(plan.confirmedResult);
+    if (!plan.confirmedResult) {
+      plan.confirmedResult = executeOnce(userId, 'ai-plan', planId, () => {
+        const result = executeAiScheduleOperations(plan);
+        const scheduleItems = [...result.createdSchedules, ...result.updatedSchedules];
+        const failureSummary = result.failures.length
+          ? `另有 ${result.failures.length} 项未执行。\n失败原因：\n${result.failures.map(failure => {
+            const title = planOperationPreview(plan.operations[failure.index], failure.index).title;
+            return `- ${title}：${String(failure.message || '执行失败').slice(0, 180)}`;
+          }).join('\n')}`
+          : '';
+        return {
+          success: true,
+          intent: plan.intent,
+          reply: `已确认并执行：创建 ${result.createdSchedules.length} 项日程、${result.createdReminderTasks.length} 项周期事项，更新 ${result.updatedSchedules.length} 项，删除 ${result.deletedIds.length} 项。${failureSummary}`,
+          scheduleItems,
+          changed: result.changed,
+          changedDetails: {
+            created: result.createdSchedules,
+            updated: result.updatedSchedules,
+            deleted: result.deletedIds,
+            recurring: result.createdReminderTasks,
+            failures: result.failures,
+          },
+          partial: result.failures.length > 0,
+        };
+      });
+      addLog('info', 'ai', 'AI 计划已确认执行', {
+        planId,
+        userId,
+        created: plan.confirmedResult.changedDetails.created.length,
+        recurring: plan.confirmedResult.changedDetails.recurring.length,
+        updated: plan.confirmedResult.changedDetails.updated.length,
+        deleted: plan.confirmedResult.changedDetails.deleted.length,
+        failed: plan.confirmedResult.changedDetails.failures.length,
+      });
+    }
+    res.json(plan.confirmedResult);
   } catch (error: any) {
     res.status(500).json({ error: error?.message || '确认保存失败，请重试' });
   }

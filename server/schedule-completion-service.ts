@@ -8,31 +8,31 @@ import * as scheduleStore from './schedule-store.js';
  */
 export function toggleScheduleCompletion(id: string, userId: string): scheduleStore.Schedule | null {
   return withPersistenceTransaction(() => {
-  const current = scheduleStore.getSchedule(id);
-  if (!current || current.user_id !== userId) return null;
+    const current = scheduleStore.getSchedule(id);
+    if (!current || current.user_id !== userId) return null;
 
-  const schedule = scheduleStore.toggleScheduleComplete(id);
-  if (!schedule) return null;
+    const schedule = scheduleStore.toggleScheduleComplete(id);
+    if (!schedule) return null;
 
-  const activeCompletions = activityStore
-    .listCompletions(userId, { sourceType: 'schedule', sourceId: id })
-    .filter(item => !item.reopenedAt);
+    const activeCompletions = activityStore
+      .listCompletions(userId, { sourceType: 'schedule', sourceId: id })
+      .filter(item => !item.reopenedAt);
 
-  if (schedule.is_completed) {
-    if (activeCompletions.length === 0) {
-      activityStore.createCompletion({
-        userId,
-        sourceType: 'schedule',
-        sourceId: id,
-        completedAt: schedule.updated_at,
-      });
+    if (schedule.is_completed) {
+      if (activeCompletions.length === 0) {
+        activityStore.createCompletion({
+          userId,
+          sourceType: 'schedule',
+          sourceId: id,
+          completedAt: schedule.updated_at,
+        });
+      }
+    } else {
+      for (const completion of activeCompletions) {
+        activityStore.reopenCompletion(completion.id, userId);
+      }
     }
-  } else {
-    for (const completion of activeCompletions) {
-      activityStore.reopenCompletion(completion.id, userId);
-    }
-  }
 
-  return schedule;
+    return schedule;
   });
 }

@@ -24,3 +24,10 @@ data/pre-fix-backups/
 
 *.tsbuildinfo
 vite.config.d.ts
+
+# Crash recovery journals contain database snapshots; never version runtime state.
+data/.persistence-*
+data/.system-restore*
+data/.*.restore-*
+data/.*.pre-restore-*
+data/*.pending-*

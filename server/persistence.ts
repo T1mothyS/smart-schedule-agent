@@ -1,6 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { recoverSystemRestore } from './restore-journal.js';
+
+// Windows does not expose directory fsync through Node. File fsync still applies there.
+function syncDirectory(directory: string): void {
+  if (process.platform === 'win32') return;
+  const fd = fs.openSync(directory, 'r');
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
 
 /** Same-directory replacement: the live file is never opened for truncation. */
 export function atomicWriteFile(target: string, bytes: Uint8Array): void {
@@ -14,6 +22,7 @@ export function atomicWriteFile(target: string, bytes: Uint8Array): void {
     fs.closeSync(fd);
     fd = undefined;
     fs.renameSync(temporary, target);
+    syncDirectory(path.dirname(target));
   } finally {
     if (fd !== undefined) fs.closeSync(fd);
     if (fs.existsSync(temporary)) fs.unlinkSync(temporary);
@@ -35,13 +44,16 @@ export function assertPersistenceReady(): void {
   if (blocked) throw new Error('持久化恢复未完成，已停止数据库访问；请检查磁盘并重启服务。');
 }
 
+export function blockPersistenceUntilRestart(): void { blocked = true; }
+
 /** Called before opening any database. An interrupted transaction has not acknowledged success. */
 export function recoverPersistence(directory: string): void {
+  recoverSystemRestore(directory);
   const journal = path.join(directory, JOURNAL);
   if (!fs.existsSync(journal)) return;
   blocked = true;
   const entries = JSON.parse(fs.readFileSync(journal, 'utf8')) as Record<string, string>;
-  if (!entries || Array.isArray(entries) || Object.keys(entries).some(name => !DATABASES.has(name))) {
+  if (!entries || Array.isArray(entries) || !Object.keys(entries).length || Object.keys(entries).some(name => !DATABASES.has(name))) {
     throw new Error('持久化恢复记录不正确，拒绝启动');
   }
   for (const [name, base64] of Object.entries(entries)) {
@@ -51,6 +63,7 @@ export function recoverPersistence(directory: string): void {
     atomicWriteFile(path.join(directory, name), bytes);
   }
   fs.unlinkSync(journal);
+  syncDirectory(directory);
   blocked = false;
 }
 
@@ -80,6 +93,8 @@ export function withPersistenceTransaction<T>(callback: () => T): T {
     // This removal is the commit point. A crash before it rolls all stores back on startup.
     fs.unlinkSync(journal);
     journal = undefined;
+    // After unlink the transaction has committed, even if directory flush reports an error.
+    try { syncDirectory(directory); } catch { blocked = true; }
     for (const file of files) stores.get(file)!.committed = stores.get(file)!.snapshot().slice();
     return result;
   } catch (error) {
@@ -109,7 +124,17 @@ export function persistDatabase(target: string): void {
     store.committed = bytes;
   } catch (error) {
     // SQL was already changed in memory. Do not expose or later flush that failed write.
-    store.restore(store.committed);
+    // A directory flush can fail after rename succeeded. Reload the actual live image,
+    // rather than retaining an in-memory state that disagrees with the file on disk.
+    try {
+      const live = fs.existsSync(target) ? fs.readFileSync(target) : store.committed;
+      store.restore(live);
+      store.committed = live;
+    } catch {
+      blocked = true;
+      store.restore(store.committed);
+      throw new Error('保存失败且无法核对磁盘状态，已停止数据库访问；请检查磁盘并重启服务。', { cause: error });
+    }
     throw error;
   }
 }

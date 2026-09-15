@@ -36,5 +36,39 @@ test('import confirmation is durable, account scoped and safe to retry after rec
     const second = await request(draft.id); assert.equal(second.status, 200); assert.deepEqual(await second.json(), result);
     assert.equal(schedules.getAllSchedules('owner').length, 1);
     assert.equal((await request(draft.id, 1)).status, 404);
+
+    const planId = 'synthetic-replay-plan';
+    db.createAiScheduleMessage({ id: 'synthetic-history', user_id: 'owner', role: 'assistant', type: 'plan', content: 'pending', intent: 'create', schedule_items: null, created_at: new Date().toISOString(), plan: JSON.stringify({ id: planId, expiresAt: new Date(Date.now() + 3600000).toISOString(), rawOperations: [{ type: 'create', data: { title: 'plan schedule', type: 'todo', start_time: '2026-12-25T09:00:00' } }, { type: 'update', scheduleId: 'missing-target', data: { title: 'must fail' } }], targetCalendarId: 'personal', today: '2026-12-25' }) });
+    const auth = { Authorization: 'Bearer ' + api.signUserToken(users[0]), 'Content-Type': 'application/json' };
+    await fetch(base + '/api/ai-schedule/history', { headers: auth });
+    const confirmPlan = () => fetch(base + '/api/ai-chat/confirm', { method: 'POST', headers: auth, body: JSON.stringify({ planId }) });
+    let receiptFailed = false;
+    const planMock = t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => { if (!receiptFailed && String(to) === path.join(root, 'chat.db')) { receiptFailed = true; throw new Error('plan receipt failure'); } return rename(from, to); });
+    assert.equal((await confirmPlan()).status, 500);
+    planMock.mock.restore();
+    assert.equal(schedules.getAllSchedules('owner').length, 1);
+    const planResponse = await confirmPlan(); assert.equal(planResponse.status, 200); const planResult = await planResponse.json();
+    assert.equal(planResult.partial, true); assert.equal(planResult.changedDetails.created.length, 1); assert.equal(planResult.changedDetails.failures.length, 1);
+    await db.initDb(); await schedules.initScheduleDb();
+    assert.deepEqual(await (await confirmPlan()).json(), planResult);
+    assert.equal(schedules.getAllSchedules('owner').length, 2);
+
+    const completedId = result.created.id;
+    const completeSchedule = () => fetch(base + '/api/completions', { method: 'POST', headers: auth, body: JSON.stringify({ sourceType: 'schedule', sourceId: completedId }) });
+    assert.equal((await completeSchedule()).status, 200);
+    assert.equal((await completeSchedule()).status, 200);
+    assert.equal(activity.listCompletions('owner', { sourceId: completedId }).length, 1);
+    const reminders = await import('./reminder-store.js');
+    const task = reminders.createReminderTask({ userId: 'owner', type: 'generic', name: 'recurring completion', config: { templateKey: 'custom', rule: { frequency: 'interval', anchorDate: '2026-12-25', interval: 1, unit: 'month', advancePolicy: 'calendar' }, reminderOffsets: [0], reminderTime: '09:00', actionGuide: '', priority: 'medium' } });
+    const cycleId = task.currentCycle!.id;
+    const completeCycle = () => fetch(base + '/api/cycle-reminders/' + task.id + '/complete', { method: 'POST', headers: auth, body: JSON.stringify({ cycleId, completedDate: '2026-12-25' }) });
+    let cycleFailed = false;
+    const cycleMock = t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => { if (!cycleFailed && String(to) === path.join(root, 'activity.db')) { cycleFailed = true; throw new Error('cycle proof failure'); } return rename(from, to); });
+    assert.equal((await completeCycle()).status, 400);
+    cycleMock.mock.restore();
+    assert.notEqual(reminders.getReminderHistory(task.id, 'owner').find(cycle => cycle.id === cycleId)?.status, 'completed');
+    assert.equal((await completeCycle()).status, 200); assert.equal((await completeCycle()).status, 200);
+    assert.equal(activity.listCompletions('owner', { sourceId: task.id }).length, 1);
+    assert.equal(reminders.getReminderHistory(task.id, 'owner').length, 2);
   } finally { listener.closeAllConnections(); await new Promise<void>(resolve => listener.close(() => resolve())); }
 });
