@@ -4,7 +4,6 @@
  */
 
 import nodemailer from 'nodemailer';
-import dotenv from 'dotenv';
 import type { ReminderCycle, ReminderTask, SimConfig, CreditCardConfig, GenericReminderConfig } from './reminder-store.js';
 import * as db from './db.js';
 import { getSchedulesByDate } from './schedule-store.js';
@@ -17,7 +16,6 @@ import { escapeHtml, renderMarkdown } from './markdown-renderer.js';
 
 const OFFICIAL_SENDER_EMAIL = 'aicalendarofficial@163.com';
 
-dotenv.config();
 
 const SMTP_HOST = (process.env.SMTP_HOST || 'smtp.163.com').trim();
 const SMTP_PORT = Number(process.env.SMTP_PORT || 465);
