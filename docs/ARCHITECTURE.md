@@ -32,10 +32,19 @@ React/Vite 与 Electron 壳都使用同一套前端页面。Electron 主进程�
 | src/components/AiSchedulePanel.tsx、AiImportPage.tsx | 普通 AI、天气和待确认导入 |
 | src/components/NoteBoard.tsx | AI 记事的 CRUD、颜色、完成和导出 |
 | src/components/DailyReportsPage.tsx | 日报列表、独立阅读页和显式重发 |
-| src/components/LibraryPage.tsx | 知识库列表、搜索、Fragment/Article 生命周期、Markdown 阅读和评论 |
+| src/components/LibraryPage.tsx、library/LibraryDetailPage.tsx | 知识库列表与异步阅读、评论、版本 |
 | src/components/settings/ | Settings V2 的 Dialog、Layout、Section、Row 和领域设置 |
 
 当前登录后页面路由是 /today、/schedule、/assistant、/reminders、/reports、/reports/:date、/library 和 /library/:id；/import 重定向到 /assistant?tool=email-import；未登录时使用 /login。设置通过产品壳按钮打开 SettingsDialog，没有独立 /settings 路由。
+
+### 前端加载边界（Phase 2，0.21.1-260915.1408）
+
+App 保留登录、产品壳和 Today；SchedulePage、AiAssistantPage、ReminderPage、日报页面、LibraryPage、SettingsDialog、AdminModal 通过 React.lazy 加载，FeatureBoundary 提供等待、失败与刷新入口。弹窗等待状态可取消、Escape 关闭并恢复焦点。
+
+- CalendarView 与 Today 共用 calendar/ScheduleFormModal、ScheduleDetailModal、schedule-types、schedule-presentation；共享层不得反向引用 CalendarView 或 lunar。
+- LibraryPage 负责列表；library/LibraryDetailPage 负责阅读、评论和版本。仅出现公式节点才导入 katex-renderer（含 KaTeX CSS）；Mermaid 仍按内容动态导入，保留源码和异步取消保护。
+- Library/Admin 专属 CSS 跟随功能加载；Settings 沿用自己的样式。混合选择器和公共样式继续在 index.css。
+- 路由、API、数据库和业务确认合同保持原有语义。证据与边界见 [Phase 2 验收](PHASE2-FRONTEND-LOADING.md)。
 
 ## 3. 后端
 

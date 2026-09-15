@@ -53,3 +53,14 @@
 ## 4. Bundle 观察基线
 
 [Bundle 测量说明](BUNDLE-BASELINE.md) 使用生产构建 manifest 的静态 imports 闭包区分 initial 和非首屏 JS，记录全部 JS/CSS raw/gzip 与最大 10 个资源。测量脚本只读构建目录、不加载 .env、不构建、不发网络请求；不设置预算，不改 CI 或 Vite 警告阈值。脚本的合成 manifest 验证用 `node --test scripts/measure-bundle.test.mjs`，与现有服务测试分别执行。
+
+## Phase 2 可重复浏览器 smoke
+
+可选入口 scripts/browser-smoke.cjs，使用现有 Edge 与外部提供的 Playwright；未新增 npm 依赖，不是 CI 必跑项。先在无真实 .env/data 的源码副本完成生产构建，再执行：
+
+```powershell
+$env:PLAYWRIGHT_MODULE = '<现有 Playwright 包的绝对路径>'
+node scripts/browser-smoke.cjs '<包含 dist 的隔离源码目录>'
+```
+
+默认证据写入系统临时目录，可用 BROWSER_SMOKE_OUTPUT 指定。仅启动随机端口的回环静态服务；拦截合成 API，阻止非本地网络，不启动真实后端。覆盖四 viewport、设置浅/暗色、导航返回、日期深链、日程草稿、焦点、富内容及分包失败。请检查输出截图；断言通过不等于所有视觉细节无误。结果与未覆盖项目见 [Phase 2 验收](PHASE2-FRONTEND-LOADING.md)。

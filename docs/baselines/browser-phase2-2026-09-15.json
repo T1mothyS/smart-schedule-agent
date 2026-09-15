@@ -1,0 +1,272 @@
+{
+  "checks": [
+    {
+      "width": 390,
+      "url": "/today",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "url": "/schedule",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "url": "/reminders",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "url": "/assistant",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "url": "/reports",
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "url": "/library",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "url": "/today",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "url": "/schedule",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "url": "/reminders",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "url": "/assistant",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "url": "/reports",
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "url": "/library",
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "url": "/today",
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "url": "/schedule",
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "url": "/reminders",
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "url": "/assistant",
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "url": "/reports",
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "url": "/library",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "url": "/today",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "url": "/schedule",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "url": "/reminders",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "url": "/assistant",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "url": "/reports",
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "url": "/library",
+      "overflow": false
+    },
+    {
+      "plainRichAssets": 0
+    },
+    {
+      "rich": true
+    },
+    {
+      "dateDeepLink": true,
+      "scheduleDraft": true
+    },
+    {
+      "settingsEscapeFocus": true
+    },
+    {
+      "clientNavigationBack": true
+    },
+    {
+      "mode": "slow",
+      "passed": true
+    },
+    {
+      "mode": "failure",
+      "passed": true
+    },
+    {
+      "mode": "math-failure",
+      "passed": true
+    }
+  ],
+  "errors": [],
+  "apis": [
+    "/api/auth/me",
+    "/api/action-center",
+    "/api/notifications",
+    "/api/schedules",
+    "/api/cycle-reminders",
+    "/api/ai-schedule/history",
+    "/api/note-items",
+    "/api/daily-reports",
+    "/api/library/preferences",
+    "/api/library",
+    "/api/schedule-model",
+    "/api/models",
+    "/api/check-login",
+    "/api/user-api-key",
+    "/api/ai-linkage-guides",
+    "/api/notification-preferences",
+    "/api/integrations/daily-report-token",
+    "/api/daily-report/cloud-context",
+    "/api/daily-report/delivery-policy",
+    "/api/integrations/library-token",
+    "/api/user-mail-account",
+    "/api/admin/users",
+    "/api/admin/invite-codes",
+    "/api/library/plain",
+    "/api/library/rich"
+  ],
+  "assets": [
+    "index-BPUNdfHb.js",
+    "rolldown-runtime-W7wSyTde.js",
+    "jsx-runtime-Dtb5I48A.js",
+    "preload-helper-Czpn1I53.js",
+    "createLucideIcon-C8sS1EJX.js",
+    "isArrayLikeObject-Cbmu74um.js",
+    "index-574kEbfH.css",
+    "LibraryPage-B1sMJFaQ.js",
+    "LibraryPage-Zl2ZHPUv.css",
+    "LibraryDetailPage-BXx03ziM.js",
+    "arrow-left-GYes4v7C.js",
+    "send-CoImqpgf.js",
+    "index-BPUNdfHb.js",
+    "rolldown-runtime-W7wSyTde.js",
+    "jsx-runtime-Dtb5I48A.js",
+    "preload-helper-Czpn1I53.js",
+    "createLucideIcon-C8sS1EJX.js",
+    "isArrayLikeObject-Cbmu74um.js",
+    "index-574kEbfH.css",
+    "LibraryPage-B1sMJFaQ.js",
+    "LibraryPage-Zl2ZHPUv.css",
+    "LibraryDetailPage-BXx03ziM.js",
+    "arrow-left-GYes4v7C.js",
+    "send-CoImqpgf.js",
+    "katex-renderer-BDVjLsgU.js",
+    "katex-renderer-D1Bj3pDB.css",
+    "mermaid.core-CabcxdlT.js",
+    "chunk-Y2CYZVJY-DsF7k-Jl.js",
+    "src-CvopzD7t.js",
+    "chunk-O7XYJQB3-BqFajIpL.js",
+    "chunk-ZIGJFQKS-BrJCqnRq.js",
+    "dist-DWNioNh1.js",
+    "chunk-742MDFTN-BDCy6s85.js",
+    "chunk-MBY4JIJT-B0iWERlb.js",
+    "chunk-DUW6YSOI-Dgx8z5s3.js",
+    "chunk-7PRAP22T-cN_AE4Iy.js",
+    "chunk-7INBJB4K-i1Qrw6qC.js",
+    "chunk-J5ZVWO5B-oDCd-gWO.js",
+    "rough.esm-Dy-Kn_BL.js",
+    "chunk-5DYCD2WN-BlZqmpDP.js",
+    "chunk-Z7XXMR3K-C3o0-YXg.js",
+    "line-CCdsWJcP.js",
+    "path-fybaL0A-.js",
+    "array-BifhSqXX.js",
+    "chunk-UA2S7LBM-CLlp2DOm.js",
+    "KaTeX_Math-Italic-t53AETM-.woff2",
+    "KaTeX_Main-Regular-B22Nviop.woff2",
+    "flowDiagram-KWPJA3E3-CFIUqXMj.js",
+    "chunk-GWA4HPMP-7jwuHDoB.js",
+    "chunk-XXDRQBXY-Bt-cILVv.js",
+    "chunk-WEXAMYUT-SKvg9ZGM.js",
+    "chunk-7M6MHVWA-DOvdcZQM.js",
+    "channel-B1HO4r5F.js",
+    "chunk-5VM5RSS4-ZNzvKenW.js",
+    "elk-276RUBZZ-BgKnH3yl.js",
+    "chunk-3FUC2YCW-DOjXuiCZ.js",
+    "graphlib-DU3mk33G.js",
+    "_baseUniq-BSdRk4Ry.js",
+    "isUndefined-DUYOowjN.js",
+    "chunk-NETBCI7D-CGg5zi1v.js",
+    "index-BPUNdfHb.js",
+    "rolldown-runtime-W7wSyTde.js",
+    "jsx-runtime-Dtb5I48A.js",
+    "preload-helper-Czpn1I53.js",
+    "createLucideIcon-C8sS1EJX.js",
+    "isArrayLikeObject-Cbmu74um.js",
+    "index-574kEbfH.css",
+    "SchedulePage-D2B7AG9P.js",
+    "check-27e1xSGR.js",
+    "ellipsis-CriPPoHj.js",
+    "plus-CeoHcgU7.js",
+    "triangle-alert-CPmagp_E.js",
+    "index-BPUNdfHb.js",
+    "rolldown-runtime-W7wSyTde.js",
+    "jsx-runtime-Dtb5I48A.js",
+    "preload-helper-Czpn1I53.js",
+    "createLucideIcon-C8sS1EJX.js",
+    "isArrayLikeObject-Cbmu74um.js",
+    "index-574kEbfH.css",
+    "SettingsDialog-BuZ50mv_.js",
+    "Dialog-BlZr7Qdw.js",
+    "pick-yOKBEWeM.js",
+    "isUndefined-DUYOowjN.js",
+    "Dialog-xVd5eHhr.css",
+    "SettingsDialog-BmYxt-LN.css",
+    "LibraryPage-B1sMJFaQ.js",
+    "LibraryPage-Zl2ZHPUv.css",
+    "LibraryDetailPage-BXx03ziM.js",
+    "arrow-left-GYes4v7C.js",
+    "send-CoImqpgf.js"
+  ]
+}

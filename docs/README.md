@@ -48,3 +48,5 @@
 Living/Contract 文档应标注 Status、Scope、Last verified commit/version、Authority、Update trigger、Supersedes、Do not use for。更新只证明列明范围，不能把源码核对写成生产核验。历史快照保留日期和原始结论，新增更晚证据时明确时间界限，不用追加记录悄悄改变前文“当前”的含义。
 
 本阶段不全量移动目录或拆分合同；后续按确有重复和漂移的领域逐步整理，并核对入链。
+
+- [Phase 2 前端加载边界验收](PHASE2-FRONTEND-LOADING.md)：0.21.1 本地实现、体积、浏览器证据与未验证边界。

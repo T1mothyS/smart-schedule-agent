@@ -55,3 +55,15 @@ JS 共 97 个，其中 96 个不属于首屏静态闭包。此快照使用 Node 
 暂不设硬失败预算。下一轮优化按 route lazy → feature lazy → optional heavy dependency → CSS → 重新测量的顺序，用同样参数比较 initialJs/initialCss、全部文件和最大资源。大 Mermaid 异步 chunk 不能冒充首屏退化；实际浏览器网络和渲染表现另行验证。
 
 脚本正确性测试：`node --test scripts/measure-bundle.test.mjs`。覆盖静态循环/共享依赖、异步 CSS、多入口去重、缺失引用及路径越界。
+
+## Phase 2 对照（2026-09-15）
+
+版本 0.21.1-260915.1408；[完整快照](baselines/bundle-phase2-2026-09-15.json)、[模块闭包](baselines/modules-phase2-2026-09-15.json)、[验收报告](PHASE2-FRONTEND-LOADING.md)。保留首次快照，未修改预算或 warning 阈值。
+
+| 指标 | Phase 1 raw / gzip | Phase 2 raw / gzip | gzip 变化 |
+|---|---:|---:|---:|
+| 首屏 JS | 1,525,880 / 456,761 | 354,241 / 113,164 | -75.22% |
+| 首屏 CSS | 371,766 / 56,269 | 199,563 / 29,830 | -46.99% |
+| 全部 JS | 6,657,933 / 1,936,227 | 6,668,473 / 1,954,499 | +0.94% |
+
+体积从首屏转移到按需加载；全部产物略增来自分包与边界代码，不能将首屏减少量写成下载所有页面后的总节省。当前首屏静态闭包为 6 JS + 1 CSS；实际运行时访问其他页面才请求相应资源。

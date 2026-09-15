@@ -1,0 +1,23 @@
+{
+  "initialChunks": [
+    "assets/index-BPUNdfHb.js",
+    "assets/rolldown-runtime-W7wSyTde.js",
+    "assets/jsx-runtime-Dtb5I48A.js",
+    "assets/preload-helper-Czpn1I53.js",
+    "assets/createLucideIcon-C8sS1EJX.js",
+    "assets/isArrayLikeObject-Cbmu74um.js"
+  ],
+  "forbiddenInitialModules": [],
+  "delayedModules": [
+    "src/components/AdminModal.tsx",
+    "src/components/library/LibraryDetailPage.tsx",
+    "src/components/LibraryPage.tsx",
+    "node_modules/lunar-javascript/lunar.js",
+    "node_modules/lunar-javascript/index.js",
+    "src/components/CalendarView.tsx",
+    "node_modules/mermaid/node_modules/katex/dist/katex.mjs",
+    "node_modules/katex/dist/katex.mjs",
+    "node_modules/katex/dist/katex.min.css",
+    "src/components/library/katex-renderer.ts"
+  ]
+}
