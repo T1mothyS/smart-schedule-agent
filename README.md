@@ -396,8 +396,8 @@ cp .env.example .env
 | --- | --- |
 | `server/index.ts`、`server/app.ts` | CLI 兼容入口与无副作用 HTTP 应用工厂 |
 | `server/runtime/` | 配置、四库初始化、监听端口与五组后台任务的显式启动/关闭 |
-| `server/routes/`、`server/application.ts` | 已提取的低耦合领域路由与待 Phase 5 迁移的业务组合；见 [Phase 4 验证](docs/PHASE4-APP-RUNTIME-ROUTERS.md) |
-| `server/db.ts` | 账号、验证码、会话、用户设置和 `chat.db` 的访问层 |
+| `server/routes/`、`server/application.ts` | 领域路由与应用组合入口；见 [Phase 5 验证](docs/PHASE5-DOMAIN-BOUNDARIES.md) |
+| `server/db.ts`、`server/database/` | 兼容导出、连接、schema/migrations 与 chat.db 领域查询 |
 | `server/schedule-store.ts` | `schedule.db` 的日历、分类、日程和用户隔离访问层 |
 | `server/schedule-format.ts` | 把日程整理成邮件或 AI 可读文本 |
 | `server/reminder-store.ts` | `reminder.db` 的周期规则、任务、周期实例和迁移逻辑 |

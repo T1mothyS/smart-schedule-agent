@@ -54,3 +54,5 @@ Living/Contract 文档应标注 Status、Scope、Last verified commit/version、
 - [Phase 3 数据写入与恢复可靠性](PHASE3-PERSISTENCE-RECOVERY.md)：四库写回、确认结果、恢复协议与故障验收。
 
 - [Phase 4 应用工厂、运行时与低耦合路由](PHASE4-APP-RUNTIME-ROUTERS.md)：独立 HTTP fixture、五组 worker 生命周期、账号隔离与兼容性验收。
+
+- [Phase 5 领域边界与迁移验收](PHASE5-DOMAIN-BOUNDARIES.md)：高耦合路由、数据库分层、等价 CSS 拆分及完整本地回归。

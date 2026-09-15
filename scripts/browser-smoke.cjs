@@ -66,6 +66,11 @@ const server = http.createServer((req, res) => { let file = path.join(root, 'dis
                 if (await page.getByText('页面加载失败，请刷新后重试。').count())
                     throw Error('route failed ' + url);
                 checks.push({ width, url, overflow: await page.evaluate(() => document.documentElement.scrollWidth > innerWidth) });
+                await page.screenshot({ path: path.join(out, `route-${url.slice(1)}-${width}-light.png`) });
+                await page.getByRole('button', { name: '切换主题', exact: true }).click();
+                await page.waitForTimeout(200);
+                await page.screenshot({ path: path.join(out, `route-${url.slice(1)}-${width}-dark.png`) });
+                await page.getByRole('button', { name: '切换主题', exact: true }).click();
             }
             await page.getByRole('button', { name: '打开设置', exact: true }).click();
             await page.locator('.settings-dialog-frame').waitFor();

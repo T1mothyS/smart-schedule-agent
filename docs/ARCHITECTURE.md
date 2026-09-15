@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: `fa67fa7` / `0.21.3-260915.1936`（2026-09-15，Phase 4 运行时与路由；其他领域以各节证据为准）。
+- Last verified commit/version: `375469e` + Phase 5 CSS/验证收尾 / `0.21.4-260916.0715`（2026-09-16，本地源码；其他领域以各节证据为准）。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
 - Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
@@ -43,20 +43,24 @@ App 保留登录、产品壳和 Today；SchedulePage、AiAssistantPage、Reminde
 
 - CalendarView 与 Today 共用 calendar/ScheduleFormModal、ScheduleDetailModal、schedule-types、schedule-presentation；共享层不得反向引用 CalendarView 或 lunar。
 - LibraryPage 负责列表；library/LibraryDetailPage 负责阅读、评论和版本。仅出现公式节点才导入 katex-renderer（含 KaTeX CSS）；Mermaid 仍按内容动态导入，保留源码和异步取消保护。
-- Library/Admin 专属 CSS 跟随功能加载；Settings 沿用自己的样式。混合选择器和公共样式继续在 index.css。
+- Library/Admin 专属 CSS 跟随功能加载；Settings 沿用自己的样式。Phase 5 将其余样式按原顺序拆到 src/styles/，index.css 仅负责导入；这些公共及混合规则继续全局加载。
 - 路由、API、数据库和业务确认合同保持原有语义。证据与边界见 [Phase 2 验收](PHASE2-FRONTEND-LOADING.md)。
 
 ## 3. 后端
 
 Phase 4（`0.21.3-260915.1936`）后，server/index.ts 保留 CLI 与测试兼容入口；直接执行时先加载配置，再交给 runtime 启动。server/app.ts 的 createApp(deps) 是无配置/数据/定时器/监听副作用的独立工厂，负责 HTTP 中间件顺序。server/runtime/ 拥有配置、四库初始化、监听端口与五组后台任务的 start/stop。
 
-server/routes/ 已提取 guides、notes、search、Library、日报读取/策略/Context/活动记录/令牌路由。server/application.ts 负责组合，并暂存 Phase 5 的日程、周期事务、完成、AI、settings/admin、备份等高耦合处理器。四 store 仍是进程级单例；多数据目录测试使用独立进程。
+Phase 5 后，server/routes/ 拥有全部领域 HTTP 处理器，包括日程、周期事务、完成、AI、settings/admin 和备份。server/application.ts 仅组合中间件、路由、健康检查及运行时依赖。四 store 仍是进程级单例；多数据目录测试使用独立进程。
 
 认证中间件先解析登录身份；业务接口使用当前用户 ID 查询或写入数据。管理员接口额外检查管理员角色。外部日报接口使用独立的按账号绑定令牌，权限与登录会话分开。
 
-后续 router 拆分继续按领域递进，保持已有认证、所有权及 Phase 3 可靠写入协议；固定路径先于参数路由，SPA fallback 最后安装。关闭 runtime 会停止新调度并等待在途 HTTP 与后台 Promise；外部服务超时和强制终止的边界见 [Phase 4 验证记录](PHASE4-APP-RUNTIME-ROUTERS.md)。
+领域路由保持已有认证、所有权及 Phase 3 可靠写入协议；固定路径先于参数路由，SPA fallback 最后安装。关闭 runtime 会停止新调度并等待在途 HTTP 与后台 Promise；外部服务超时和强制终止的边界见 [Phase 4 验证记录](PHASE4-APP-RUNTIME-ROUTERS.md)。
+
+Phase 5 的所有权、等价性和迁移验收见 [Phase 5 验证记录](PHASE5-DOMAIN-BOUNDARIES.md)。
 
 ## 4. 持久化
+
+server/db.ts 保留兼容导出；server/database/connection.ts 拥有连接与写回，schema.ts 和 migrations.ts 拥有按原顺序执行的建表/升级，queries/ 按领域拥有查询。其余三个 store 保持既有领域边界。
 
 数据层使用 sql.js。服务启动时把 SQLite 文件加载到内存，业务修改后导出并写回 data/。当前主要文件为：
 

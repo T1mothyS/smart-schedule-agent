@@ -1,0 +1,19 @@
+/* ===== AI 助手移动端结构 ===== */
+.schedule-ai-reading-column { min-width: 0; }
+.schedule-ai-composer-wrap { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+.schedule-ai-composer-field { min-width: 0; line-height: 1.5 !important; }
+.ai-schedule-page-card .schedule-ai-composer { min-height: 72px; grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 6px; padding: 10px 8px 10px 4px; border-radius: 16px; }
+.ai-schedule-page-card .schedule-ai-composer textarea { min-height: 48px !important; max-height: 144px; padding-block: 10px !important; line-height: 1.5 !important; }
+.ai-schedule-page-card .schedule-ai-note-toggle, .ai-schedule-page-card .schedule-ai-send-button { width: 48px; height: 48px; margin: 0; }
+
+/* ===== 管理面板响应式结构 ===== */
+
+@media (max-width: 640px) {
+  .global-search-trigger { width: 36px; min-width: 36px; height: 36px; justify-content: center; padding: 0; }
+  .global-search-trigger span, .global-search-trigger kbd { display: none; }
+  .global-search-overlay { align-items: stretch; padding: 0; }
+  .global-search-dialog { width: 100%; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
+  .global-search-head { padding: calc(12px + env(safe-area-inset-top)) 12px 10px; }
+  .global-search-body { padding: 16px 14px calc(24px + env(safe-area-inset-bottom)); }
+  .global-search-result-main > span { white-space: normal; }
+}
