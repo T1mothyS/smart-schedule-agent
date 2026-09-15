@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { createAuth } from '../auth.js';
 import express from 'express';
-import { query } from '@tencent-ai/agent-sdk';
+
 import path from 'path';
 import * as reminderStore from '../reminder-store.js';
 import * as backupService from '../backup-service.js';

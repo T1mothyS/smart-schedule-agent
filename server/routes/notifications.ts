@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type { createAuth } from '../auth.js';
 import { type JwtPayload } from '../auth.js';
 import { describeErrorData } from '../runtime/logging.js';
-import { query } from '@tencent-ai/agent-sdk';
+
 import { v4 as uuidv4 } from 'uuid';
 import * as dbModule from '../db.js';
 import * as activityStore from '../activity-store.js';

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { createAuth } from '../auth.js';
 import { type JwtPayload } from '../auth.js';
-import { query } from '@tencent-ai/agent-sdk';
+
 import * as scheduleStore from '../schedule-store.js';
 import * as reminderStore from '../reminder-store.js';
 import * as activityStore from '../activity-store.js';

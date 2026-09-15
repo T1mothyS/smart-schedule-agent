@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { createAuth } from '../auth.js';
 import { withPersistenceTransaction } from '../persistence.js';
-import { query } from '@tencent-ai/agent-sdk';
+
 import * as scheduleStore from '../schedule-store.js';
 import * as reminderStore from '../reminder-store.js';
 import * as reminderCalendarSync from '../reminder-calendar-sync.js';

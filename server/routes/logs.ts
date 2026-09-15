@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { createAuth } from '../auth.js';
-import { query } from '@tencent-ai/agent-sdk';
+
 import { addLog, allLogs, clearLogs, listLogs } from '../log-service.js';
 
 export function createLogsRouter({ authenticate, requireAdmin }: Pick<ReturnType<typeof createAuth>, 'authenticate' | 'requireAdmin'>) {
@@ -13,7 +13,6 @@ export function createLogsRouter({ authenticate, requireAdmin }: Pick<ReturnType
       limit: limit ? Number(limit) : undefined,
     }));
   });
-
 
   app.delete("/api/logs", authenticate, requireAdmin, (req, res) => {
     clearLogs();

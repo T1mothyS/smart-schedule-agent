@@ -3,7 +3,7 @@ import type { createAuth } from '../auth.js';
 import { isValidDateKey } from '../date-key.js';
 import { describeErrorData } from '../runtime/logging.js';
 import express from 'express';
-import { query } from '@tencent-ai/agent-sdk';
+
 import * as scheduleStore from '../schedule-store.js';
 import { authenticateDailyReportToken } from '../daily-report-token-service.js';
 import { publishDailyReport, queueDailyReportEmail } from '../daily-report-service.js';

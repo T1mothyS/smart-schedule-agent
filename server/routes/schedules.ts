@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { createAuth } from '../auth.js';
 import { describeErrorData } from '../runtime/logging.js';
-import { query } from '@tencent-ai/agent-sdk';
+
 import { v4 as uuidv4 } from 'uuid';
 import * as scheduleStore from '../schedule-store.js';
 import * as reminderStore from '../reminder-store.js';

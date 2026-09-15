@@ -2,7 +2,7 @@ import { Router } from 'express';
 import type { createAuth } from '../auth.js';
 import { type JwtPayload } from '../auth.js';
 import { describeErrorData } from '../runtime/logging.js';
-import { query } from '@tencent-ai/agent-sdk';
+
 import { sendDailyReminderEmail, summarizeEmailSendResult } from '../email-service.js';
 import { getActionCenter } from '../action-center.js';
 import { addLog } from '../log-service.js';

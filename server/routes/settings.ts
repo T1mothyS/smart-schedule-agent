@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import type { createAuth } from '../auth.js';
 import { type JwtPayload } from '../auth.js';
-import { query } from '@tencent-ai/agent-sdk';
+
 import * as dbModule from '../db.js';
 import jwt from 'jsonwebtoken';
 import { normaliseCodeBuddyBaseUrl } from '../codebuddy-env.js';
@@ -22,7 +22,6 @@ export function createSettingsRouter({ authenticate, JWT_SECRET }: Pick<ReturnTy
     if (!db.updateUserPreferredModel(userId, model)) return res.status(404).json({ error: '用户不存在' });
     res.json({ success: true, model });
   });
-
 
   interface LoginStatusResponse {
     isLoggedIn: boolean;
