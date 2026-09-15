@@ -64,3 +64,7 @@ node scripts/browser-smoke.cjs '<包含 dist 的隔离源码目录>'
 ```
 
 默认证据写入系统临时目录，可用 BROWSER_SMOKE_OUTPUT 指定。仅启动随机端口的回环静态服务；拦截合成 API，阻止非本地网络，不启动真实后端。覆盖四 viewport、设置浅/暗色、导航返回、日期深链、日程草稿、焦点、富内容及分包失败。请检查输出截图；断言通过不等于所有视觉细节无误。结果与未覆盖项目见 [Phase 2 验收](PHASE2-FRONTEND-LOADING.md)。
+
+## Phase 3 故障与恢复
+
+persistence.test.ts 覆盖原子替换、内存回退、第二库失败、补偿失败停止访问、持久执行结果和用户恢复；persistence-crash.test.ts 在独立子进程中模拟中断并逐字核对恢复；phase3-api.test.ts 覆盖两账号、import/plan 确认失败重试、部分计划失败和周期完成去重。全部加入现有 npm test。具体限制见 [Phase 3 验收](PHASE3-PERSISTENCE-RECOVERY.md)。

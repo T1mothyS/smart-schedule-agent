@@ -50,3 +50,5 @@ Living/Contract 文档应标注 Status、Scope、Last verified commit/version、
 本阶段不全量移动目录或拆分合同；后续按确有重复和漂移的领域逐步整理，并核对入链。
 
 - [Phase 2 前端加载边界验收](PHASE2-FRONTEND-LOADING.md)：0.21.1 本地实现、体积、浏览器证据与未验证边界。
+
+- [Phase 3 数据写入与恢复可靠性](PHASE3-PERSISTENCE-RECOVERY.md)：四库写回、确认结果、恢复协议与故障验收。

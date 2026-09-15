@@ -1,0 +1,29 @@
+{
+  "checks": [
+    {
+      "width": 390,
+      "partialDetails": true,
+      "retry": true,
+      "overflow": false
+    },
+    {
+      "width": 430,
+      "partialDetails": true,
+      "retry": true,
+      "overflow": false
+    },
+    {
+      "width": 768,
+      "partialDetails": true,
+      "retry": true,
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "partialDetails": true,
+      "retry": true,
+      "overflow": false
+    }
+  ],
+  "errors": []
+}
