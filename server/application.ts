@@ -1,3 +1,6 @@
+import { createNotesRouter } from './routes/notes.js';
+import { createGuidesRouter } from './routes/guides.js';
+import { createSearchRouter } from './routes/search.js';
 import { createStoreInitializer } from './runtime/stores.js';
 import { pollEmailImports } from './email-import-service.js';
 import { createApp, registerSpaFallback } from './app.js';
@@ -22,7 +25,6 @@ import jwt from "jsonwebtoken";
 import { generateCode, getEmailConfigurationSummary, sendDailyReminderEmail, sendVerificationEmail, sendReminderTestEmail, summarizeEmailSendResult } from "./email-service.js";
 import * as activityStore from "./activity-store.js";
 import { getActionCenter } from "./action-center.js";
-import * as noteItemService from "./note-item-service.js";
 import * as attachmentService from "./attachment-service.js";
 import { processNotificationQueue, type NotificationLogger } from "./notification-service.js";
 import * as backupService from "./backup-service.js";
@@ -55,7 +57,7 @@ import { deleteUserMailAccount, getUserMailAccountStatus, readUserMail, saveUser
 import { isReadOnlyScheduleQuery, needsScheduleContext } from './ai-intent.js';
 import { shiftScheduleDateValue } from './schedule-actions.js';
 import { addLog, allLogs, clearLogs, listLogs, type LogCategory } from './log-service.js';
-import { SEARCH_SCOPES, searchAll, searchLibraryForAi, type KnowledgeSearchMatch } from './search-service.js';
+import { searchLibraryForAi, type KnowledgeSearchMatch } from './search-service.js';
 import { createDailyReportCloudMcpRouter } from './daily-report-cloud-mcp.js';
 import { createDailyReportCloudOAuthRouter } from './daily-report-cloud-auth.js';
 import * as dailyReportCloudStore from './daily-report-cloud-store.js';
@@ -73,7 +75,7 @@ import {
   updateAiPlanOperation,
   type PendingAiOperation,
 } from './ai-plan.js';
-import { AI_IMPORT_LINKAGE_RULES, AI_LINKAGE_GUIDE_VERSION, AI_LINKAGE_SYSTEM_RULES, getAiLinkageGuides } from './ai-linkage-guide.js';
+import { AI_IMPORT_LINKAGE_RULES, AI_LINKAGE_GUIDE_VERSION, AI_LINKAGE_SYSTEM_RULES } from './ai-linkage-guide.js';
 
 // 数据库实例（等待初始化后赋值）
 let db: typeof dbModule;
@@ -207,23 +209,7 @@ app.get("/api/logs", authenticate, requireAdmin, (req, res) => {
   }));
 });
 
-app.get('/api/search', authenticate, (req, res) => {
-  const query = String(req.query.q || '').trim();
-  const scope = String(req.query.scope || 'all');
-  if (scope !== 'all' && !SEARCH_SCOPES.includes(scope as typeof SEARCH_SCOPES[number])) {
-    return res.status(400).json({ error: '搜索范围不正确' });
-  }
-  try {
-    return res.json(searchAll((req as any).user.userId, {
-      query,
-      scope,
-      limit: req.query.limit,
-    }));
-  } catch (error) {
-    addLog('error', 'system', '统一搜索失败', { error: error instanceof Error ? error.message : String(error) });
-    return res.status(500).json({ error: '搜索暂时不可用' });
-  }
-});
+app.use(createSearchRouter({ authenticate }));
 
 app.delete("/api/logs", authenticate, requireAdmin, (req, res) => {
   clearLogs();
@@ -238,7 +224,7 @@ app.get("/api/logs/export", authenticate, requireAdmin, (req, res) => {
   const pad = (n: number, len = 2) => String(n).padStart(len, '0');
   const filename = `schedule-logs-${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
   const logs = allLogs();
-  
+
   if (format === 'json') {
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}.json"`);
@@ -261,9 +247,7 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-app.get('/api/ai-linkage-guides', authenticate, (_req, res) => {
-  res.json(getAiLinkageGuides());
-});
+app.use(createGuidesRouter({ authenticate }));
 
 // 日程 AI 模型配置按账号保存，避免一个用户修改后影响其他用户。
 app.get("/api/schedule-model", authenticate, (req, res) => {
@@ -313,7 +297,7 @@ app.get("/api/check-login", authenticate, async (req, res) => {
       const payload = jwt.verify(authHeader.slice(7), JWT_SECRET) as JwtPayload;
       const resolvedCredential = resolveCodeBuddyCredentialInfo(payload.userId);
       const userKey = resolvedCredential?.credential;
-      
+
       if (userKey?.api_key) {
         response.isLoggedIn = true;
         response.hasApiKey = true;
@@ -334,7 +318,7 @@ app.get("/api/check-login", authenticate, async (req, res) => {
   } else {
     response.error = '未登录';
   }
-  
+
   res.json(response);
 });
 
@@ -347,7 +331,7 @@ app.get("/api/models", authenticate, async (req, res) => {
     const userCredential = resolveCodeBuddyCredential(currentUser.userId);
 
     if (!userCredential) {
-      return res.status(401).json({ 
+      return res.status(401).json({
         error: getMissingCodeBuddyCredentialMessage(currentUser.userId),
       });
     }
@@ -357,10 +341,10 @@ app.get("/api/models", authenticate, async (req, res) => {
       userCredential,
       req.query.refresh === '1',
     );
-    
-    res.json({ 
+
+    res.json({
       models: models || [],
-      defaultModel 
+      defaultModel
     });
   } catch (error: any) {
     console.error("[Models] Error:", error);
@@ -482,32 +466,32 @@ app.post("/api/verify-api-key", authenticate, async (req, res) => {
 
     if (!userCredential) {
       const currentUser = (req as any).user as JwtPayload;
-      return res.status(401).json({ 
-        valid: false, 
+      return res.status(401).json({
+        valid: false,
         error: getMissingCodeBuddyCredentialMessage(currentUser.userId),
         code: 'NO_KEY'
       });
     }
-    
+
     // 验证必须绕过缓存，确保当前凭据仍然有效。
     const currentUser = (req as any).user as JwtPayload;
     const models = await getAvailableModels(currentUser.userId, userCredential, true);
-    
-    res.json({ 
-      valid: true, 
+
+    res.json({
+      valid: true,
       modelCount: models.length,
       models: models.slice(0, 5).map((m: any) => m.modelId) // 返回前5个模型ID
     });
   } catch (error: any) {
     console.error("[Verify API Key] Error:", error);
-    
+
     // 区分不同错误类型
     const errorMsg = error?.message || String(error);
     const errorCode = error?.code || '';
-    
+
     // 429 额度用完
     if (errorMsg.includes('429') || errorMsg.includes('Credits exhausted') || errorCode === 'QUOTA_EXCEEDED') {
-      return res.status(402).json({ 
+      return res.status(402).json({
         valid: true,  // Key 本身有效，只是额度用完
         keyValid: true,
         quotaExhausted: true,
@@ -516,29 +500,29 @@ app.post("/api/verify-api-key", authenticate, async (req, res) => {
         purchaseUrl: 'https://www.codebuddy.cn/profile/usage'
       });
     }
-    
+
     // 无效 Key
     if (errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('Invalid API key') || errorMsg.includes('无效')) {
-      return res.status(401).json({ 
-        valid: false, 
+      return res.status(401).json({
+        valid: false,
         keyValid: false,
         error: 'API Key 无效，请检查是否正确填写',
         code: 'INVALID_KEY'
       });
     }
-    
+
     // 网络错误
     if (errorMsg.includes('fetch') || errorMsg.includes('network') || errorMsg.includes('ECONNREFUSED')) {
-      return res.status(503).json({ 
-        valid: false, 
+      return res.status(503).json({
+        valid: false,
         error: '网络连接失败，请检查网络后重试',
         code: 'NETWORK_ERROR'
       });
     }
-    
+
     // 其他错误
-    return res.status(500).json({ 
-      valid: false, 
+    return res.status(500).json({
+      valid: false,
       error: errorMsg,
       code: 'UNKNOWN_ERROR'
     });
@@ -553,7 +537,7 @@ app.get("/api/user-api-key", authenticate, (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     const payload = (req as any).user as JwtPayload;
     const userApiKey = db.getUserApiKey(payload.userId);
-    
+
     if (userApiKey) {
       res.json({
         hasKey: true,
@@ -579,14 +563,14 @@ app.post("/api/user-api-key", authenticate, (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     const payload = (req as any).user as JwtPayload;
     const { apiKey, baseUrl } = req.body;
-    
+
     if (!apiKey || !String(apiKey).trim()) {
       return res.status(400).json({ error: 'API Key 不能为空' });
     }
     const normalizedApiKey = String(apiKey).trim();
     if (normalizedApiKey.length > 4_096) return res.status(400).json({ error: 'API Key 过长' });
     const normalizedBaseUrl = normaliseCodeBuddyBaseUrl(baseUrl);
-    
+
     const userApiKey: dbModule.DbUserApiKey = {
       id: `uak_${Date.now()}`,
       user_id: payload.userId,
@@ -595,11 +579,11 @@ app.post("/api/user-api-key", authenticate, (req, res) => {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };
-    
+
     db.upsertUserApiKey(userApiKey);
-    
+
     modelService.invalidate(payload.userId);
-    
+
     addLog('info', 'system', '用户更新了 API Key', { userId: payload.userId });
     res.json({ success: true, message: 'API Key 保存成功' });
   } catch (error: any) {
@@ -742,10 +726,10 @@ app.post("/api/auth/login", async (req, res) => {
       return res.status(401).json({ error: '邮箱或密码错误' });
     }
     const token = signUserToken(user);
-    
+
     // 更新最后登录时间
     db.updateUserLastLogin(user.id);
-    
+
     addLog('info', 'auth', `用户登录: ${email}`, { userId: user.id, role: user.role });
     res.json({ success: true, token, user: { id: user.id, email: user.email, role: user.role } });
   } catch (error: any) {
@@ -760,7 +744,7 @@ app.get("/api/auth/me", authenticate, (req, res) => {
   const payload = (req as any).user as JwtPayload;
   const user = db.getUserById(payload.userId);
   if (!user) return res.status(404).json({ error: '用户不存在' });
-  
+
   res.json({ user });
 });
 
@@ -821,7 +805,7 @@ app.put("/api/admin/users/:id/role", authenticate, requireAdmin, (req, res) => {
   if (targetUser.id === payload.userId) {
     return res.status(403).json({ error: '无法修改自己的管理员身份' });
   }
-  
+
   const success = db.updateUserRole(req.params.id, role);
   if (!success) return res.status(404).json({ error: '用户不存在' });
   addLog('info', 'admin', `修改用户角色: ${req.params.id} → ${role}`);
@@ -866,13 +850,13 @@ app.put("/api/admin/users/:id/api-share", authenticate, requireAdmin, (req, res)
 // 删除用户及其所有数据（管理员）
 app.delete("/api/admin/users/:id", authenticate, requireAdmin, (req, res) => {
   const targetUserId = req.params.id;
-  
+
   // 禁止删除自己
   const payload = (req as any).user as JwtPayload;
   if (targetUserId === payload.userId) {
     return res.status(403).json({ error: '无法删除自己的账号' });
   }
-  
+
   // 禁止删除管理员
   const targetUser = db.getUserById(targetUserId);
   if (!targetUser) return res.status(404).json({ error: '用户不存在' });
@@ -887,16 +871,16 @@ app.delete("/api/admin/users/:id", authenticate, requireAdmin, (req, res) => {
   catch (error: any) {
     return res.status(503).json({ error: '删除前全站备份失败，未修改任何用户数据：' + (error?.message || '未知错误') });
   }
-  
+
   const scheduleData = scheduleStore.deleteUserScheduleData(targetUserId);
   const deletedReminderTasks = reminderStore.deleteReminderTasksByUser(targetUserId);
   const activityData = activityStore.deleteUserActivity(targetUserId);
   const deletedAttachmentFiles = attachmentService.deleteUserAttachmentFiles(activityData.attachments);
-  
+
   // 删除用户及其关联数据
   const success = db.deleteUser(targetUserId);
   if (!success) return res.status(404).json({ error: '用户不存在' });
-  
+
   addLog('info', 'admin', `删除用户及其账号数据: ${targetUserId}`, {
     ...scheduleData,
     reminderTasks: deletedReminderTasks,
@@ -908,7 +892,7 @@ app.delete("/api/admin/users/:id", authenticate, requireAdmin, (req, res) => {
 // 清空用户数据（保留账号）（管理员）
 app.post("/api/admin/users/:id/clear-data", authenticate, requireAdmin, (req, res) => {
   const targetUserId = req.params.id;
-  
+
   // 禁止清空自己的数据
   const payload = (req as any).user as JwtPayload;
   if (targetUserId === payload.userId) {
@@ -925,15 +909,15 @@ app.post("/api/admin/users/:id/clear-data", authenticate, requireAdmin, (req, re
   catch (error: any) {
     return res.status(503).json({ error: '清空前全站备份失败，未修改任何用户数据：' + (error?.message || '未知错误') });
   }
-  
+
   const scheduleData = scheduleStore.deleteUserScheduleData(targetUserId);
   const deletedReminderTasks = reminderStore.deleteReminderTasksByUser(targetUserId);
   const activityData = activityStore.deleteUserActivity(targetUserId);
   const deletedAttachmentFiles = attachmentService.deleteUserAttachmentFiles(activityData.attachments);
-  
+
   // 清空用户其他数据（API Key、提醒设置等）
   const result = db.clearUserData(targetUserId);
-  
+
   addLog('info', 'admin', `清空用户数据: ${targetUserId}`, {
     ...scheduleData,
     reminderTasks: deletedReminderTasks,
@@ -978,52 +962,7 @@ app.post("/api/action-center/send-email", authenticate, async (req, res) => {
 
 // ============= AI 记事条目 =============
 
-app.get('/api/note-items', authenticate, (req, res) => {
-  try {
-    const userId = (req as any).user.userId;
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ items: noteItemService.listNoteItems(userId) });
-  } catch (error: any) {
-    res.status(500).json({ error: error?.message || '获取记事失败' });
-  }
-});
-
-app.post('/api/note-items', authenticate, (req, res) => {
-  try {
-    const userId = (req as any).user.userId;
-    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
-    const input = body.contents !== undefined ? body.contents : body.content;
-    const items = noteItemService.createNoteItems(userId, input, body.color === undefined ? 'neutral' : body.color);
-    res.status(201).json({ items });
-  } catch (error: any) {
-    res.status(400).json({ error: error?.message || '保存记事失败' });
-  }
-});
-
-app.patch('/api/note-items/:id', authenticate, (req, res) => {
-  try {
-    const userId = (req as any).user.userId;
-    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
-    const unknownFields = Object.keys(body).filter(key => !['content', 'completed', 'color'].includes(key));
-    if (unknownFields.length) return res.status(400).json({ error: '只允许修改记事内容、完成状态或颜色' });
-    const item = noteItemService.updateNoteItem(userId, req.params.id, body);
-    if (!item) return res.status(404).json({ error: '记事不存在或无权访问' });
-    res.json({ item });
-  } catch (error: any) {
-    res.status(400).json({ error: error?.message || '更新记事失败' });
-  }
-});
-
-app.delete('/api/note-items/:id', authenticate, (req, res) => {
-  try {
-    const userId = (req as any).user.userId;
-    const deleted = noteItemService.deleteNoteItem(userId, req.params.id);
-    if (!deleted) return res.status(404).json({ error: '记事不存在或无权访问' });
-    res.json({ success: true });
-  } catch (error: any) {
-    res.status(400).json({ error: error?.message || '删除记事失败' });
-  }
-});
+app.use(createNotesRouter({ authenticate }));
 
 // ============= Library / 知识库 MVP =============
 
@@ -2622,13 +2561,13 @@ app.get("/api/schedules", authenticate, (req, res) => {
     const { start, end } = req.query;
     if (userId) reminderCalendarSync.syncReminderTasksToCalendar(reminderStore.listReminderTasks(userId));
     let schedules;
-    
+
     if (start && end) {
       schedules = scheduleStore.getSchedulesByDateRange(start as string, end as string, userId);
     } else {
       schedules = scheduleStore.getAllSchedules(userId);
     }
-    
+
     res.json({ schedules });
   } catch (error: any) {
     console.error("[Schedules] Error:", error);
@@ -2656,16 +2595,16 @@ app.get("/api/schedules/:id", authenticate, (req, res) => {
     const userId = (req as any).user?.userId;
     const { id } = req.params;
     const schedule = scheduleStore.getSchedule(id);
-    
+
     if (!schedule) {
       return res.status(404).json({ error: "日程不存在" });
     }
-    
+
     // 验证日程属于当前用户
     if (schedule.user_id !== userId) {
       return res.status(403).json({ error: "无权访问该日程" });
     }
-    
+
     res.json({ schedule });
   } catch (error: any) {
     console.error("[Schedule] Error:", error);
@@ -2683,7 +2622,7 @@ app.post("/api/schedules", authenticate, (req, res) => {
       user_id: userId,
       ...fields,
     } as Omit<scheduleStore.Schedule, 'created_at' | 'updated_at'>;
-    
+
     const created = scheduleStore.createSchedule(schedule);
     addLog('info', 'schedule', '手动创建日程', {
       event: 'schedule_created',
@@ -2710,7 +2649,7 @@ app.patch("/api/schedules/:id", authenticate, (req, res) => {
   try {
     const userId = (req as any).user?.userId;
     const { id } = req.params;
-    
+
     // 验证日程属于当前用户
     const existing = scheduleStore.getSchedule(id);
     if (!existing) {
@@ -2719,7 +2658,7 @@ app.patch("/api/schedules/:id", authenticate, (req, res) => {
     if (existing.user_id !== userId) {
       return res.status(403).json({ error: "无权修改该日程" });
     }
-    
+
     const updates = normaliseScheduleApiFields(req.body || {}, userId, existing);
     const updated = scheduleStore.updateSchedule(id, updates);
     addLog('info', 'schedule', '更新日程', {
@@ -2747,7 +2686,7 @@ app.put("/api/schedules/:id", authenticate, (req, res) => {
   try {
     const userId = (req as any).user?.userId;
     const { id } = req.params;
-    
+
     const existing = scheduleStore.getSchedule(id);
     if (!existing) {
       return res.status(404).json({ error: "日程不存在" });
@@ -2755,7 +2694,7 @@ app.put("/api/schedules/:id", authenticate, (req, res) => {
     if (existing.user_id !== userId) {
       return res.status(403).json({ error: "无权修改该日程" });
     }
-    
+
     const updates = normaliseScheduleApiFields(req.body || {}, userId, existing);
     const updated = scheduleStore.updateSchedule(id, updates);
     addLog('info', 'schedule', '更新日程', {
@@ -2786,7 +2725,7 @@ app.delete("/api/schedules/:id", authenticate, (req, res) => {
   try {
     const userId = (req as any).user?.userId;
     const { id } = req.params;
-    
+
     const existing = scheduleStore.getSchedule(id);
     if (!existing) {
       return res.status(404).json({ error: "日程不存在" });
@@ -2794,7 +2733,7 @@ app.delete("/api/schedules/:id", authenticate, (req, res) => {
     if (existing.user_id !== userId) {
       return res.status(403).json({ error: "无权删除该日程" });
     }
-    
+
     const success = scheduleStore.deleteSchedule(id);
     addLog('warn', 'schedule', `删除日程: ${id}`);
     res.json({ success: true });
@@ -2810,7 +2749,7 @@ app.post("/api/schedules/:id/toggle", authenticate, (req, res) => {
   try {
     const userId = (req as any).user?.userId;
     const { id } = req.params;
-    
+
     const existing = scheduleStore.getSchedule(id);
     if (!existing) {
       return res.status(404).json({ error: "日程不存在" });
@@ -2818,7 +2757,7 @@ app.post("/api/schedules/:id/toggle", authenticate, (req, res) => {
     if (existing.user_id !== userId) {
       return res.status(403).json({ error: "无权操作该日程" });
     }
-    
+
     const schedule = toggleScheduleCompletion(id, userId);
     const action = schedule?.is_completed ? '标记完成' : '取消完成';
     addLog('info', 'schedule', action, { id: schedule?.id });
@@ -2898,7 +2837,7 @@ app.post("/api/categories", authenticate, (req, res) => {
       color: String(req.body?.color || '#5b8ff9').slice(0, 32),
       icon: String(req.body?.icon || 'folder').slice(0, 64),
     };
-    
+
     const created = scheduleStore.createCategory(category);
     addLog('info', 'schedule', '创建分类', { id: created?.id });
     res.json({ category: created });
@@ -2914,11 +2853,11 @@ app.delete("/api/categories/:id", authenticate, (req, res) => {
   try {
     const { id } = req.params;
     const success = scheduleStore.deleteCategory(id, (req as any).user.userId);
-    
+
     if (!success) {
       return res.status(400).json({ error: "无法删除该分类" });
     }
-    
+
     addLog('warn', 'schedule', `删除分类: ${id}`);
     res.json({ success: true });
   } catch (error: any) {
@@ -3024,40 +2963,40 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
   const msgLower = message.toLowerCase();
   const msgRaw = message;
   const dates: string[] = [];
-  
+
   const addDate = (dateStr: string) => {
     if (!dates.includes(dateStr)) dates.push(dateStr);
   };
-  
+
   // 【关键修复】先检测"今天"，否则默认返回今天
   const hasToday = msgLower.includes('今天') || msgLower.includes('今日') || msgLower.includes('本日');
   if (hasToday) {
     addDate(today);
   }
-  
+
   // 辅助函数：计算N天后的日期（本地时区）
   const getDateStr = (offset: number) => {
     const d = new Date(now);
     d.setDate(d.getDate() + offset);
     return getLocalDateString(d);
   };
-  
+
   const tomorrowStr = getDateStr(1);
   const dayAfterTomorrowStr = getDateStr(2);
   const yesterdayStr = getDateStr(-1);
-  
+
   // 检测"明天"
   const hasTomorrow = msgLower.includes('明天') || msgLower.includes('明日') || msgLower.includes('tomorrow');
   if (hasTomorrow) {
     addDate(tomorrowStr);
   }
-  
+
   // 检测"后天"
   const hasDayAfter = msgLower.includes('后天') || msgLower.includes('后日');
   if (hasDayAfter) {
     addDate(dayAfterTomorrowStr);
   }
-  
+
   // 【新增】检测"两天后"、"3天后"等
   const afterMatch = msgRaw.match(/(\d+)天后?/);
   if (afterMatch) {
@@ -3066,13 +3005,13 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
       addDate(getDateStr(days));
     }
   }
-  
+
   // 检测"昨天"
   const hasYesterday = msgLower.includes('昨天') || msgLower.includes('昨日') || msgLower.includes('yesterday');
   if (hasYesterday) {
     addDate(yesterdayStr);
   }
-  
+
   // 【新增】检测"大前天"、"前天"
   const hasDayBeforeYesterday = msgLower.includes('大前天') || msgLower.includes('大前日');
   if (hasDayBeforeYesterday) {
@@ -3082,7 +3021,7 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
   if (hasTwoDaysAgo) {
     addDate(getDateStr(-2));
   }
-  
+
   // 【新增】检测"本周"
   const hasThisWeek = msgLower.includes('本周') || msgLower.includes('这周') || msgLower.includes('this week');
   if (hasThisWeek) {
@@ -3093,7 +3032,7 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
       addDate(getDateStr(i));
     }
   }
-  
+
   // 【新增】检测"下周"
   const hasNextWeek = msgLower.includes('下周') || msgLower.includes('下星期') || msgLower.includes('next week');
   if (hasNextWeek) {
@@ -3102,7 +3041,7 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
       addDate(getDateStr(7 - now.getDay() + 1 + i));
     }
   }
-  
+
   // 【新增】检测"本月"
   const hasThisMonth = msgLower.includes('本月') || msgLower.includes('这月');
   if (hasThisMonth) {
@@ -3112,7 +3051,7 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
       addDate(getLocalDateString(dt));
     }
   }
-  
+
   // 下周几
   const getNextWeekday = (d: number) => {
     const daysUntil = (d - now.getDay() + 7) % 7 || 7;
@@ -3120,7 +3059,7 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
     dt.setDate(dt.getDate() + daysUntil);
     return getLocalDateString(dt);
   };
-  
+
   if (msgLower.includes('下周一') || msgLower.includes('下星期一')) addDate(getNextWeekday(1));
   if (msgLower.includes('下周二') || msgLower.includes('下星期二')) addDate(getNextWeekday(2));
   if (msgLower.includes('下周三') || msgLower.includes('下星期三')) addDate(getNextWeekday(3));
@@ -3128,7 +3067,7 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
   if (msgLower.includes('下周五') || msgLower.includes('下星期五')) addDate(getNextWeekday(5));
   if (msgLower.includes('下周六') || msgLower.includes('下星期六')) addDate(getNextWeekday(6));
   if (msgLower.includes('下周日') || msgLower.includes('下星期日') || msgLower.includes('下周末')) addDate(getNextWeekday(0));
-  
+
   // 周几（本周）
   const getThisWeekday = (d: number) => {
     const daysUntil = (d - now.getDay() + 7) % 7;
@@ -3136,7 +3075,7 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
     dt.setDate(dt.getDate() + daysUntil);
     return getLocalDateString(dt);
   };
-  
+
   if (msgLower.includes('周一') || msgLower.includes('星期一')) addDate(getThisWeekday(1));
   if (msgLower.includes('周二') || msgLower.includes('星期二')) addDate(getThisWeekday(2));
   if (msgLower.includes('周三') || msgLower.includes('星期三')) addDate(getThisWeekday(3));
@@ -3144,7 +3083,7 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
   if (msgLower.includes('周五') || msgLower.includes('星期五')) addDate(getThisWeekday(5));
   if (msgLower.includes('周六') || msgLower.includes('星期六')) addDate(getThisWeekday(6));
   if (msgLower.includes('周日') || msgLower.includes('星期日') || msgLower.includes('周末')) addDate(getThisWeekday(0));
-  
+
   // 具体日期：4月10号、4-10、2026-04-10
   const patterns = [/(\d{1,2})月(\d{1,2})[日号]?/g, /(\d{1,2})-(\d{1,2})/g, /(\d{4})-(\d{1,2})-(\d{1,2})/g];
   for (const p of patterns) {
@@ -3160,14 +3099,14 @@ function parseQueryDatesForCards(message: string, todayStr: string): string[] {
       }
     }
   }
-  
+
   // 【关键】默认只返回今天
   if (dates.length === 0) {
     addDate(today);
     // 如果没有检测到任何日期引用，默认也添加明天以便AI有更多上下文
     addDate(tomorrowStr);
   }
-  
+
   return dates;
 }
 
@@ -3668,9 +3607,9 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
     const missingCredentialMessage = getMissingCodeBuddyCredentialMessage(userId);
     addLog('warn', 'ai', `用户 ${userId} 未配置可用 API`, { userId });
     try { saveAiScheduleHistoryMessage({ userId, role: 'assistant', type: 'error', content: missingCredentialMessage }); } catch {}
-    return res.status(401).json({ 
+    return res.status(401).json({
       error: missingCredentialMessage,
-      needLogin: true 
+      needLogin: true
     });
   }
 
@@ -3716,7 +3655,7 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
   const includeScheduleContext = needsScheduleContext(text);
   const queryDates = includeScheduleContext ? parseQueryDatesForCards(text, today) : [];
   console.log('[AI Chat] Query dates for AI context:', queryDates);
-  
+
   // 获取用户询问日期的日程（而非仅仅今天的）
   const contextSchedules: any[] = [];
   const seenIds = new Set<string>();
@@ -3729,7 +3668,7 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
       }
     }
   }
-  
+
   // 格式化日期标签
   const formatDateLabel = (dateStr: string) => {
     const d = new Date(dateStr);
@@ -3737,20 +3676,20 @@ app.post("/api/ai-chat", authenticate, async (req, res) => {
     return `${d.getMonth() + 1}月${d.getDate()}日（${weekday}）`;
   };
   const dateLabels = queryDates.map(formatDateLabel).join('、');
-  const queryDateInfo = queryDates.length > 0 
-    ? `【重要】用户询问的日期：${dateLabels}。请根据这些日期的日程回复！\n\n` 
+  const queryDateInfo = queryDates.length > 0
+    ? `【重要】用户询问的日期：${dateLabels}。请根据这些日期的日程回复！\n\n`
     : '';
 
   // 简化日期的上下文日程
   const existingSchedules = contextSchedules;
 
   const CATEGORY_LABELS_CN = AI_CATEGORY_LABELS_CN;
-  
+
   // 按时间排序日程，格式化更清晰的卡片展示（无emoji）
-  const sortedSchedules = [...existingSchedules].sort((a, b) => 
+  const sortedSchedules = [...existingSchedules].sort((a, b) =>
     new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
   );
-  
+
   // 纯文本版（用于 AI 上下文）- 显示完整日期
 
   const formatDateForAI = (dateStr: string) => {
@@ -3923,7 +3862,7 @@ priority 识别：
 
   let jsonText = '';
   try {
-    
+
     // 【修复数据隔离】使用该用户的 API Key
     const stream = query({
       prompt: modelPrompt,
@@ -3956,7 +3895,7 @@ priority 识别：
       opCount: operations.length,
       reply: (parsed.reply || '').slice(0, 80)
     });
-    
+
     const requiresConfirmation = operations.some((op: any) =>
       ['create', 'create_recurring', 'update', 'delete'].includes(op?.type),
     );

@@ -33,4 +33,3 @@ export function notificationLogCategory(data: Record<string, unknown> = {}): Log
   ) return 'mail';
   return 'reminder';
 }
-
