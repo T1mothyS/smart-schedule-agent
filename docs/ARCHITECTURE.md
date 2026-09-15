@@ -1,5 +1,13 @@
 # AI Calendar 架构
 
+- Status: LIVING
+- Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
+- Last verified commit/version: `8854a38` / `0.21.0-260915.0924`（2026-09-15，源码核对）。
+- Authority: 当前源码与自动化验证优先；文档职责见文档索引。
+- Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
+- Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
+- Do not use for: 推断当前生产部署、Work 配置或邮件收件箱状态。
+
 本文档记录当前源码和测试能够证明的结构，不记录密钥、真实生产数据、用户邮件或服务器凭据。发生行为变化时，先以源码和测试为准，再更新本文档。
 
 ## 1. 运行时边界
@@ -27,7 +35,7 @@ React/Vite 与 Electron 壳都使用同一套前端页面。Electron 主进程�
 | src/components/LibraryPage.tsx | 知识库列表、搜索、Fragment/Article 生命周期、Markdown 阅读和评论 |
 | src/components/settings/ | Settings V2 的 Dialog、Layout、Section、Row 和领域设置 |
 
-当前登录后页面路由是 /today、/schedule、/assistant、/reminders、/import、/reports、/reports/:date、/library 和 /library/:id；未登录时使用 /login。
+当前登录后页面路由是 /today、/schedule、/assistant、/reminders、/reports、/reports/:date、/library 和 /library/:id；/import 重定向到 /assistant?tool=email-import；未登录时使用 /login。设置通过产品壳按钮打开 SettingsDialog，没有独立 /settings 路由。
 
 ## 3. 后端
 
@@ -41,12 +49,14 @@ server/index.ts 目前是 Express 组合入口，集中注册认证、用户、�
 
 数据层使用 sql.js。服务启动时把 SQLite 文件加载到内存，业务修改后导出并写回 data/。当前主要文件为：
 
-- chat.db：用户、会话、消息、AI 配置、记事、日报和账号私有知识库的 `library_entries`、Article 版本、评论、关系 JSON 及发布令牌哈希；知识正文以 Markdown 为 source，HTML 按读取时安全渲染。
+- chat.db：用户、会话、消息、AI 配置、记事、账号私有知识库、偏好与令牌哈希，以及 OAuth、Cloud Context/活动输入和媒体批次元数据；知识正文以 Markdown 为 source，HTML 按读取时安全渲染。日报正文不在此库。
 - schedule.db：日历、分类和日程。
 - reminder.db：周期事务和提醒配置。
-- activity.db：通知、完成记录和活动审计。
+- activity.db：`daily_reports` 日报正文和来源/投递状态、通知队列、完成记录、AI 导入草稿与附件元数据，由 `activity-store.ts` 管理。
 
 数据库文件、附件、日报媒体、备份和日志都是运行时资产，不能提交 Git。备份服务在导出和恢复时处理四个数据库及允许的附件/媒体内容；恢复前必须检查版本、冲突和快照路径。
+
+系统快照包含四库、附件和日报媒体；用户备份包含账号范围记录和附件，但不打包日报媒体文件。部署配置由独立部署备份负责。当前整库写回与跨库操作不构成统一事务；用户恢复有事前备份但无全流程自动回滚，系统恢复有暂存及可捕获异常的回滚路径，不能当作进程中断恢复保证。
 
 ## 5. 领域边界
 
@@ -64,9 +74,9 @@ server/index.ts 目前是 Express 组合入口，集中注册认证、用户、�
 
 ## 6. 日报 V2 跨项目流程
 
-外部日报 V2 负责本地链路的采集、上下文、结构化生成、Validator、确定性渲染、本地媒体下载/校验和上传；Work Cloud 通过生产 MCP 读取输入并在服务端托管媒体。AI Calendar 负责令牌/OAuth 鉴权、根据调用身份固定 `local` 或 `cloud` 来源、媒体按内容哈希保存、日报按账号/日期/来源/内容版本幂等保存，以及按账号来源设置决定 `RECEIVED` 或 `CANDIDATE` 和邮件队列。Cloud `dry_run=true` 只验证不写入，`dry_run=false` 必须返回 `PUBLISHED` 才表示生产数据库已保存。
+外部日报 V2 负责本地链路的采集、上下文、结构化生成、Validator、确定性渲染、本地媒体下载/校验和上传；Work Cloud 通过生产 MCP 读取输入并在服务端托管媒体。AI Calendar 负责令牌/OAuth 鉴权、根据调用身份固定 `local` 或 `cloud` 来源、媒体按内容哈希保存、日报按账号/日期/来源/内容版本幂等保存，以及按账号来源设置决定 `RECEIVED` 或 `CANDIDATE` 和邮件队列。Cloud `dry_run=true` 不写日报或邮件队列，`dry_run=false` 必须返回 `PUBLISHED` 才表示生产数据库已保存。
 
-本地 NoSend、发布接口返回、QUEUED、SMTP accepted 和收件箱到达属于不同证据层级，不能相互替代。主仓库不从生产服务器访问外站新闻图，也不把外部项目的凭据或运行数据带入仓库。
+本地 NoSend、发布接口返回、QUEUED、SMTP accepted 和收件箱到达属于不同证据层级，不能相互替代。Local 发布阶段不抓取外站新闻图；Cloud 服务端可受控获取显式媒体，无批次时逐图 Best Effort，有批次时检查 READY、归属与完整性，正文完整性保持硬闸门。`dry_run=true` 不保存日报或队列，但可能托管媒体文件。不得把外部项目凭据或运行数据带入仓库。完整合同见 [Cloud 文档](CHATGPT-WORK-CLOUD.md)。
 
 ## 7. 构建产物
 

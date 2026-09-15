@@ -1,5 +1,13 @@
 # AI Calendar 跨项目地图
 
+- Status: LIVING
+- Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
+- Last verified commit/version: `8854a38` / `0.21.0-260915.0924`（2026-09-15，源码核对）。
+- Authority: 当前源码与自动化验证优先；文档职责见文档索引。
+- Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
+- Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
+- Do not use for: 推断当前生产部署、Work 配置或邮件收件箱状态。
+
 本文档是 AI Calendar 主仓库与个人情报日报 V2 的逻辑地图。它只记录可提交的模块、边界和验证入口，不记录绝对个人路径、用户数据、令牌、授权码或运行机器上的真实配置。
 
 ## 1. 项目与边界
@@ -26,17 +34,17 @@ flowchart TD
     Domains --> Reports[日报与媒体]
     Domains --> Backup[备份与导出]
     Domains --> DB[(SQLite / sql.js)]
-    DB --> ChatDB[data/chat.db\n用户、记事、日报、知识库]
+    DB --> ChatDB[data/chat.db\n用户、记事、知识库、OAuth、Cloud Context、媒体批次]
     DB --> ScheduleDB[data/schedule.db]
     DB --> ReminderDB[data/reminder.db]
-    DB --> ActivityDB[data/activity.db]
+    DB --> ActivityDB[data/activity.db\n日报正文、通知、完成记录、导入草稿、附件元数据]
     API --> Runtime[data/ 日志、附件、媒体和备份\n本地运行数据]
     React --> Generated[dist/、dist-electron/\ndist-desktop/、release/\n构建产物]
 ```
 
 主应用的四个数据库文件属于运行态数据，不能从生产机器回填到仓库。`dist/`、`dist-electron/`、`dist-desktop/` 和 `release/` 是构建/打包产物；源码、测试和文档属于提交边界。
 
-### 1.2 日报 V2 流程
+### 1.2 日报 V2 Local 流程
 
 ```mermaid
 flowchart LR
@@ -56,6 +64,8 @@ flowchart LR
 ```
 
 模型只产生结构化内容；Markdown、HTML、纯文本、图片路径、生产日报记录、邮件队列和归档由确定性程序负责。媒体校验或上传失败时，不执行最后的日报发布。旧六章日报仍走受限 Markdown 兼容路径。
+
+上述媒体失败阻断规则属于 Local 链路。Cloud 由服务端受控获取媒体：无 `mediaBatchId` 时逐图 Best Effort，有批次时保持 READY、归属和完整性检查。正文完整性均为硬闸门。Cloud `dry_run=true` 不保存日报、不入邮件队列，但兼容媒体处理可能写入托管文件。当前合同与历史运行记录见 [Cloud 文档](docs/CHATGPT-WORK-CLOUD.md)，文档导航见 [索引](docs/README.md)。
 
 ## 2. 跨项目 API 与安全边界
 
@@ -93,12 +103,12 @@ flowchart LR
 | --- | --- | --- |
 | 日记/记事板 UI、快捷键、导出 | `src/components/NoteBoard.tsx`、`src/components/AiSchedulePanel.tsx`、`src/utils/note-export.ts` | 不让 LLM 负责布局；导出在前端确定性生成 |
 | 记事数据、迁移、备份恢复 | `server/note-item-service.ts`、`server/db.ts`、`server/backup-service.ts` | 保留旧 `linked_schedule_ids` 兼容字段；不跨账号读取 |
-| 知识库、Markdown 迁移 | `server/library-service.ts`、`server/library-markdown.ts`、V2 项目的 `scripts/process-migration-folder.ps1`、`docs/knowledge-library-operations.md` | 普通处理校验通过后默认 `publish`；`retire/restore/purge` 必须显式选择；本地关系和正文清理后再通过令牌写入；不直接修改运行中的数据库 |
+| 知识库、Markdown 迁移 | `server/library-service.ts`、`server/library-markdown.ts`、独立 Knowledge Library 项目的 `scripts/process-migration-folder.ps1`、`docs/knowledge-library-operations.md` | 普通处理校验通过后默认 `publish`；`retire/restore/purge` 必须显式选择；本地关系和正文清理后再通过令牌写入；不直接修改运行中的数据库 |
 | AI 计划确认 | `server/index.ts`、`server/ai-plan.ts` | 先生成待确认草稿；禁止旧专用入口自动完成来源记事 |
 | 日报采集/生成/校验 | `日报-v2/scripts/`、`日报-v2/schemas/`、`日报-v2/tests/` | V2 只输出结构化内容；`-NoSend` 不发布、不入队、不发信 |
-| 日报媒体与发布 | `日报-v2/scripts/report_media.py`、`日报-v2/scripts/publish_report.py`、主仓库 `server/daily-report*.ts` | 先本地校验和上传媒体，再执行最后日报 PUT；Local/Cloud 都先写生产记录，再按来源设置进入网页/邮件 |
+| 日报媒体与发布 | `日报-v2/scripts/report_media.py`、`日报-v2/scripts/publish_report.py`、主仓库 `server/daily-report*.ts` | Local 先本地校验/上传媒体再 PUT；Cloud 按兼容/严格批次合同处理媒体；正式发布均先写记录，再按来源设置进入网页/邮件 |
 | 生产升级与回滚 | `DEPLOY.md`、`日报-v2/README.md` | 本地构建/验收与生产部署、真实 SMTP、收件箱验收分开授权和记录 |
-| Knowledge Library 首次部署与文档追踪 | `docs/KNOWLEDGE-LIBRARY-FIRST-DEPLOYMENT.md`、本地 V2 项目的 `docs/knowledge-library-first-deployment.md` | 本地批次、关系和生命周期先校验；不把令牌写入命令行、报告、日志或 Git |
+| Knowledge Library 首次部署与文档追踪 | `docs/KNOWLEDGE-LIBRARY-FIRST-DEPLOYMENT.md`、独立 Knowledge Library 项目的 `docs/knowledge-library-first-deployment.md` | 本地批次、关系和生命周期先校验；不把令牌写入命令行、报告、日志或 Git |
 | 旧日报问题 | `LEGACY_PROJECT` 只读副本 | 仅用于理解和回滚，不修改旧项目 |
 
 ## 5. 验证与证据

@@ -1,5 +1,13 @@
 # AI Calendar Test Matrix
 
+- Status: LIVING
+- Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
+- Last verified commit/version: `8854a38` / `0.21.0-260915.0924`（2026-09-15，源码核对）。
+- Authority: 当前源码与自动化验证优先；文档职责见文档索引。
+- Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
+- Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
+- Do not use for: 推断当前生产部署、Work 配置或邮件收件箱状态。
+
 本矩阵区分自动化、浏览器手工和生产验收。单元测试通过不等于浏览器 UI 正常；浏览器页面正常也不等于生产部署、SMTP 接受或收件箱最终到达。
 
 ## 1. 通用命令
@@ -40,4 +48,8 @@
 - Playwright 浏览器下载会增加锁文件、CI 时间和维护边界；
 - 当前 CI 先保证 npm ci、类型、服务端测试和构建稳定。
 
-现阶段的最小 UI smoke 范围是 /login、/today、/schedule、/assistant、/reminders、/import、/reports、/library、/settings。下次引入项目级浏览器测试时，必须先补 fixture、console error 处理、viewport 断言和 CI 浏览器安装，再决定是否加入 workflow。
+现阶段的最小 UI smoke 范围是 /login、/today、/schedule、/assistant、/reminders、/reports、/library，以及通过产品壳按钮打开 SettingsDialog（没有独立 /settings 路由）。另检查 /import 重定向到 /assistant?tool=email-import，并验证导入草稿及确认流程。下次引入项目级浏览器测试时，必须先补 fixture、console error 处理、viewport 断言和 CI 浏览器安装，再决定是否加入 workflow。
+
+## 4. Bundle 观察基线
+
+[Bundle 测量说明](BUNDLE-BASELINE.md) 使用生产构建 manifest 的静态 imports 闭包区分 initial 和非首屏 JS，记录全部 JS/CSS raw/gzip 与最大 10 个资源。测量脚本只读构建目录、不加载 .env、不构建、不发网络请求；不设置预算，不改 CI 或 Vite 警告阈值。脚本的合成 manifest 验证用 `node --test scripts/measure-bundle.test.mjs`，与现有服务测试分别执行。

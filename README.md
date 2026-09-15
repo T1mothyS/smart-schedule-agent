@@ -6,6 +6,8 @@ AI Calendar 是一个面向个人用户的日程、待办和周期事务管理�
 
 跨项目结构、日报 V2 接口边界、任务路由和分层验收见 [`PROJECT-MAP.md`](PROJECT-MAP.md)。
 
+当前规范、操作手册与历史快照统一从 [文档索引](docs/README.md) 进入；[Bundle 测量](docs/BUNDLE-BASELINE.md) 记录构建体积，不能代替浏览器性能验收。
+
 Knowledge Library V2 首次部署、令牌权限、分层验收和回滚见 [`docs/KNOWLEDGE-LIBRARY-FIRST-DEPLOYMENT.md`](docs/KNOWLEDGE-LIBRARY-FIRST-DEPLOYMENT.md)；本地 Knowledge Library 项目另有对应的 `docs/knowledge-library-first-deployment.md` 文档追踪入口。
 
 ## 1. 当前能力
@@ -27,7 +29,7 @@ Knowledge Library V2 首次部署、令牌权限、分层验收和回滚见 [`do
 - 日报页面按日期和来源保存当前账号的个人情报日报；新版 `daily-digest.v1` 内容由固定 Newsletter 模板渲染，发布前由 V2 在本地下载、校验并上传新闻图片与来源 logo，服务端按“账号、日期、来源、内容哈希”保存并在入库前确认 Markdown 只引用本站媒体；未读邮箱默认生成独立的邮件简报，明确动作另列为邮件待办；旧日报继续使用受限 Markdown 兼容路径，并严格按账号隔离。
 - 日报设置提供“接收并转发本地日报”和“接收并转发 Cloud 日报”两个来源开关。两边的有效正式发布都会先写入生产服务器；未勾选来源保存为 `CANDIDATE`，不进入正式网页和邮件，可在日报页候选对照；勾选来源保存为 `RECEIVED`，网页和邮件按来源分别处理。
 - 日报由外部 V2 程序在 Validator 通过后通过专用接口发布；“日报邮件”是独立于每日摘要的设置，首次发布和后续内容更新都会为新的内容版本入队，同一来源和内容版本保持幂等；每一天的日报详情都支持手动重新发送。
-- 日报云端链路已提供 OAuth 2.1 风格 PKCE、持久化 Cloud Context、无状态 MCP 接口和 `dry_run`/`PUBLISHED` 正式发布契约；默认仍为 Shadow，完成三日期闸门后可将 Work 任务切换为 `dry_run=false`。它与现有本地日报令牌接口并行，未自动创建或启用 Work 定时任务，未改变当前本地生产/回滚链路。详细边界见 [`docs/CHATGPT-WORK-CLOUD.md`](docs/CHATGPT-WORK-CLOUD.md)。
+- 日报云端链路提供 OAuth PKCE、Cloud Context、MCP 和 `dry_run`/`PUBLISHED` 合同，与 Local 专用令牌链路并行。Cloud 内容完整性是硬闸门；兼容路径逐图 Best Effort，带媒体批次则保持严格校验。Shadow 必须显式传 `dry_run=true`；实际 Work 模式与生产状态需现场核对，不能从历史文档推断。详细边界见 [Cloud 文档](docs/CHATGPT-WORK-CLOUD.md)。
 - 每日摘要按账号保存的时、分和时区入队；同一配置时间的重复扫描保持幂等，修改当天提醒时间后允许再次触发，不与单项提醒混用。
 - 高优先级、未完成且有明确开始时间的事件/待办，在开始前 15 分钟内发送固定邮件提醒；它不受邮件开关、免打扰和日报开关影响。
 - 可生成仅展示一次的只读日报令牌，供独立日报程序按日期读取当前账号日程；服务端只保存令牌哈希。
@@ -46,7 +48,7 @@ Knowledge Library V2 首次部署、令牌权限、分层验收和回滚见 [`do
 
 ### 1.1 版本与邮件链路
 
-- 当前版本：`0.19.1-260912.1623`。版本号只在 `package.json` 中维护，构建与界面从包版本读取，`package-lock.json` 保持同步。
+- 当前源码版本以 [`package.json`](package.json) 的 `version` 为准，构建与界面从包版本读取，`package-lock.json` 保持同步。源码版本不等于当前生产部署版本。
 - 每日摘要邮件链路：账号提醒设置 → 每日摘要调度器 → 持久化通知队列 → 固定发件邮箱；按账号、时区、日期和配置时间组成触发键幂等。
 - 高优先级邮件链路：高优先级事件/待办 → 开始前 1–15 分钟调度器 → 持久化通知队列 → 固定发件邮箱；不依赖每日提醒或邮件开关。
 - V2 本地日报链路：Validator 通过 → 本地下载/校验并上传 `daily-digest.v1` 图片与来源 logo → `PUT /api/integrations/daily-report/reports/:date`（固定 `source=local`）→ 服务端确认本站媒体存在 → 账号、日期、来源和内容版本日报记录 → 根据来源接收设置决定网页与日报邮件队列 → 固定发件邮箱；同一来源和内容版本只自动入队一次，媒体失败不会进入最后的日报 PUT，详情页可对正式接收正文手动重新发送。

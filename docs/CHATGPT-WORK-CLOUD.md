@@ -1,10 +1,18 @@
 # ChatGPT Work Cloud 日报正式发布与并行回滚链路
 
-本文档描述把日报 V2 迁移到 ChatGPT Work Cloud 的并行与正式发布实现。当前代码已提供 OAuth/MCP、来源维度的生产写入、Cloud Context 边界和隔离的媒体准备批次；媒体准备服务已部署并完成真实 Work 选图验证。2026-09-14 的内容完整性优先与兼容媒体降级代码已按本地预构建路径上线，但正式 Work 发布和本地链路切换仍未执行。
+- Status: CONTRACT（末尾为历史快照）
+- Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
+- Last verified commit/version: `8854a38` / `0.21.0-260915.0924`（2026-09-15，源码核对）。
+- Authority: 当前源码与自动化验证优先；文档职责见文档索引。
+- Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
+- Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
+- Do not use for: 推断当前生产部署、Work 配置或邮件收件箱状态。
 
-这里的“云端”指 ChatGPT Work 的后台任务运行环境；它不能直接读取本机 `日报-v2` worktree 或本地令牌。V2 的 Skill、结构化校验器和渲染器源材料及插件副本已经同步并通过本地验证，但本地文件路径不是 Work 资源安装证明；现有 Work 任务仍按已保存的 Shadow 边界运行。
+本文档前半部分描述当前源码中的 OAuth/MCP、来源隔离、内容与媒体合同；末尾单独保存历史运行快照。源码核对基线为 `8854a38` / `0.21.0-260915.0924`（2026-09-15），不证明当前生产版本或 Work 任务配置。历史中既有 Shadow，也有单次受控正式发布，它们不能互相替代，也不能证明定时任务已切换。
 
-## 目标架构
+这里的“云端”指 ChatGPT Work 的后台任务运行环境；它不能直接读取本机 `日报-v2` worktree 或本地令牌。本地 Skill/插件文件不是 Work 资源安装证明。运行模式须核对实际任务中保存的提示、显式 `dry_run` 参数、版本和频率，不能从此文档推断。
+
+## 当前服务合同与调用流程
 
 ```text
 ChatGPT Work scheduled task
@@ -22,7 +30,7 @@ AI Calendar /mcp
                                            ├─ RECEIVED -> 正式网页 + Cloud 邮件队列
                                            └─ CANDIDATE -> 候选对照（不进正式网页/邮件）
 
-现有本地链路：继续由 v2-chatgpt -> run_daily.ps1 独立运行，作为当前生产和回滚链路。
+本地链路：run_daily.ps1 独立于 Cloud，是否启用由实际运行配置决定。
 ```
 
 ## 服务端接口
@@ -105,7 +113,19 @@ Work 必须先生成 `daily-digest.v1` JSON，再调用已经随 Work Skill 提�
 
 dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼容路径允许 `imageCount=0`，但必须如实保留 `candidateImageCount`、`mediaFailureCount` 和 `mediaFailures`；严格媒体批次中任何必需图片失败仍会停留在非 READY 状态，不能降低该批次质量要求。正式调用必须使用 `dry_run=false`，并以返回 `status=PUBLISHED` 作为“已写入生产服务器”的硬性回执；`source` 必须由服务端标记为 `cloud`。随后 `deliveryStatus=RECEIVED` 或 `CANDIDATE` 只表示是否进入正式网页和邮件，`QUEUED` 只代表邮件已入队，不代表 SMTP accepted 或收件箱到达。
 
-## 第二阶段第一轮状态（2026-09-13）
+`dry_run=true` 不保存日报、不入队，但兼容路径的媒体处理可能写入托管文件。MCP 参数 `dry_run` 默认是 `false`，Shadow 必须显式传 `true`；先 dry-run、再同正文正式发布是调用流程要求，当前服务端没有强制前置成功回执的状态机。
+
+## Markdown 合同与解析诊断
+
+`daily_report.read_inputs` 返回 `markdownContract`；版本及字段以 `server/daily-digest-contract.ts` 为准。调用端应使用完整合成模板和字段约束，不能只写“使用 daily-digest.v1”。解析失败返回 `INVALID_DIGEST_FORMAT`、`validationIssues` 和合同版本，发生于媒体处理、日报入库和邮件入队之前。输入完整性仍单独检查 Calendar、Mail、市场与观察名单等要求。排障步骤见 [Cloud 排障手册](CLOUD-DIGEST-RECOVERY.md)。
+
+<a id="cloud-run-history"></a>
+
+## 历史运行快照（不作为当前状态）
+
+以下内容保留各次运行当时的证据边界。“当前”“尚未”“本轮”均指对应历史时点；2026-09-14 前段的“未正式发布”后来有同日单次受控发布记录，不再用于推断现状。生产、实际 Prompt、定时切换、SMTP 和收件箱须分别现场核对。
+
+### 第二阶段第一轮状态（2026-09-13）
 
 - 本地已实现并测试 `media_prepare_start`、`media_prepare`、`media_prepare_status`、批次归属/生命周期、候选 fallback、服务器受控抓取和严格批次发布检查；生产基线为 commit `6767ae8`、版本 `0.20.4-260913.2139`。
 - 第一轮真实 Work 负向矩阵已完成：批次 `19f8cb8e-6a5c-433c-a498-1e8bc6af2f26` 处理 12 个 asset，`PREPARING`、`hostedCount=1`、`failedCount=11`、`totalBytes=30320`。`gstatic.com` 的 WebP 成功托管；HTTP 403/404、HTML/错误 MIME、SSRF/private IP 均由服务器归因。`upload.wikimedia.org` 在阿里云服务器侧连接超时，属于服务器到源站的网络不可达，不是 Work 没有提交 URL。
@@ -113,7 +133,7 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼
 - 服务器独立复核确认 4 个文件真实存在于 `data/daily-report-media`，磁盘 hash/大小与数据库一致，4 个 `hostedUrl` 均返回 HTTP 200 且 MIME/长度匹配；本轮发生过一次 OAuth 重新授权，未观察到人工审批。
 - 现有 Local V2 与 Cloud 兼容发布路径保留；`CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED` 未开启，正式 Work 定时任务未改写，relay 未部署。本轮未调用 publish、未入队、未发邮件。
 
-## 第三阶段：内容完整性优先与媒体降级（2026-09-14）
+### 第三阶段：内容完整性优先与媒体降级（2026-09-14）
 
 - 主项目 `main` 已建立本地 checkpoint `9c039d5b1acc6ab92a6ab1fd75335b7e0bf956ae`，版本为 `0.20.5-260914.0808`；Cloud 兼容路径保留 Calendar 日程、Mail Briefing、金融与市场、观察名单和新闻结构硬闸门。每个 Calendar schedule 的标题必须出现在 `atAGlance`，避免日程在云端生成时被静默遗漏。
 - 未提供 `mediaBatchId` 的 Cloud 兼容路径改为逐图 Best Effort：失败图片/来源图标降级为空图片位，并返回 `candidateImageCount`、`mediaFailureCount` 和脱敏 `mediaFailures`；严格媒体批次路径仍保持 READY、文件归属、完整媒体和失败即阻断。生产 `CLOUD_DAILY_REPORT_MEDIA_BATCH_REQUIRED` 未开启，兼容路径保持 `false`，未改变批次语义。
@@ -123,7 +143,7 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼
 - 最终公网核验通过：`/api/health`、首页、`/today`、OAuth 保护资源元数据均为 HTTP `200`；实际静态 JS 为 `1,256,211` bytes、`application/javascript`，SHA-256 `4871FABE3B8884CDB914B84D6385E2DBBA0073F835F194D4EC4953E2B96063B2` 与本地构建一致；无凭据 `POST /mcp` 返回预期 `401`。
 - 正式 Work 任务 `日报 V2 Cloud Shadow` 仍保持每日 `16:40`、`Asia/Shanghai` 和 `dry_run=true` 边界；本轮没有调用云端正式 `publish`、没有入邮件队列或发送邮件，也没有把本地插件文件路径冒充为 Work 侧已安装证明。
 
-## 既有 Work 运行证据（2026-09-09）
+### 既有 Work 运行证据（2026-09-09）
 
 - 生产候选服务：`gotimothy.online` 当前发布标识为 `workspace-20260909-cloud-mcp-11`，基于 Calendar 候选分支的 `fb77c8a`；公网 health、OAuth metadata、保护资源和未授权 `/mcp` 已完成状态检查。
 - Work 连接：已完成 OAuth 授权并确认 Daily Report Cloud 工具可调用；脱敏 Cloud Context 已通过设置页导入，云端显示版本 `v1`。本地临时导出文件已删除，原始本地 Context 仍是编辑源。
@@ -131,7 +151,7 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼
 - Work 调度：已创建并启用 `日报 V2 Cloud Shadow`，任务编辑器显示每天 `16:40`，提示词固定使用 `Asia/Shanghai`，并明确禁止 `dry_run=false`、正式发布、发邮件和修改本地链路。
 - 并行边界：本地 `v2-chatgpt` 任务和本地采集/发布链路未修改，生产服务保留部署前备份和 rollback 目录。
 
-## 当前仍未完成的事情（2026-09-14）
+### 当次未完成事项（2026-09-14，单次正式发布之前）
 
 - 尚未完成至少 3 个日期的连续 shadow，也未覆盖 Calendar 无数据/不可用、邮箱部分失败或不可用和公开新闻源异常的对照测试。
 - 没有执行云端正式 `PUBLISHED`，也没有验证通知队列、SMTP/provider 或收件箱最终到达；本轮公网 200、`QUEUED` 或服务健康均不替代这些分层验收。
@@ -144,21 +164,21 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼
 
 切换前按 V2 分支的 `skills/daily-report-cloud/references/cutover.md` 执行至少三个日期的 shadow、故障矩阵、通知分层和回滚演练。
 
-## 第三阶段单次 Work 排障记录（2026-09-14）
+### 第三阶段单次 Work 排障记录（2026-09-14）
 
 - 第一轮部署后单次 Shadow 已实际到达生产 MCP：`read_inputs`、Work 公开新闻核实和 Calendar/Mail/Context/History/Market/Watchlist 输入均返回可用；输入显示有 `3` 条未读邮件。`daily_report.publish(dry_run=true)` 在媒体处理前返回 `INVALID_ARGUMENT`，错误为正文无法解析为 `daily-digest.v1`，因此没有 `contentHash`、媒体完成统计或邮件状态。这不是媒体降级路径失败。
 - 根因范围已收窄：当前正式 Work 任务仍保存旧版且相互冲突的 Markdown 模板，要求空置 `Worth Your Time`，但没有把 `Mail Briefing`、`Mail Tasks`、`金融与市场`、`观察名单` 和 Calendar 标题覆盖写成同一份可执行结构；该模板与已部署的 Cloud 内容完整性 contract 不一致。服务端当前返回的是解析阶段的通用错误，未暴露具体缺失行，因此不能把某一个字段缺失写成已确认的唯一原因。
 - 第二轮使用单次消息明确补齐当前 parser 顺序和 Mail/Market/Watchlist/Calendar 要求，并只要求 `dry_run=true`；但 Work 在调用生产 MCP 前提示 `Daily Report Cloud` OAuth 连接已过期，未执行任何新的 `read_inputs` 或 `publish`。重连入口已打开到账号登录页；本次未代填账号、密码或授权。
 - 结论：生产部署与本地兼容媒体实现仍有效；当前业务复测阻塞在 Work OAuth 会话，正式 Work 定时任务没有修改，也没有调用 `dry_run=false`、入队或发信。完成登录后应先复跑同一单次结构验证，再根据 `VALIDATED_NOT_PUBLISHED` 决定是否进入单次正式发布验收。
 
-## 第三阶段受控正式发布记录（2026-09-14）
+### 第三阶段受控正式发布记录（2026-09-14）
 
 - 重连后同一单次结构验证返回 `VALIDATED_NOT_PUBLISHED`：Calendar、Mail、Context、History、Public News 均 OK；5 个图片候选中 4 个成功、1 个 HTTP 404，`mediaFailureCount=1`，失败未阻断正文校验。
 - 随后对同一日期、同一正文执行唯一一次 `dry_run=false`，生产回执为 `status=PUBLISHED`、`source=cloud`、`reportStatus=CREATED`、`deliveryStatus=RECEIVED`，`contentHash=f0d226a11d6dcb435451bca8f1f761acc2a5643c9d73792947dfab8d8cc7d199`，媒体候选 5、成功 4、失败 1（`FETCH_ERROR`）。
 - Work 回执的邮件状态为 `QUEUED`；随后生产日志确认 SMTP `acceptedCount=1`、`rejectedCount=0`、`pendingCount=0` 并记录 `notification_sent`。这证明 SMTP/provider 接受，不证明目标收件箱最终到达；本轮未独立使用 IMAP 读取收件箱。
 - 本次发布是当前会话中的单次受控操作；正式 `16:40` Work 任务、本地日报任务和 V2 自动化均未修改，未调用 Media Prepare，未新增第二次发布。
 
-## Markdown 合同与解析诊断（contract 2026-09-14.2）
+### Markdown 合同与解析诊断交付记录（contract 2026-09-14.2）
 
 `daily_report.read_inputs` 现在返回 `markdownContract`，包含与解析器验证过的完整合成示例、精确字段顺序和长度限制。运行端应使用该合同替换示例资料，不能把完整模板简写成“使用 daily-digest.v1”。金融与市场和观察名单是 `Category Digest` 下的三级分类标题。
 

@@ -136,7 +136,7 @@ C:\Users\Elysia\Documents\Codex_Knowledge_Library\
 7. 运行发布脚本；只有检查而不改变服务器时才显式加 `-DryRun`，并确认 `validation-report.json` 为 0 errors、0 warnings。
 8. `process-migration-folder.ps1` 在处理结束后自动调用发布脚本；撤回/彻底清除批次会把目标排除出 active 关系并清理正文中的 `[[链接]]`。目标与令牌优先从用户本地配置读取，也可用当前会话环境变量覆盖。
 
-默认干跑：
+首次配置或仅检查时显式干跑（已明确目标的普通处理仍默认 publish）：
 
 ```powershell
 Set-Location 'C:\Users\Elysia\Documents\Codex_Knowledge_Library'
