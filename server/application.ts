@@ -1,3 +1,7 @@
+import { isValidDateKey } from './date-key.js';
+import { createReportsReadRouter } from './routes/reports-read.js';
+import { createReportsPolicyRouter } from './routes/reports-policy.js';
+import { createReportsTokenRouter } from './routes/reports-token.js';
 import { createLibraryRouter } from './routes/library.js';
 import { createNotesRouter } from './routes/notes.js';
 import { createGuidesRouter } from './routes/guides.js';
@@ -35,9 +39,8 @@ import { createModelService } from "./model-service.js";
 import { parseAiJson } from "./ai-json.js";
 import { extractWeatherLocationQuery, getDailyWeather, getWeatherErrorKind, isWeatherQuestion, searchLocations, type WeatherLocation } from './weather-service.js';
 import { createReadableUserExport, createSchedulesCsv } from './export-service.js';
-import { authenticateDailyReportToken, generateDailyReportToken, getDailyReportTokenStatus, revokeDailyReportToken } from './daily-report-token-service.js';
-import { getDailyReportCandidateView, getDailyReportView, getDailyReportViewsForDate, listDailyReportViewsPage, publishDailyReport, queueDailyReportEmail } from './daily-report-service.js';
-import { getDailyReportDeliveryPolicy, normalizeDailyReportDeliverySources, setDailyReportDeliveryPolicy } from './daily-report-delivery-policy.js';
+import { authenticateDailyReportToken } from './daily-report-token-service.js';
+import { getDailyReportView, publishDailyReport, queueDailyReportEmail } from './daily-report-service.js';
 import {
   DAILY_REPORT_MEDIA_MAX_BYTES,
   DAILY_REPORT_MEDIA_ROUTE,
@@ -59,7 +62,6 @@ import { addLog, allLogs, clearLogs, listLogs, type LogCategory } from './log-se
 import { searchLibraryForAi, type KnowledgeSearchMatch } from './search-service.js';
 import { createDailyReportCloudMcpRouter } from './daily-report-cloud-mcp.js';
 import { createDailyReportCloudOAuthRouter } from './daily-report-cloud-auth.js';
-import * as dailyReportCloudStore from './daily-report-cloud-store.js';
 import {
   getInviteCodeRole,
   listInviteCodeStatuses,
@@ -1383,25 +1385,7 @@ app.get('/api/exports/schedules.csv', authenticate, (req, res) => {
 
 // ============= 每日日报只读集成 =============
 
-app.get('/api/integrations/daily-report-token', authenticate, (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  res.json({ status: getDailyReportTokenStatus((req as any).user.userId) });
-});
-
-app.post('/api/integrations/daily-report-token', authenticate, (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  const generated = generateDailyReportToken((req as any).user.userId);
-  res.json({
-    token: generated.token,
-    status: generated.status,
-    warning: '令牌明文只显示这一次，请立即保存到日报项目的本地私密配置。',
-  });
-});
-
-app.delete('/api/integrations/daily-report-token', authenticate, (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  res.json({ status: revokeDailyReportToken((req as any).user.userId) });
-});
+app.use(createReportsTokenRouter({ authenticate }));
 
 // 用户 QQ 邮箱配置只返回脱敏状态；授权码只在服务端加密保存，从不通过 API 返回。
 app.get('/api/user-mail-account', authenticate, (req, res) => {
@@ -1448,112 +1432,10 @@ app.post('/api/user-mail-account/test', authenticate, async (req, res) => {
 });
 
 // 日报云端 Context 由账号登录态维护；MCP 只读，避免模型自行改写长期偏好。
-app.get('/api/daily-report/cloud-context', authenticate, (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  res.json({ context: dailyReportCloudStore.getDailyReportCloudContext((req as any).user.userId) });
-});
-
-app.put('/api/daily-report/cloud-context', authenticate, (req, res) => {
-  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body) || Object.keys(req.body).some(key => key !== 'context')) {
-    return res.status(400).json({ error: '请求正文只允许包含 context 字段' });
-  }
-  try {
-    const context = dailyReportCloudStore.replaceDailyReportCloudContext((req as any).user.userId, req.body.context);
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ context });
-  } catch (error: any) {
-    res.status(400).json({ error: error?.message || '保存日报云端 Context 失败' });
-  }
-});
-
-app.get('/api/daily-report/delivery-policy', authenticate, (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  res.json(getDailyReportDeliveryPolicy((req as any).user.userId));
-});
-
-app.put('/api/daily-report/delivery-policy', authenticate, (req, res) => {
-  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body) || Object.keys(req.body).some(key => key !== 'sources')) {
-    return res.status(400).json({ error: '请求正文只允许包含 sources 字段' });
-  }
-  try {
-    const sources = normalizeDailyReportDeliverySources(req.body.sources);
-    const userId = (req as any).user.userId;
-    const policy = setDailyReportDeliveryPolicy(userId, sources);
-    addLog('info', 'daily-report', '日报来源接收设置已保存', {
-      event: 'daily_report_delivery_policy_saved',
-      userId,
-      sources: policy.sources,
-    });
-    res.setHeader('Cache-Control', 'no-store');
-    res.json(policy);
-  } catch (error: any) {
-    res.status(400).json({ error: error?.message || '保存日报来源接收设置失败' });
-  }
-});
-
-app.get('/api/daily-report/cloud-activity', authenticate, (req, res) => {
-  try {
-    const activity = dailyReportCloudStore.listDailyReportCloudActivity((req as any).user.userId, {
-      fromDate: req.query.fromDate ? String(req.query.fromDate) : undefined,
-      toDate: req.query.toDate ? String(req.query.toDate) : undefined,
-      limit: req.query.limit === undefined ? 100 : Number(req.query.limit),
-    });
-    res.setHeader('Cache-Control', 'no-store');
-    res.json({ activity });
-  } catch (error: any) {
-    res.status(400).json({ error: error?.message || '读取日报云端活动证据失败' });
-  }
-});
-
-app.post('/api/daily-report/cloud-activity', authenticate, (req, res) => {
-  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
-    return res.status(400).json({ error: '请求正文必须是对象' });
-  }
-  try {
-    const activity = dailyReportCloudStore.createDailyReportCloudActivity((req as any).user.userId, req.body);
-    res.status(201).setHeader('Cache-Control', 'no-store').json({ activity });
-  } catch (error: any) {
-    res.status(400).json({ error: error?.message || '保存日报云端活动证据失败' });
-  }
-});
+app.use(createReportsPolicyRouter({ authenticate }));
 
 // 登录后的日报页面只允许读取当前账号的数据。
-app.get('/api/daily-reports', authenticate, (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  const rawLimit = Number(req.query.limit || 100);
-  const rawOffset = Number(req.query.offset || 0);
-  const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 500) : 100;
-  const offset = Number.isInteger(rawOffset) && rawOffset >= 0 ? rawOffset : 0;
-  const view = req.query.view === 'candidates' ? 'candidates' : 'received';
-  const page = listDailyReportViewsPage((req as any).user.userId, limit, offset, view);
-  res.json({ reports: page.reports, total: page.total, offset, limit, view, hasMore: offset + page.reports.length < page.total });
-});
-
-app.get('/api/daily-reports/:date', authenticate, (req, res) => {
-  res.setHeader('Cache-Control', 'no-store');
-  const date = String(req.params.date || '');
-  if (!isValidDateKey(date)) return res.status(400).json({ error: 'date 必须是有效的 YYYY-MM-DD 日期' });
-  const userId = (req as any).user.userId;
-  const rawSource = req.query.source === undefined ? undefined : String(req.query.source);
-  if (rawSource !== undefined && rawSource !== 'local' && rawSource !== 'cloud') {
-    return res.status(400).json({ error: 'source 只能是 local 或 cloud' });
-  }
-  const rawView = req.query.view === undefined ? 'received' : String(req.query.view);
-  if (rawView !== 'received' && rawView !== 'candidates') {
-    return res.status(400).json({ error: 'view 只能是 received 或 candidates' });
-  }
-  const bundle = getDailyReportViewsForDate(userId, date);
-  const candidateSource = bundle.reports.find(item => item.deliveryStatus === 'CANDIDATE')?.source;
-  const report = rawSource === undefined
-    ? rawView === 'received'
-      ? bundle.report
-      : candidateSource ? getDailyReportCandidateView(userId, date, candidateSource) : null
-    : rawView === 'received'
-      ? getDailyReportView(userId, date, rawSource)
-      : getDailyReportCandidateView(userId, date, rawSource);
-  if (!report) return res.status(404).json({ error: '该日期的日报不存在' });
-  res.json({ report, reports: bundle.reports, view: rawView });
-});
+app.use(createReportsReadRouter({ authenticate }));
 
 app.post('/api/daily-reports/:date/send', authenticate, (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -1590,12 +1472,6 @@ app.post('/api/daily-reports/:date/send', authenticate, (req, res) => {
     res.status(503).json({ error: '日报邮件暂时无法排队，请稍后重试' });
   }
 });
-
-function isValidDateKey(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
-}
 
 function dateKeyInTimezone(value: string, timezone: string, allDay: boolean): string {
   if (allDay || !/(?:Z|[+-]\d{2}:\d{2})$/.test(value)) return value.slice(0, 10);

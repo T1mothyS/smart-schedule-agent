@@ -25,7 +25,10 @@ test('extracted routes preserve auth, search isolation and ownership errors', as
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   try {
-    for (const url of ['/api/ai-linkage-guides', '/api/search?q=fixture', '/api/note-items']) {
+    for (const url of ['/api/ai-linkage-guides', '/api/search?q=fixture', '/api/note-items',
+      '/api/library/preferences', '/api/library/export', '/api/library/publish-token',
+      '/api/integrations/library-token', '/api/daily-reports', '/api/daily-report/delivery-policy',
+      '/api/daily-report/cloud-context', '/api/daily-report/cloud-activity', '/api/integrations/daily-report-token']) {
       assert.equal((await fetch(base + url)).status, 401);
       assert.equal((await request(url)).status, 200);
     }
@@ -40,6 +43,18 @@ test('extracted routes preserve auth, search isolation and ownership errors', as
     const other = await (await request('/api/search?q=phase4owner&scope=note', 1)).json();
     assert.equal(other.results.length, 0);
     assert.equal((await request('/api/search?q=fixture&scope=invalid')).status, 400);
+    const policy = await request('/api/daily-report/delivery-policy', 0, 'PUT', { sources: ['cloud'] });
+    assert.equal(policy.status, 200);
+    assert.deepEqual((await (await request('/api/daily-report/delivery-policy')).json()).sources, ['cloud']);
+    assert.notDeepEqual((await (await request('/api/daily-report/delivery-policy', 1)).json()).sources, ['cloud']);
+    assert.equal((await request('/api/daily-report/delivery-policy', 0, 'PUT', { sources: [], userId: 'other' })).status, 400);
+    assert.equal((await request('/api/daily-reports/2026-02-30')).status, 400);
+    assert.equal((await request('/api/daily-reports/2026-02-28')).status, 404);
+    assert.equal((await request('/api/daily-reports/2026-02-28?source=other')).status, 400);
+    const generated = await request('/api/integrations/daily-report-token', 0, 'POST', {});
+    assert.equal(generated.status, 200);
+    const integrationToken = (await generated.json()).token;
+    assert.equal((await fetch(base + '/api/note-items', { headers: { Authorization: 'Bearer ' + integrationToken } })).status, 401);
   } finally { await new Promise<void>(resolve => listener.close(() => resolve())); }
 });
 
