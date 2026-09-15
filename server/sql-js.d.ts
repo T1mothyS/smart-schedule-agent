@@ -18,4 +18,3 @@ declare module 'sql.js' {
   }>;
   export default initSqlJs;
 }
-

@@ -1,4 +1,4 @@
-import { registerPersistence, persistDatabase } from './persistence.js';
+import { registerPersistence, persistDatabase, recoverPersistence, assertPersistenceReady } from './persistence.js';
 /**
  * 日程数据存储模块
  * 使用 sql.js 存储日程数据
@@ -35,6 +35,7 @@ let db: SqlJsDatabase;
 
 // 初始化数据库
 async function initScheduleDb(): Promise<void> {
+  recoverPersistence(DATA_DIR);
   const SQL = await initSqlJs();
 
   // 尝试加载已有数据库
@@ -167,6 +168,7 @@ function saveScheduleDb(): void {
 
 // 辅助函数：将结果转为对象数组
 function queryAll<T>(sql: string, params: any[] = []): T[] {
+  assertPersistenceReady();
   const stmt = db.prepare(sql);
   stmt.bind(params);
   const results: T[] = [];
@@ -606,6 +608,7 @@ export function exportUserScheduleData(userId: string): { schedules: Schedule[];
 }
 
 export function exportScheduleDb(): Buffer {
+  assertPersistenceReady();
   return Buffer.from(db.export());
 }
 

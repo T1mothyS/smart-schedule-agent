@@ -1,4 +1,4 @@
-import { registerPersistence, persistDatabase } from './persistence.js';
+import { registerPersistence, persistDatabase, recoverPersistence, assertPersistenceReady } from './persistence.js';
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -31,6 +31,7 @@ export function assertNoUnreconciledChatWal(databasePath = dbPath): void {
 // 初始化数据库
 async function initDb(): Promise<void> {
   assertNoUnreconciledChatWal();
+  recoverPersistence(dataDir);
   const SQL = await initSqlJs();
 
   // 尝试加载已有数据库
@@ -561,6 +562,7 @@ function saveDb(): void {
 
 // 辅助函数：将结果转为对象数组
 function queryAll<T>(sql: string, params: any[] = []): T[] {
+  assertPersistenceReady();
   const stmt = db.prepare(sql);
   stmt.bind(params);
   const results: T[] = [];
@@ -1376,6 +1378,7 @@ export function exportUserAccountData(userId: string): { user: Omit<DbUser, 'pas
 }
 
 export function exportChatDb(): Buffer {
+  assertPersistenceReady();
   return Buffer.from(db.export());
 }
 export function getAllEnabledReminders(): (DbReminder & { email: string })[] {

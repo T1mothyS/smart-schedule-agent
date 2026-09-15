@@ -1,4 +1,4 @@
-import { registerPersistence, persistDatabase } from './persistence.js';
+import { registerPersistence, persistDatabase, recoverPersistence, assertPersistenceReady } from './persistence.js';
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
@@ -116,6 +116,7 @@ function persist(): void {
 }
 
 function queryAll<T>(sql: string, params: unknown[] = []): T[] {
+  assertPersistenceReady();
   const statement = db.prepare(sql);
   statement.bind(params.map(value => value === undefined ? null : value));
   const rows: T[] = [];
@@ -266,6 +267,7 @@ function rowToAiImport(row: any): AiImportRecord {
 
 export async function initActivityDb(): Promise<void> {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+  recoverPersistence(DATA_DIR);
   const SQL = await initSqlJs();
   db = fs.existsSync(DB_PATH) ? new SQL.Database(fs.readFileSync(DB_PATH)) : new SQL.Database();
   registerPersistence(DB_PATH, () => db.export(), bytes => {
@@ -901,6 +903,7 @@ export function exportUserActivity(userId: string): Record<string, unknown[]> {
 }
 
 export function exportActivityDb(): Buffer {
+  assertPersistenceReady();
   return Buffer.from(db.export());
 }
 

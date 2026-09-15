@@ -43,3 +43,45 @@ test('all four stores restore memory after a failed replacement; failed mutation
   }
 });
 
+
+const transactions = await import('./persistence.js');
+const completionService = await import('./schedule-completion-service.js');
+const makeSchedule = (id: string) => schedule.createSchedule({ id, user_id: 'u', title: id, calendar_id: 'personal', type: 'todo', start_time: '2026-09-15T09:00:00', all_day: false, category: 'other', priority: 'medium', is_completed: false, is_repeated: false, reminders: [], is_high_risk: false });
+
+test('completion second-file failure rolls back both databases and retry creates one proof', t => {
+  makeSchedule('completion-failure');
+  let failed = false;
+  const rename = fs.renameSync;
+  const mock = t.mock.method(fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
+    if (!failed && String(to) === path.join(root, 'activity.db')) { failed = true; throw new Error('second database failure'); }
+    return rename(from, to);
+  });
+  assert.throws(() => completionService.toggleScheduleCompletion('completion-failure', 'u'), /second database/);
+  mock.mock.restore();
+  assert.equal(schedule.getSchedule('completion-failure')?.is_completed, false);
+  assert.equal(activity.listCompletions('u', { sourceId: 'completion-failure' }).length, 0);
+  assert.equal(fs.existsSync(path.join(root, '.persistence-undo.json')), false);
+  assert.equal(completionService.toggleScheduleCompletion('completion-failure', 'foreign'), null);
+  assert.equal(completionService.toggleScheduleCompletion('completion-failure', 'u')?.is_completed, true);
+  assert.equal(activity.listCompletions('u', { sourceId: 'completion-failure' }).length, 1);
+});
+
+test('nested operation failure restores its savepoint without discarding earlier operation', () => {
+  transactions.withPersistenceTransaction(() => {
+    makeSchedule('kept-operation');
+    assert.throws(() => transactions.withPersistenceTransaction(() => { makeSchedule('discarded-operation'); throw new Error('invalid operation'); }));
+  });
+  assert.ok(schedule.getSchedule('kept-operation'));
+  assert.equal(schedule.getSchedule('discarded-operation'), null);
+});
+
+test('startup undo record restores all affected disk files before opening stores', async () => {
+  const beforeSchedule = schedule.exportScheduleDb();
+  const beforeActivity = activity.exportActivityDb();
+  fs.writeFileSync(path.join(root, '.persistence-undo.json'), JSON.stringify({ 'schedule.db': beforeSchedule.toString('base64'), 'activity.db': beforeActivity.toString('base64') }));
+  fs.writeFileSync(path.join(root, 'schedule.db'), Buffer.from('simulated interrupted replace'));
+  transactions.recoverPersistence(root);
+  await schedule.initScheduleDb(); await activity.initActivityDb();
+  assert.ok(schedule.getSchedule('kept-operation'));
+  assert.equal(activity.listCompletions('u', { sourceId: 'completion-failure' }).length, 1);
+});

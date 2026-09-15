@@ -1,4 +1,4 @@
-import { registerPersistence, persistDatabase } from './persistence.js';
+import { registerPersistence, persistDatabase, recoverPersistence, assertPersistenceReady } from './persistence.js';
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
@@ -203,6 +203,7 @@ function isReminderTimeDue(task: ReminderTask, date: Date): boolean {
 }
 
 function queryAll<T>(sql: string, params: unknown[] = []): T[] {
+  assertPersistenceReady();
   const statement = db.prepare(sql);
   statement.bind(params.map(value => value === undefined ? null : value));
   const rows: T[] = [];
@@ -328,6 +329,7 @@ function rowToDelivery(row: any): ReminderDelivery {
 
 export async function initReminderDb(): Promise<void> {
   fs.mkdirSync(DATA_DIR, { recursive: true });
+  recoverPersistence(DATA_DIR);
   const SQL = await initSqlJs();
   db = fs.existsSync(DB_PATH) ? new SQL.Database(fs.readFileSync(DB_PATH)) : new SQL.Database();
 
@@ -859,6 +861,7 @@ export function exportUserReminderData(userId: string): { tasks: ReminderTask[];
 }
 
 export function exportReminderDb(): Buffer {
+  assertPersistenceReady();
   return Buffer.from(db.export());
 }
 
