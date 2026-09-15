@@ -77,7 +77,7 @@ interface ChatMessage {
   scheduleItems?: Schedule[];
   plan?: AiSchedulePlan;
   knowledgeSources?: KnowledgeSource[];
-  timestamp: string;
+  timestamp: string | null;
 }
 
 interface AiSchedulePanelProps {
@@ -281,6 +281,19 @@ function formatTime(isoStr: string): string {
   } catch { return isoStr; }
 }
 
+function parseMessageTimestamp(value: string | null): Date | null {
+  if (!value || !value.trim()) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatMessageTimestamp(value: string | null): string {
+  const date = parseMessageTimestamp(value);
+  if (!date) return '时间未知';
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function formatDate(isoStr: string): string {
   try {
     const d = new Date(isoStr);
@@ -377,6 +390,8 @@ function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan,
 }) {
   const isUser = msg.role === 'user';
   const [editingOperationKey, setEditingOperationKey] = useState<string | null>(null);
+  const timestamp = parseMessageTimestamp(msg.timestamp);
+  const messageTime = <time className={`ai-message-timestamp${isUser ? ' is-user' : ''}${msg.type === 'error' ? ' is-error' : ''}`} dateTime={timestamp ? msg.timestamp || undefined : undefined}>{formatMessageTimestamp(msg.timestamp)}</time>;
 
   if (isUser) {
     return (
@@ -386,6 +401,7 @@ function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan,
           style={{ backgroundColor: 'var(--td-brand-color)', color: '#fff' }}
         >
           {msg.text}
+          {messageTime}
         </div>
       </div>
     );
@@ -418,6 +434,7 @@ function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan,
         {msg.type === 'error' ? (
           <div className="px-3 py-2 rounded-xl text-xs whitespace-pre-line" style={{ backgroundColor: '#FEF2F2', color: '#EF4444', border: '1px solid #FCA5A5' }}>
             {msg.text}
+            {messageTime}
           </div>
         ) : (
           <div
@@ -494,6 +511,7 @@ function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan,
                 ))}
               </div>
             )}
+            {messageTime}
           </div>
         )}
       </div>
@@ -545,7 +563,9 @@ export const AiSchedulePanel = forwardRef<AiSchedulePanelHandle, AiSchedulePanel
             scheduleItems: m.scheduleItems || m.schedule_items || undefined,
             plan: m.plan,
             knowledgeSources: m.knowledgeSources || m.knowledge_sources || undefined,
-            timestamp: m.timestamp || m.created_at || new Date().toISOString(),
+            timestamp: [m.timestamp, m.created_at]
+              .map(value => typeof value === 'string' && value.trim() ? value : null)
+              .find(value => parseMessageTimestamp(value) !== null) || null,
           })) as ChatMessage[];
           setMessages(msgs);
         }

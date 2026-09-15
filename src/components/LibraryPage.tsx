@@ -168,6 +168,54 @@ function relationItems(detail: LibraryDetail): LibraryRelation[] {
   return detail.relations?.items || detail.entry.relations || [];
 }
 
+interface LibraryTocItem {
+  id: string;
+  title: string;
+  level: number;
+}
+
+function normaliseHeadingText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function headingAnchorBase(value: string, index: number): string {
+  const slug = value
+    .toLocaleLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^\p{L}\p{N}_-]+/gu, '')
+    .replace(/^-+|-+$/g, '');
+  return `library-section-${slug || index + 1}`;
+}
+
+function buildLibraryToc(root: HTMLElement, entryTitle: string): LibraryTocItem[] {
+  const titleKey = normaliseHeadingText(entryTitle);
+  const headings = Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6'));
+  const candidates: Array<{ heading: HTMLElement; title: string; level: number; index: number }> = [];
+
+  headings.forEach((heading, index) => {
+    const title = normaliseHeadingText(heading.textContent || '');
+    if (!title) return;
+    if (index === 0 && titleKey && title === titleKey) return;
+    candidates.push({ heading, title, level: Number(heading.tagName.slice(1)), index });
+  });
+
+  const selectedLevels = Array.from(new Set(candidates.map(item => item.level))).sort((a, b) => a - b).slice(0, 2);
+  if (!selectedLevels.length) return [];
+
+  const usedIds = new Set(Array.from(root.querySelectorAll<HTMLElement>('[id]')).map(element => element.id));
+  return candidates
+    .filter(item => selectedLevels.includes(item.level))
+    .map(item => {
+      const base = headingAnchorBase(item.title, item.index);
+      let id = base;
+      let suffix = 2;
+      while (usedIds.has(id)) id = `${base}-${suffix++}`;
+      usedIds.add(id);
+      item.heading.id = id;
+      return { id, title: item.title, level: item.level };
+    });
+}
+
 function LibraryHomePage() {
   const { authHeaders } = useAuth();
   const navigate = useNavigate();
@@ -339,7 +387,12 @@ function LibraryDetailPage({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
   const [comment, setComment] = useState('');
   const [commentSaving, setCommentSaving] = useState(false);
+  const [tocItems, setTocItems] = useState<LibraryTocItem[]>([]);
+  const [activeTocId, setActiveTocId] = useState<string | null>(null);
+  const detailPageRef = useRef<HTMLDivElement | null>(null);
   const markdownRef = useRef<HTMLDivElement | null>(null);
+  const tocRef = useRef<HTMLElement | null>(null);
+  const entryTitle = detail?.entry.title || detail?.entry.summary || '';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -447,6 +500,14 @@ function LibraryDetailPage({ id }: { id: string }) {
 
   useEffect(() => {
     const root = markdownRef.current;
+    if (!root || !detail) return;
+    const nextItems = buildLibraryToc(root, entryTitle);
+    setTocItems(nextItems);
+    setActiveTocId(nextItems[0]?.id || null);
+  }, [detail, entryTitle]);
+
+  useEffect(() => {
+    const root = markdownRef.current;
     if (!root) return;
     const buttons: HTMLButtonElement[] = [];
     root.querySelectorAll('pre').forEach(pre => {
@@ -466,6 +527,40 @@ function LibraryDetailPage({ id }: { id: string }) {
     });
     return () => { buttons.forEach(button => button.remove()); };
   }, [detail?.entry.html]);
+
+  useEffect(() => {
+    const scrollRoot = detailPageRef.current;
+    if (!scrollRoot || !tocItems.length) return;
+
+    const updateActiveHeading = () => {
+      const rootRect = scrollRoot.getBoundingClientRect();
+      const compactOffset = scrollRoot.clientWidth <= 1100 ? 88 : 24;
+      const threshold = rootRect.top + compactOffset;
+      let currentId = tocItems[0].id;
+      for (const item of tocItems) {
+        const heading = document.getElementById(item.id);
+        if (!heading) continue;
+        if (heading.getBoundingClientRect().top <= threshold) currentId = item.id;
+        else break;
+      }
+      setActiveTocId(current => current === currentId ? current : currentId);
+    };
+
+    scrollRoot.addEventListener('scroll', updateActiveHeading, { passive: true });
+    window.addEventListener('resize', updateActiveHeading);
+    updateActiveHeading();
+    return () => {
+      scrollRoot.removeEventListener('scroll', updateActiveHeading);
+      window.removeEventListener('resize', updateActiveHeading);
+    };
+  }, [tocItems]);
+
+  useEffect(() => {
+    if (!activeTocId) return;
+    const target = Array.from(tocRef.current?.querySelectorAll<HTMLElement>('[data-toc-id]') || [])
+      .find(item => item.dataset.tocId === activeTocId);
+    target?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [activeTocId]);
 
   const exportMarkdown = async () => {
     try {
@@ -502,6 +597,17 @@ function LibraryDetailPage({ id }: { id: string }) {
     else await load();
   };
 
+  const scrollToHeading = (item: LibraryTocItem) => {
+    const scrollRoot = detailPageRef.current;
+    const heading = document.getElementById(item.id);
+    if (!scrollRoot || !heading) return;
+    const rootRect = scrollRoot.getBoundingClientRect();
+    const tocHeight = scrollRoot.clientWidth <= 1100 ? (tocRef.current?.getBoundingClientRect().height || 52) + 12 : 24;
+    const top = scrollRoot.scrollTop + heading.getBoundingClientRect().top - rootRect.top - tocHeight;
+    scrollRoot.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    setActiveTocId(item.id);
+  };
+
   if (loading) return <div className="library-page"><div className="library-state"><RefreshCw size={24} className="spin" /><span>正在加载知识详情…</span></div></div>;
   if (error && !detail) return <div className="library-page"><div className="library-state" role="alert"><BookOpen size={30} /><strong>知识详情暂时无法加载</strong><span>{error}</span><button type="button" className="library-secondary-button" onClick={() => void load()}>重试</button></div></div>;
   if (!detail) return null;
@@ -510,7 +616,7 @@ function LibraryDetailPage({ id }: { id: string }) {
   const relations = relationItems(detail);
 
   return (
-    <div className="library-page library-detail-page">
+    <div ref={detailPageRef} className="library-page library-detail-page">
       <div className="library-detail-toolbar">
         <button type="button" className="library-back-button" onClick={() => navigate('/library')}><ArrowLeft size={15} />返回知识库</button>
         <div className="library-header-actions">
@@ -526,6 +632,25 @@ function LibraryDetailPage({ id }: { id: string }) {
         <div className="library-detail-meta"><span>更新于 {formatTime(entry.updatedAt)}</span><span>来源：{entry.sourceType}</span>{entry.tags.map(tag => <span className="library-tag" key={tag}>#{tag}</span>)}</div>
       </header>
       <div className="library-detail-layout">
+        {tocItems.length > 0 && (
+          <nav ref={tocRef} className="library-toc" aria-label="文章章节导航">
+            <div className="library-toc-heading"><span className="library-eyebrow">CONTENTS</span><strong>章节导航</strong></div>
+            <div className="library-toc-list">
+              {tocItems.map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  data-toc-id={item.id}
+                  className={`library-toc-item${item.level === tocItems[0].level ? ' is-major' : ' is-sub'}${activeTocId === item.id ? ' active' : ''}`}
+                  aria-current={activeTocId === item.id ? 'location' : undefined}
+                  onClick={() => scrollToHeading(item)}
+                >
+                  {item.title}
+                </button>
+              ))}
+            </div>
+          </nav>
+        )}
         <article className="library-document">
           <div ref={markdownRef} className="chat-markdown library-markdown" dangerouslySetInnerHTML={{ __html: entry.html || '' }} />
         </article>

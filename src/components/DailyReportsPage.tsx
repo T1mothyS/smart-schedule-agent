@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, FileText, Mail, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Check, FileText, Mail, MoreHorizontal, RefreshCw } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 
@@ -89,13 +89,14 @@ async function readError(response: Response, fallback: string): Promise<Error> {
 export function DailyReportsPage() {
   const { authHeaders } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [reports, setReports] = useState<DailyReportSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'received' | 'candidates'>('received');
+  const viewMode = searchParams.get('view') === 'candidates' ? 'candidates' : 'received';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -132,11 +133,24 @@ export function DailyReportsPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.repeat || event.isComposing || event.defaultPrevented) return;
+      const openDialog = [...document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]')]
+        .some(dialog => dialog.getClientRects().length > 0);
+      if (openDialog) return;
+      event.preventDefault();
+      navigate('/today');
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [navigate]);
+
   const switchView = (next: 'received' | 'candidates') => {
     if (next === viewMode) return;
     setReports([]);
     setHasMore(false);
-    setViewMode(next);
+    setSearchParams(next === 'candidates' ? { view: next } : {});
   };
 
   const openReport = (item: DailyReportSummary) => {
@@ -323,6 +337,9 @@ export function DailyReportReaderPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sendingEmail, setSendingEmail] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -349,9 +366,57 @@ export function DailyReportReaderPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  const returnToList = useCallback(() => {
+    navigate(requestedView === 'candidates' ? '/reports?view=candidates' : '/reports');
+  }, [navigate, requestedView]);
+
+  const closeMoreMenu = useCallback(() => {
+    setMoreMenuOpen(false);
+    window.setTimeout(() => moreButtonRef.current?.focus(), 0);
+  }, []);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && (moreMenuRef.current?.contains(target) || moreButtonRef.current?.contains(target))) return;
+      closeMoreMenu();
+    };
+    const handleMenuEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.repeat || event.isComposing || event.defaultPrevented) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeMoreMenu();
+    };
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('keydown', handleMenuEscape, true);
+    const firstAction = moreMenuRef.current?.querySelector<HTMLElement>('[role="menuitemradio"], button:not(:disabled)');
+    firstAction?.focus();
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleMenuEscape, true);
+    };
+  }, [closeMoreMenu, moreMenuOpen]);
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.repeat || event.isComposing || event.defaultPrevented) return;
+      event.preventDefault();
+      if (moreMenuOpen) closeMoreMenu();
+      else returnToList();
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [closeMoreMenu, moreMenuOpen, returnToList]);
+
+  useEffect(() => {
+    if (!report) setMoreMenuOpen(false);
+  }, [report]);
+
   const isNewsletter = report?.html.includes('daily-newsletter') === true;
 
   const chooseSource = (source: DailyReportSource) => {
+    closeMoreMenu();
     setSearchParams({ source, view: requestedView });
   };
 
@@ -375,48 +440,76 @@ export function DailyReportReaderPage() {
     }
   };
 
+  const availableSourceReports = dateReports.filter(item => item.deliveryStatus === (requestedView === 'candidates' ? 'CANDIDATE' : 'RECEIVED'));
+  const sourceOptions = availableSourceReports.length ? availableSourceReports : report ? [report] : [];
+
   return (
     <main className="daily-report-reader-page">
       <div className="daily-report-reader-toolbar">
         <div className="daily-report-reader-toolbar-row">
-          <button type="button" className="daily-report-back" onClick={() => navigate('/reports')} aria-label="返回日报列表">
+          <button type="button" className="daily-report-back" onClick={returnToList} aria-label="返回日报列表">
             <ArrowLeft size={16} aria-hidden="true" />
             <span>返回日报</span>
           </button>
-          {report && (
-            <div className="daily-report-reader-toolbar-actions">
-              <div className="daily-report-source-tabs" role="tablist" aria-label="选择日报来源">
-                {dateReports.filter(item => item.deliveryStatus === (requestedView === 'candidates' ? 'CANDIDATE' : 'RECEIVED')).map(item => (
+          <div className="daily-report-more-wrap">
+            <button
+              ref={moreButtonRef}
+              type="button"
+              className="daily-report-more-button"
+              onClick={() => setMoreMenuOpen(open => !open)}
+              disabled={!report}
+              aria-expanded={moreMenuOpen}
+              aria-controls="daily-report-more-menu"
+              aria-haspopup="menu"
+            >
+              <MoreHorizontal size={17} aria-hidden="true" />
+              <span>更多</span>
+            </button>
+            {moreMenuOpen && report && (
+              <div ref={moreMenuRef} id="daily-report-more-menu" className="daily-report-more-menu" role="menu" aria-label="日报更多操作">
+                <div className="daily-report-menu-field">
+                  <span className="daily-report-menu-label">来源</span>
+                  <div className="daily-report-source-menu-list" aria-label="来源与接收状态">
+                    {sourceOptions.length === 1 ? (
+                      <div className="daily-report-source-menu-single" role="status">
+                        <Check size={14} aria-hidden="true" />
+                        <span>{sourceLabel[sourceOptions[0].source]} · {deliveryStatusLabel[sourceOptions[0].deliveryStatus]}</span>
+                      </div>
+                    ) : sourceOptions.map(item => (
+                      <button
+                        key={item.source}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={item.source === report.source}
+                        className={`daily-report-source-menu-option${item.source === report.source ? ' active' : ''}`}
+                        onClick={() => chooseSource(item.source)}
+                      >
+                        <span className="daily-report-source-menu-check" aria-hidden="true">{item.source === report.source && <Check size={14} />}</span>
+                        <span>{sourceLabel[item.source]} · {deliveryStatusLabel[item.deliveryStatus]}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="daily-report-menu-status-row">
+                  <span className="daily-report-menu-label">邮件状态</span>
+                  <span className={`daily-report-email-status ${report.emailStatus.toLowerCase()}`}><Mail size={13} />{emailStatusLabel[report.emailStatus]}</span>
+                </div>
+                {report.deliveryStatus === 'RECEIVED' ? (
                   <button
                     type="button"
-                    role="tab"
-                    key={item.source}
-                    aria-selected={item.source === report.source}
-                    className={item.source === report.source ? 'active' : undefined}
-                    onClick={() => chooseSource(item.source)}
+                    role="menuitem"
+                    className="daily-report-send-button daily-report-menu-send"
+                    onClick={() => void sendEmail()}
+                    disabled={sendingEmail}
+                    aria-label={`手动发送 ${formatReportDate(report.date)} ${sourceLabel[report.source]}日报邮件`}
                   >
-                    {sourceLabel[item.source]} · {deliveryStatusLabel[item.deliveryStatus]}
+                    <Mail size={14} />
+                    {sendingEmail ? '正在排队…' : report.emailStatus === 'SENT' ? '重新发送邮件' : '发送日报邮件'}
                   </button>
-                ))}
+                ) : <span className="daily-report-candidate-note">已写入生产服务器，当前设置未接收</span>}
               </div>
-              <span className={`daily-report-delivery-status ${report.deliveryStatus.toLowerCase()}`}>{sourceLabel[report.source]} · {deliveryStatusLabel[report.deliveryStatus]}</span>
-              <span className={`daily-report-email-status ${report.emailStatus.toLowerCase()}`}>
-                <Mail size={13} /> {emailStatusLabel[report.emailStatus]}
-              </span>
-              {report.deliveryStatus === 'RECEIVED' ? (
-                <button
-                  type="button"
-                  className="daily-report-send-button"
-                  onClick={() => void sendEmail()}
-                  disabled={sendingEmail}
-                  aria-label={`手动发送 ${formatReportDate(report.date)} ${sourceLabel[report.source]}日报邮件`}
-                >
-                  <Mail size={14} />
-                  {sendingEmail ? '正在排队…' : report.emailStatus === 'SENT' ? '重新发送邮件' : '发送日报邮件'}
-                </button>
-              ) : <span className="daily-report-candidate-note">已写入生产服务器，当前设置未接收</span>}
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
 
