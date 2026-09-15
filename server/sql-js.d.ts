@@ -1,5 +1,6 @@
 declare module 'sql.js' {
   export class Database {
+    close(): void;
     constructor(data?: Uint8Array);
     run(sql: string, params?: unknown[]): void;
     prepare(sql: string): {
@@ -17,3 +18,4 @@ declare module 'sql.js' {
   }>;
   export default initSqlJs;
 }
+

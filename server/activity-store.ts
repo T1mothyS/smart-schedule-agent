@@ -1,3 +1,4 @@
+import { registerPersistence, persistDatabase } from './persistence.js';
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
@@ -111,7 +112,7 @@ function isValidDateOnly(value: string): boolean {
 }
 
 function persist(): void {
-  fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+  persistDatabase(DB_PATH);
 }
 
 function queryAll<T>(sql: string, params: unknown[] = []): T[] {
@@ -267,6 +268,11 @@ export async function initActivityDb(): Promise<void> {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const SQL = await initSqlJs();
   db = fs.existsSync(DB_PATH) ? new SQL.Database(fs.readFileSync(DB_PATH)) : new SQL.Database();
+  registerPersistence(DB_PATH, () => db.export(), bytes => {
+    db.close();
+    db = new SQL.Database(bytes);
+  });
+
   db.run(`
     CREATE TABLE IF NOT EXISTS schema_meta (
       key TEXT PRIMARY KEY,

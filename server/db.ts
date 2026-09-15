@@ -1,3 +1,4 @@
+import { registerPersistence, persistDatabase } from './persistence.js';
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -39,6 +40,11 @@ async function initDb(): Promise<void> {
   } else {
     db = new SQL.Database();
   }
+
+  registerPersistence(dbPath, () => db.export(), bytes => {
+    db.close();
+    db = new SQL.Database(bytes);
+  });
 
   // sql.js 以内存数据库运行并整体导出文件，不能消费原生 SQLite WAL。
   db.run('PRAGMA journal_mode = DELETE');
@@ -550,9 +556,7 @@ async function initDb(): Promise<void> {
 
 // 保存数据库到文件
 function saveDb(): void {
-  const data = db.export();
-  const buffer = Buffer.from(data);
-  fs.writeFileSync(dbPath, buffer);
+  persistDatabase(dbPath);
 }
 
 // 辅助函数：将结果转为对象数组

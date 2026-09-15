@@ -1,3 +1,4 @@
+import { registerPersistence, persistDatabase } from './persistence.js';
 /**
  * 日程数据存储模块
  * 使用 sql.js 存储日程数据
@@ -24,7 +25,7 @@ function snapshotBeforeMigration(label: string): void {
 }
 
 // 确保 data 目录存在
-const dataDir = path.join(__dirname, '..', 'data');
+const dataDir = DATA_DIR;
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
@@ -43,6 +44,11 @@ async function initScheduleDb(): Promise<void> {
   } else {
     db = new SQL.Database();
   }
+
+  registerPersistence(DB_PATH, () => db.export(), bytes => {
+    db.close();
+    db = new SQL.Database(bytes);
+  });
 
   // 创建日历表（多日程表支持）
   db.run(`
@@ -156,9 +162,7 @@ async function initScheduleDb(): Promise<void> {
 
 // 保存数据库到文件
 function saveScheduleDb(): void {
-  const data = db.export();
-  const buffer = Buffer.from(data);
-  fs.writeFileSync(DB_PATH, buffer);
+  persistDatabase(DB_PATH);
 }
 
 // 辅助函数：将结果转为对象数组

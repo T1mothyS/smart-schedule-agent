@@ -1,3 +1,4 @@
+import { registerPersistence, persistDatabase } from './persistence.js';
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import fs from 'fs';
 import path from 'path';
@@ -215,7 +216,7 @@ function queryOne<T>(sql: string, params: unknown[] = []): T | undefined {
 }
 
 function persist(): void {
-  fs.writeFileSync(DB_PATH, Buffer.from(db.export()));
+  persistDatabase(DB_PATH);
 }
 
 function run(sql: string, params: unknown[] = []): number {
@@ -329,6 +330,11 @@ export async function initReminderDb(): Promise<void> {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const SQL = await initSqlJs();
   db = fs.existsSync(DB_PATH) ? new SQL.Database(fs.readFileSync(DB_PATH)) : new SQL.Database();
+
+  registerPersistence(DB_PATH, () => db.export(), bytes => {
+    db.close();
+    db = new SQL.Database(bytes);
+  });
 
   const taskSql = queryOne<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'reminder_tasks'");
   // 只有旧表仍带不包含 generic 的 CHECK 约束时才迁移。新版表不再依赖
