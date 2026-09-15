@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: `8854a38` / `0.21.0-260915.0924`（2026-09-15，源码核对）。
+- Last verified commit/version: `fa67fa7` / `0.21.3-260915.1936`（2026-09-15，Phase 4 运行时与路由；其他领域以各节证据为准）。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
 - Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
@@ -48,11 +48,13 @@ App 保留登录、产品壳和 Today；SchedulePage、AiAssistantPage、Reminde
 
 ## 3. 后端
 
-server/index.ts 目前是 Express 组合入口，集中注册认证、用户、日程、周期事务、通知、AI、记事、知识库、日报、附件、备份和管理员接口。业务实现已经部分下沉到 store/service 文件，但 HTTP 注册仍较集中。
+Phase 4（`0.21.3-260915.1936`）后，server/index.ts 保留 CLI 与测试兼容入口；直接执行时先加载配置，再交给 runtime 启动。server/app.ts 的 createApp(deps) 是无配置/数据/定时器/监听副作用的独立工厂，负责 HTTP 中间件顺序。server/runtime/ 拥有配置、四库初始化、监听端口与五组后台任务的 start/stop。
+
+server/routes/ 已提取 guides、notes、search、Library、日报读取/策略/Context/活动记录/令牌路由。server/application.ts 负责组合，并暂存 Phase 5 的日程、周期事务、完成、AI、settings/admin、备份等高耦合处理器。四 store 仍是进程级单例；多数据目录测试使用独立进程。
 
 认证中间件先解析登录身份；业务接口使用当前用户 ID 查询或写入数据。管理员接口额外检查管理员角色。外部日报接口使用独立的按账号绑定令牌，权限与登录会话分开。
 
-后续 router 拆分采取增量方式：只有在修改某个领域时，才把该领域的路由和依赖一起提取；不为了目录形式一次重写 server/index.ts。
+后续 router 拆分继续按领域递进，保持已有认证、所有权及 Phase 3 可靠写入协议；固定路径先于参数路由，SPA fallback 最后安装。关闭 runtime 会停止新调度并等待在途 HTTP 与后台 Promise；外部服务超时和强制终止的边界见 [Phase 4 验证记录](PHASE4-APP-RUNTIME-ROUTERS.md)。
 
 ## 4. 持久化
 

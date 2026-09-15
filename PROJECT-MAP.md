@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: `8854a38` / `0.21.0-260915.0924`（2026-09-15，源码核对）。
+- Last verified commit/version: `fa67fa7` / `0.21.3-260915.1936`（2026-09-15，Phase 4 运行时与路由；其他领域以各节证据为准）。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
 - Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
@@ -24,7 +24,7 @@
 flowchart TD
     Browser[Web 浏览器] --> React[src/ React + Vite]
     Electron[Electron 壳] --> React
-    React --> API[server/index.ts\nExpress API]
+    React --> API[server/app.ts + application.ts\nExpress API]
     API --> Auth[认证与账号隔离]
     API --> Domains[领域服务]
     Domains --> Notes[note-item-service\nAI 记事]
@@ -104,7 +104,7 @@ flowchart LR
 | 日记/记事板 UI、快捷键、导出 | `src/components/NoteBoard.tsx`、`src/components/AiSchedulePanel.tsx`、`src/utils/note-export.ts` | 不让 LLM 负责布局；导出在前端确定性生成 |
 | 记事数据、迁移、备份恢复 | `server/note-item-service.ts`、`server/db.ts`、`server/backup-service.ts` | 保留旧 `linked_schedule_ids` 兼容字段；不跨账号读取 |
 | 知识库、Markdown 迁移 | `server/library-service.ts`、`server/library-markdown.ts`、独立 Knowledge Library 项目的 `scripts/process-migration-folder.ps1`、`docs/knowledge-library-operations.md` | 普通处理校验通过后默认 `publish`；`retire/restore/purge` 必须显式选择；本地关系和正文清理后再通过令牌写入；不直接修改运行中的数据库 |
-| AI 计划确认 | `server/index.ts`、`server/ai-plan.ts` | 先生成待确认草稿；禁止旧专用入口自动完成来源记事 |
+| AI 计划确认 | `server/application.ts`、`server/ai-plan.ts`、`server/operation-service.ts` | 先生成待确认草稿；确认结果与正式写入一起持久化；禁止旧专用入口自动完成来源记事 |
 | 日报采集/生成/校验 | `日报-v2/scripts/`、`日报-v2/schemas/`、`日报-v2/tests/` | V2 只输出结构化内容；`-NoSend` 不发布、不入队、不发信 |
 | 日报媒体与发布 | `日报-v2/scripts/report_media.py`、`日报-v2/scripts/publish_report.py`、主仓库 `server/daily-report*.ts` | Local 先本地校验/上传媒体再 PUT；Cloud 按兼容/严格批次合同处理媒体；正式发布均先写记录，再按来源设置进入网页/邮件 |
 | 生产升级与回滚 | `DEPLOY.md`、`日报-v2/README.md` | 本地构建/验收与生产部署、真实 SMTP、收件箱验收分开授权和记录 |

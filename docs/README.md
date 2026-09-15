@@ -52,3 +52,5 @@ Living/Contract 文档应标注 Status、Scope、Last verified commit/version、
 - [Phase 2 前端加载边界验收](PHASE2-FRONTEND-LOADING.md)：0.21.1 本地实现、体积、浏览器证据与未验证边界。
 
 - [Phase 3 数据写入与恢复可靠性](PHASE3-PERSISTENCE-RECOVERY.md)：四库写回、确认结果、恢复协议与故障验收。
+
+- [Phase 4 应用工厂、运行时与低耦合路由](PHASE4-APP-RUNTIME-ROUTERS.md)：独立 HTTP fixture、五组 worker 生命周期、账号隔离与兼容性验收。

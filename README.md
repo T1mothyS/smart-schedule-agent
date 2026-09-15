@@ -394,7 +394,9 @@ cp .env.example .env
 
 | 文件 | 作用 |
 | --- | --- |
-| `server/index.ts` | Express 服务主入口；认证、用户、日历、周期、通知、附件、备份、AI 和静态页面 API 都在此注册 |
+| `server/index.ts`、`server/app.ts` | CLI 兼容入口与无副作用 HTTP 应用工厂 |
+| `server/runtime/` | 配置、四库初始化、监听端口与五组后台任务的显式启动/关闭 |
+| `server/routes/`、`server/application.ts` | 已提取的低耦合领域路由与待 Phase 5 迁移的业务组合；见 [Phase 4 验证](docs/PHASE4-APP-RUNTIME-ROUTERS.md) |
 | `server/db.ts` | 账号、验证码、会话、用户设置和 `chat.db` 的访问层 |
 | `server/schedule-store.ts` | `schedule.db` 的日历、分类、日程和用户隔离访问层 |
 | `server/schedule-format.ts` | 把日程整理成邮件或 AI 可读文本 |
