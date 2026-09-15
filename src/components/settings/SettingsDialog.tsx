@@ -1,12 +1,12 @@
+import { X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { Dialog } from 'tdesign-react';
-import { X } from 'lucide-react';
 import { APP_CONFIG } from '../../config';
 import { SettingsPage } from './SettingsPage';
 import './settings.css';
 
-export function SettingsDialog({ onClose, onOpenAdmin }: { onClose: () => void; onOpenAdmin: () => void }) {
-  const triggerRef = useRef(document.activeElement as HTMLElement | null);
+export function SettingsDialog({ onClose, onOpenAdmin, restoreFocusTo }: { onClose: () => void; onOpenAdmin: () => void; restoreFocusTo?: HTMLElement | null }) {
+  const triggerRef = useRef(restoreFocusTo ?? document.activeElement as HTMLElement | null);
   const frameRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const onCloseRef = useRef(onClose);
