@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { CheckCircle2, Circle, Edit3, Trash2 } from 'lucide-react';
-import type { Schedule } from '../CalendarView';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import type { Schedule } from './schedule-types';
 
 interface ScheduleContextMenuProps {
   schedule: Schedule;

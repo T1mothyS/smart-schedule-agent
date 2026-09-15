@@ -1,9 +1,11 @@
+import { CalendarClock, CheckCircle2, ChevronDown, Edit3, Mail, MoreVertical, Paperclip, RefreshCw, Trash2, X } from 'lucide-react';
 import { KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CalendarClock, CheckCircle2, ChevronDown, Edit3, Mail, MoreVertical, Paperclip, RefreshCw, Trash2, X } from 'lucide-react';
-import { useAuth } from '../hooks/useAuth';
-import { Schedule, ScheduleDetailModal, ScheduleFormModal } from './CalendarView';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../hooks/useAuth';
+import type { Schedule } from './calendar/schedule-types';
+import { ScheduleDetailModal } from './calendar/ScheduleDetailModal';
+import { ScheduleFormModal } from './calendar/ScheduleFormModal';
 
 interface ActionItem {
   id: string;

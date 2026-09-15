@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef } from 'react';
 import { CalendarDays, CheckCircle2, Circle, Clock3, MapPin } from 'lucide-react';
-import type { Schedule } from '../CalendarView';
-import { addCalendarDays, getCalendarDayMeta, toLocalDateKey } from './calendarMeta';
+import { useEffect, useMemo, useRef } from 'react';
 import { getScheduleCategory } from '../../utils/scheduleCategories';
 import { parseScheduleDate } from '../../utils/scheduleConflict';
+import { addCalendarDays, getCalendarDayMeta, toLocalDateKey } from './calendarMeta';
+import type { Schedule } from './schedule-types';
 
 interface AgendaViewProps {
   schedules: Schedule[];
