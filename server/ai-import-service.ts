@@ -2,6 +2,7 @@ import { query, type ImageMediaType, type UserMessage } from '@tencent-ai/agent-
 import { v4 as uuidv4 } from 'uuid';
 import { buildCodeBuddyEnv } from './codebuddy-env.js';
 import { AI_IMPORT_LINKAGE_RULES, AI_LINKAGE_GUIDE_VERSION } from './ai-linkage-guide.js';
+import { extractAiMessageText, parseAiJsonCandidates } from './ai-json.js';
 
 export interface AiImportImage {
   name: string;
@@ -38,12 +39,6 @@ function validateImages(images: AiImportImage[]): void {
     const size = Buffer.from(image.base64.replace(/^data:[^;]+;base64,/, ''), 'base64').length;
     if (!size || size > 8 * 1024 * 1024) throw new Error('每张识别图片必须小于 8MB');
   }
-}
-
-function extractJson(value: string): any {
-  const match = value.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error('AI 没有返回可解析的草稿');
-  return JSON.parse(match[0]);
 }
 
 function dateOnly(value: unknown): string {
@@ -136,7 +131,8 @@ export async function parseAiImport(input: {
   if (running) throw new Error('AI 正在处理上一项导入，请稍后重试');
   running = true;
   try {
-    let output = '';
+    let assistantText = '';
+    let resultText = '';
     const stream = query({
       prompt: createPrompt(input.text?.trim() || '', images),
       options: {
@@ -147,10 +143,10 @@ export async function parseAiImport(input: {
       },
     });
     for await (const message of stream) {
-      if (message.type !== 'assistant') continue;
-      for (const block of message.message.content) if (block.type === 'text') output += block.text;
+      if (message.type === 'assistant') assistantText += extractAiMessageText(message);
+      else if (message.type === 'result') resultText = extractAiMessageText(message);
     }
-    return normaliseDraft(extractJson(output));
+    return normaliseDraft(parseAiJsonCandidates([assistantText, resultText]).value);
   } finally {
     running = false;
   }

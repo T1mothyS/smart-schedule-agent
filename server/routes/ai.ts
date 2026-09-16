@@ -10,7 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import * as dbModule from '../db.js';
 import * as scheduleStore from '../schedule-store.js';
 import { buildCodeBuddyEnv } from '../codebuddy-env.js';
-import { parseAiJson } from '../ai-json.js';
+import { extractAiMessageText, parseAiJsonCandidates } from '../ai-json.js';
 import { extractWeatherLocationQuery, getDailyWeather, getWeatherErrorKind, isWeatherQuestion, searchLocations } from '../weather-service.js';
 import { isReadOnlyScheduleQuery, needsScheduleContext, requestsKnowledgeContext } from '../ai-intent.js';
 import { addLog } from '../log-service.js';
@@ -496,7 +496,8 @@ priority 识别：
 
     const modelPrompt = text;
 
-    let jsonText = '';
+    let assistantText = '';
+    let resultText = '';
     try {
 
       // 【修复数据隔离】使用该用户的 API Key
@@ -513,13 +514,13 @@ priority 识别：
 
       for await (const msg of stream) {
         if (msg.type === 'assistant') {
-          for (const block of msg.message.content) {
-            if (block.type === 'text') jsonText += block.text;
-          }
+          assistantText += extractAiMessageText(msg);
+        } else if (msg.type === 'result') {
+          resultText = extractAiMessageText(msg);
         }
       }
 
-      const parsedResult = parseAiJson(jsonText);
+      const parsedResult = parseAiJsonCandidates([assistantText, resultText]);
       const parsed = parsedResult.value;
       if (parsedResult.repaired) {
         addLog('warn', 'ai', 'AI 返回 JSON 含未转义双引号，已自动修复');
@@ -590,7 +591,7 @@ priority 识别：
       if (requestKey) aiChatRequestRecords.delete(requestKey);
       addLog('error', 'ai', `AI Chat 处理失败: ${error?.message || '未知错误'}`, {
         stack: error?.stack?.slice(0, 200),
-        responseLength: jsonText?.length || 0,
+        responseLength: assistantText.length + resultText.length,
       });
       console.error('[AI Chat] Error:', error);
       try {
