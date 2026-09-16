@@ -225,13 +225,16 @@
 @media (max-width: 1100px) {
   .library-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .library-detail-layout { grid-template-columns: minmax(0, 1fr); }
-  .library-toc { grid-column: 1; top: 0; z-index: 4; max-width: 100%; max-height: none; display: flex; align-items: center; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 9px 11px; border-radius: 11px; box-shadow: 0 5px 16px rgba(15, 23, 42, .08); }
+  .library-detail-page { display: flex; flex-direction: column; padding-top: 0; }
+  .library-detail-page .library-detail-layout { display: contents; }
+  .library-detail-page .library-toc { order: -1; align-self: stretch; grid-column: auto; top: 0; z-index: 4; width: calc(100% + clamp(18px, 4vw, 58px) + clamp(18px, 4vw, 58px)); max-width: none; max-height: none; margin-left: calc(0px - clamp(18px, 4vw, 58px)); margin-right: calc(0px - clamp(18px, 4vw, 58px)); display: flex; align-items: center; gap: 12px; overflow-x: auto; overflow-y: hidden; padding: 9px 11px; border-right: 0; border-left: 0; border-radius: 0; box-shadow: none; }
+  .library-detail-page .library-document, .library-detail-page .library-detail-aside { width: 100%; }
   .library-toc-heading { flex: 0 0 auto; display: block; padding: 0 11px 0 0; border-right: 1px solid var(--td-component-stroke); border-bottom: 0; }
   .library-toc-heading .library-eyebrow { display: none; }
   .library-toc-list { flex: 0 0 auto; flex-direction: row; gap: 6px; margin-top: 0; min-width: max-content; }
   .library-toc-item { width: auto; min-height: 34px; padding: 6px 10px; white-space: nowrap; overflow-wrap: normal; }
   .library-toc-item.is-sub { padding-left: 10px; font-size: 11px; }
-  .library-markdown h1, .library-markdown h2, .library-markdown h3, .library-markdown h4, .library-markdown h5, .library-markdown h6 { scroll-margin-top: 86px; }
+  .library-markdown h1, .library-markdown h2, .library-markdown h3, .library-markdown h4, .library-markdown h5, .library-markdown h6 { scroll-margin-top: 0; }
   .library-detail-aside { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 899px) {
@@ -245,6 +248,8 @@
 }
 @media (max-width: 640px) {
   .library-page { padding: 20px 14px 46px; }
+  .library-detail-page { padding-top: 0; }
+  .library-detail-page .library-toc { width: calc(100% + 28px); margin-left: -14px; margin-right: -14px; }
   .library-header-actions { align-items: stretch; flex-direction: column; }
   .library-header-actions > button { width: 100%; }
   .library-grid { grid-template-columns: 1fr; }

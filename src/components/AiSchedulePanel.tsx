@@ -1,5 +1,6 @@
 import { forwardRef, useState, useRef, useCallback, useEffect, useImperativeHandle } from 'react';
 import { Bot, BookOpen, Send, Loader2, CheckCircle2, Edit3, MapPin, Clock, Save, X, StickyNote } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { SCHEDULE_CATEGORY_COLORS, SCHEDULE_CATEGORY_LABELS } from '../utils/scheduleCategories';
 import type { NoteItem } from './NoteBoard';
@@ -459,11 +460,11 @@ function MessageBubble({ msg, onOpenSchedule, onOpenScheduleMenu, onConfirmPlan,
                 <div className="ai-knowledge-sources-title"><BookOpen size={13} aria-hidden="true" />参考知识库 · {msg.knowledgeSources.length} 条</div>
                 <div className="ai-knowledge-source-list">
                   {msg.knowledgeSources.map(source => (
-                    <a key={source.id} className="ai-knowledge-source" href={source.target?.path || `/library/${encodeURIComponent(source.id)}`}>
+                    <Link key={source.id} className="ai-knowledge-source" to={source.target?.path || `/library/${encodeURIComponent(source.id)}`}>
                       <span className="ai-knowledge-source-head"><strong>{source.title}</strong><span>查看</span></span>
                       {source.snippet && <span className="ai-knowledge-source-snippet">{source.snippet}</span>}
                       <small>{source.sourceId || source.sourceType || source.type || '知识库内容'}</small>
-                    </a>
+                    </Link>
                   ))}
                 </div>
               </div>

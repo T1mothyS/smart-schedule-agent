@@ -1,10 +1,21 @@
 import { ArrowLeft, BookOpen, Download, Link2, RefreshCw, Send, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
 import { buildLibraryToc, copyText, downloadResponse, formatTime, kindLabels, LibraryDetail, LibraryTocItem, readError, relationItems, relationStatusLabels, richContentSource, showRichContentError, statusLabels, typeLabels } from './library-shared';
 
 let libraryMermaidRenderId = 0;
+
+function findLibraryHeading(root: HTMLElement | null, id: string): HTMLElement | null {
+  if (!root) return null;
+  return Array.from(root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6')).find(heading => heading.id === id) || null;
+}
+
+function getLibraryTocOffset(scrollRoot: HTMLElement | null, toc: HTMLElement | null): number {
+  if (!scrollRoot || scrollRoot.clientWidth > 1100) return 0;
+  return toc?.getBoundingClientRect().height || 0;
+}
 
 export function LibraryDetailPage({ id }: { id: string }) {
   const { authHeaders } = useAuth();
@@ -19,21 +30,35 @@ export function LibraryDetailPage({ id }: { id: string }) {
   const detailPageRef = useRef<HTMLDivElement | null>(null);
   const markdownRef = useRef<HTMLDivElement | null>(null);
   const tocRef = useRef<HTMLElement | null>(null);
+  const loadGenerationRef = useRef(0);
   const entryTitle = detail?.entry.title || detail?.entry.summary || '';
 
   const load = useCallback(async () => {
+    const generation = ++loadGenerationRef.current;
     setLoading(true);
     setError(null);
     try {
       const response = await fetch(`/api/library/${encodeURIComponent(id)}`, { headers: authHeaders() });
       if (!response.ok) throw await readError(response, '知识详情加载失败');
-      setDetail(await response.json());
+      const nextDetail = await response.json() as LibraryDetail;
+      if (generation !== loadGenerationRef.current) return;
+      setDetail(nextDetail);
     } catch (loadError) {
+      if (generation !== loadGenerationRef.current) return;
       setError(loadError instanceof Error ? loadError.message : '知识详情加载失败');
     } finally {
-      setLoading(false);
+      if (generation === loadGenerationRef.current) setLoading(false);
     }
   }, [authHeaders, id]);
+
+  useEffect(() => {
+    setDetail(null);
+    setTocItems([]);
+    setActiveTocId(null);
+    setComment('');
+    setError(null);
+    detailPageRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+  }, [id]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -174,11 +199,11 @@ export function LibraryDetailPage({ id }: { id: string }) {
 
     const updateActiveHeading = () => {
       const rootRect = scrollRoot.getBoundingClientRect();
-      const compactOffset = scrollRoot.clientWidth <= 1100 ? 88 : 24;
-      const threshold = rootRect.top + compactOffset;
+      const tocOffset = getLibraryTocOffset(scrollRoot, tocRef.current);
+      const threshold = rootRect.top + tocOffset + 4;
       let currentId = tocItems[0].id;
       for (const item of tocItems) {
-        const heading = document.getElementById(item.id);
+        const heading = findLibraryHeading(markdownRef.current, item.id);
         if (!heading) continue;
         if (heading.getBoundingClientRect().top <= threshold) currentId = item.id;
         else break;
@@ -188,18 +213,39 @@ export function LibraryDetailPage({ id }: { id: string }) {
 
     scrollRoot.addEventListener('scroll', updateActiveHeading, { passive: true });
     window.addEventListener('resize', updateActiveHeading);
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updateActiveHeading);
+    if (resizeObserver) {
+      if (markdownRef.current) resizeObserver.observe(markdownRef.current);
+      if (tocRef.current) resizeObserver.observe(tocRef.current);
+    }
     updateActiveHeading();
     return () => {
       scrollRoot.removeEventListener('scroll', updateActiveHeading);
       window.removeEventListener('resize', updateActiveHeading);
+      resizeObserver?.disconnect();
     };
   }, [tocItems]);
 
   useEffect(() => {
-    if (!activeTocId) return;
-    const target = Array.from(tocRef.current?.querySelectorAll<HTMLElement>('[data-toc-id]') || [])
+    const toc = tocRef.current;
+    if (!toc || !activeTocId) return;
+    const target = Array.from(toc.querySelectorAll<HTMLElement>('[data-toc-id]'))
       .find(item => item.dataset.tocId === activeTocId);
-    target?.scrollIntoView({ block: 'nearest', inline: 'center' });
+    if (!target) return;
+    const tocRect = toc.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const horizontalOverflow = toc.scrollWidth > toc.clientWidth + 1;
+    const verticalOverflow = toc.scrollHeight > toc.clientHeight + 1;
+    const needsHorizontalScroll = horizontalOverflow && (targetRect.left < tocRect.left || targetRect.right > tocRect.right);
+    const needsVerticalScroll = verticalOverflow && (targetRect.top < tocRect.top || targetRect.bottom > tocRect.bottom);
+    if (!needsHorizontalScroll && !needsVerticalScroll) return;
+    const nextLeft = needsHorizontalScroll
+      ? Math.min(toc.scrollWidth - toc.clientWidth, Math.max(0, toc.scrollLeft + targetRect.left - tocRect.left - (toc.clientWidth - targetRect.width) / 2))
+      : toc.scrollLeft;
+    const nextTop = needsVerticalScroll
+      ? Math.min(toc.scrollHeight - toc.clientHeight, Math.max(0, toc.scrollTop + targetRect.top - tocRect.top - (toc.clientHeight - targetRect.height) / 2))
+      : toc.scrollTop;
+    toc.scrollTo({ left: nextLeft, top: nextTop, behavior: 'smooth' });
   }, [activeTocId]);
 
   const exportMarkdown = async () => {
@@ -239,13 +285,35 @@ export function LibraryDetailPage({ id }: { id: string }) {
 
   const scrollToHeading = (item: LibraryTocItem) => {
     const scrollRoot = detailPageRef.current;
-    const heading = document.getElementById(item.id);
+    const heading = findLibraryHeading(markdownRef.current, item.id);
     if (!scrollRoot || !heading) return;
     const rootRect = scrollRoot.getBoundingClientRect();
-    const tocHeight = scrollRoot.clientWidth <= 1100 ? (tocRef.current?.getBoundingClientRect().height || 52) + 12 : 24;
-    const top = scrollRoot.scrollTop + heading.getBoundingClientRect().top - rootRect.top - tocHeight;
-    scrollRoot.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+    const tocOffset = getLibraryTocOffset(scrollRoot, tocRef.current);
+    const maxScrollTop = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+    const targetTop = scrollRoot.scrollTop + heading.getBoundingClientRect().top - rootRect.top - tocOffset - 4;
+    const top = Math.min(maxScrollTop, Math.max(0, targetTop));
+    scrollRoot.scrollTo({ top, behavior: 'smooth' });
     setActiveTocId(item.id);
+  };
+
+  const handleMarkdownClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const anchor = event.target instanceof Element
+      ? event.target.closest<HTMLAnchorElement>('a.library-internal-link')
+      : null;
+    const href = anchor?.getAttribute('href');
+    if (!href) return;
+    let url: URL;
+    try {
+      url = new URL(href, window.location.origin);
+    } catch {
+      return;
+    }
+    if (url.origin !== window.location.origin || !url.pathname.startsWith('/library/')) return;
+    event.preventDefault();
+    const destination = `${url.pathname}${url.search}${url.hash}`;
+    const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (destination !== current) navigate(destination);
   };
 
   if (loading) return <div className="library-page"><div className="library-state"><RefreshCw size={24} className="spin" /><span>正在加载知识详情…</span></div></div>;
@@ -292,11 +360,11 @@ export function LibraryDetailPage({ id }: { id: string }) {
           </nav>
         )}
         <article className="library-document">
-          <div ref={markdownRef} className="chat-markdown library-markdown" dangerouslySetInnerHTML={{ __html: entry.html || '' }} />
+          <div ref={markdownRef} className="chat-markdown library-markdown" onClick={handleMarkdownClick} dangerouslySetInnerHTML={{ __html: entry.html || '' }} />
         </article>
         <aside className="library-detail-aside">
           <section className="library-aside-card"><strong>内容信息</strong><dl><dt>内容 ID</dt><dd>{entry.id}</dd><dt>sourceId</dt><dd>{entry.sourceId || '—'}</dd><dt>哈希</dt><dd>{entry.contentHash.slice(0, 16)}…</dd><dt>创建</dt><dd>{formatTime(entry.createdAt)}</dd><dt>版本</dt><dd>{detail.versions.length || '—'}</dd></dl></section>
-          <section className="library-aside-card"><strong><Link2 size={14} />关联</strong><p className="library-relation-help">关联由知识库 V2 的 <code>relations.json</code> 维护。已确认可直接查看目标，待确认仅供复核，未解析不会伪装成链接。</p>{relations.length ? <div className="library-relation-list">{relations.map((relation, index) => <div className="library-relation" key={`${relation.targetSourceId}-${index}`}><span className={`library-relation-status ${relation.status}`}>{relationStatusLabels[relation.status]}</span><span>{relation.label}</span>{relation.targetEntryId ? <a className="library-relation-target" href={`/library/${encodeURIComponent(relation.targetEntryId)}`}>{relation.targetTitle || relation.targetSourceId}</a> : <span className="library-relation-unresolved">{relation.targetStatus === 'archived' ? '目标已归档' : '目标尚未解析'}</span>}<code>{relation.targetSourceId}</code></div>)}</div> : <p>当前没有本地关联。</p>}</section>
+          <section className="library-aside-card"><strong><Link2 size={14} />关联</strong><p className="library-relation-help">关联由知识库 V2 的 <code>relations.json</code> 维护。已确认可直接查看目标，待确认仅供复核，未解析不会伪装成链接。</p>{relations.length ? <div className="library-relation-list">{relations.map((relation, index) => <div className="library-relation" key={`${relation.targetSourceId}-${index}`}><span className={`library-relation-status ${relation.status}`}>{relationStatusLabels[relation.status]}</span><span>{relation.label}</span>{relation.targetEntryId ? <Link className="library-relation-target" to={`/library/${encodeURIComponent(relation.targetEntryId)}`}>{relation.targetTitle || relation.targetSourceId}</Link> : <span className="library-relation-unresolved">{relation.targetStatus === 'archived' ? '目标已归档' : '目标尚未解析'}</span>}<code>{relation.targetSourceId}</code></div>)}</div> : <p>当前没有本地关联。</p>}</section>
           <section className="library-aside-card"><strong>来源</strong><p>{entry.sourceRef || '本地知识库 V2 发布'}</p>{entry.sourceUrl && <a href={entry.sourceUrl} target="_blank" rel="noreferrer">打开来源</a>}</section>
         </aside>
       </div>

@@ -570,7 +570,7 @@ npm run build
 - `/mcp`：无状态 Streamable HTTP MCP；工具按 scope 读取 Calendar、QQ 未读摘要、Context、历史，或在服务端完成媒体托管后发布日报。
 - `/daily-report-media/:filename`：公开读取服务端已校验的日报媒体；文件名为内容哈希，供登录后网页和邮件共同使用。
 - `/api/backups`、`/api/admin/backups`：用户备份和全站灾备。
-- `/api/ai-chat`：普通问答、天气问答和待确认日程建议；历史专用 `sourceNoteId`/`requestedAction=create_todo` 参数会明确拒绝。
+- `/api/ai-chat`：普通问答、天气问答和待确认日程建议；只有明确提到“知识库”或 `Knowledge Library` 才检索知识库；历史专用 `sourceNoteId`/`requestedAction=create_todo` 参数会明确拒绝。
 - `/api/ai/imports`：AI 导入草稿、确认和删除。
 - `/api/email-import/settings`：可选邮箱自动导入设置。
 - `/api/admin/users`：管理员用户管理。

@@ -6,6 +6,12 @@ export function isReadOnlyScheduleQuery(text: string): boolean {
   return /(有什么安排|有哪些安排|什么安排|有什么日程|有哪些日程|查看.*(?:安排|日程)|查询.*(?:安排|日程)|几点有会)/.test(normalized);
 }
 
+const KNOWLEDGE_CONTEXT_TRIGGER = /知识库|knowledge\s+library/i;
+
+export function requestsKnowledgeContext(text: string): boolean {
+  return KNOWLEDGE_CONTEXT_TRIGGER.test(text);
+}
+
 export function needsScheduleContext(text: string): boolean {
   const normalized = text.replace(/\s+/g, '');
   if (isReadOnlyScheduleQuery(normalized)) return true;

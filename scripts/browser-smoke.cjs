@@ -4,7 +4,16 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root = path.resolve(process.argv[2] || '.'), out = process.env.BROWSER_SMOKE_OUTPUT || fs.mkdtempSync(path.join(require('os').tmpdir(), 'aicalendar-browser-'));
 console.log('Synthetic smoke output:', out);
 fs.mkdirSync(out, { recursive: true });
-const entry = (id) => ({ id, kind: 'article', type: 'knowledge', sourceId: id, slug: id, title: id === 'rich' ? '公式与流程图' : '普通文章', summary: '本地合成验收数据', content: 'source', html: id === 'rich' ? '<h2>公式与流程图</h2><div data-library-math="display"><span class="library-rich-content-source">x^2+1</span></div><div data-library-mermaid><span class="library-rich-content-source">graph TD; A[开始]--&gt;B[完成]</span></div>' : '<h2>普通内容</h2><p>阅读器分包验收</p>', tags: [], status: 'active', sourceType: 'codex', sourceRef: null, sourceUrl: null, metadata: {}, relations: [], contentHash: 'synthetic', createdAt: '2026-09-15T00:00:00Z', updatedAt: '2026-09-15T00:00:00Z', publishedAt: null, archivedAt: null });
+const entry = (id) => {
+    const fixtures = {
+        plain: { title: '普通文章', html: '<h2>普通内容</h2><p>阅读器分包验收</p>' },
+        rich: { title: '公式与流程图', html: '<h2>公式与流程图</h2><div data-library-math="display"><span class="library-rich-content-source">x^2+1</span></div><div data-library-mermaid><span class="library-rich-content-source">graph TD; A[开始]--&gt;B[完成]</span></div>' },
+        toc: { title: '目录验收文章', html: '<h2>目录验收文章</h2><p>目录和站内链接验收：<a class="library-internal-link" href="/library/target">打开跳转目标</a></p><h2>第一章</h2><div style="height: 620px"></div><h3>重复小节</h3><div style="height: 620px"></div><h3>重复小节</h3><div style="height: 620px"></div><h2>第二章</h2><p>第二章正文。</p>' },
+        target: { title: '跳转目标', html: '<h2>跳转目标正文</h2><p>这是站内跳转后的目标文章。</p>' },
+    };
+    const fixture = fixtures[id] || fixtures.plain;
+    return { id, kind: 'article', type: 'knowledge', sourceId: id, slug: id, title: fixture.title, summary: '本地合成验收数据', content: 'source', html: fixture.html, tags: [], status: 'active', sourceType: 'codex', sourceRef: null, sourceUrl: null, metadata: {}, relations: [], contentHash: 'synthetic', createdAt: '2026-09-15T00:00:00Z', updatedAt: '2026-09-15T00:00:00Z', publishedAt: null, archivedAt: null };
+};
 const seen = new Set(), errors = [], checks = [];
 const emptyApis = new Set(['/api/action-center', '/api/notifications', '/api/schedules', '/api/cycle-reminders', '/api/ai-schedule/history', '/api/note-items', '/api/daily-reports', '/api/check-login', '/api/user-api-key', '/api/notification-preferences', '/api/integrations/daily-report-token', '/api/daily-report/cloud-context', '/api/daily-report/delivery-policy', '/api/integrations/library-token', '/api/user-mail-account', '/api/admin/users']);
 const server = http.createServer((req, res) => { let file = path.join(root, 'dist', new URL(req.url, 'http://local').pathname); if (!file.startsWith(path.join(root, 'dist') + path.sep)) {
@@ -33,9 +42,14 @@ const server = http.createServer((req, res) => { let file = path.join(root, 'dis
             else if (p === '/api/library/preferences')
                 body = { preference: { sort: 'created_desc' } };
             else if (p === '/api/library')
-                body = { items: [entry('plain'), entry('rich')], total: 2 };
-            else if (p.startsWith('/api/library/'))
-                body = { entry: entry(p.split('/').pop()), versions: [], comments: [], relations: { items: [], calendarEvents: [], libraryEntries: [] } };
+                body = { items: [entry('plain'), entry('rich'), entry('toc'), entry('target')], total: 4 };
+            else if (p === '/api/ai-chat')
+                body = { success: true, intent: 'chat', reply: '已找到相关知识库内容。', scheduleItems: [], knowledgeSources: [{ id: 'target', title: '合成知识库目标', sourceId: 'target', sourceType: 'synthetic', snippet: '合成来源', target: { path: '/library/target' } }], changed: false };
+            else if (p.startsWith('/api/library/')) {
+                const entryId = decodeURIComponent(p.split('/').pop());
+                const relationItems = entryId === 'toc' ? [{ sourceId: 'toc', targetSourceId: 'target', type: 'related', label: '关联跳转目标', status: 'confirmed', targetEntryId: 'target', targetTitle: '跳转目标', targetStatus: 'active' }] : [];
+                body = { entry: entry(entryId), versions: [], comments: [], relations: { items: relationItems, calendarEvents: [], libraryEntries: [] } };
+            }
             else if (p === '/api/admin/invite-codes')
                 body = { codes: [] };
             else if (p === '/api/models')
@@ -134,6 +148,66 @@ const server = http.createServer((req, res) => { let file = path.join(root, 'dis
         await page.goBack();
         await page.getByText('普通文章', { exact: true }).waitFor();
         checks.push({ clientNavigationBack: true });
+        for (const width of [390, 430, 768, 1440]) {
+            await page.setViewportSize({ width, height: width === 768 ? 1024 : width === 1440 ? 900 : width === 430 ? 932 : 844 });
+            await page.goto(base + '/library/toc');
+            const toc = page.locator('.library-toc');
+            await toc.waitFor();
+            const geometry = await page.evaluate(() => {
+                const topbar = document.querySelector('.app-topbar')?.getBoundingClientRect();
+                const toc = document.querySelector('.library-toc')?.getBoundingClientRect();
+                return { topbarBottom: topbar?.bottom || 0, tocTop: toc?.top || 0, position: toc ? getComputedStyle(document.querySelector('.library-toc')).position : '' };
+            });
+            if (width <= 1100 && (Math.abs(geometry.tocTop - geometry.topbarBottom) > 2 || geometry.position !== 'sticky'))
+                throw Error(`mobile toc is not attached to topbar at ${width}: ${JSON.stringify(geometry)}`);
+            const manualScroll = await page.evaluate(() => {
+                const root = document.querySelector('.library-detail-page');
+                if (!root) return { before: -1, after: -1 };
+                const before = root.scrollTop;
+                root.scrollTo({ top: 100, behavior: 'auto' });
+                const after = root.scrollTop;
+                root.scrollTo({ top: before, behavior: 'auto' });
+                return { before, after };
+            });
+            if (manualScroll.after <= 0) throw Error(`library detail scroll root is not writable at ${width}: ${JSON.stringify(manualScroll)}`);
+            const targetButton = page.getByRole('button', { name: '第二章', exact: true });
+            await targetButton.click();
+            await page.waitForTimeout(800);
+            const tocPosition = await page.evaluate(() => {
+                const root = document.querySelector('.library-detail-page');
+                const toc = document.querySelector('.library-toc');
+                const button = Array.from(document.querySelectorAll('.library-toc-item')).find(item => item.textContent?.trim() === '第二章');
+                const headingId = button?.getAttribute('data-toc-id');
+                const heading = headingId ? Array.from(document.querySelectorAll('.library-markdown h1, .library-markdown h2, .library-markdown h3, .library-markdown h4, .library-markdown h5, .library-markdown h6')).find(item => item.id === headingId) : null;
+                const rootRect = root?.getBoundingClientRect();
+                const tocRect = toc?.getBoundingClientRect();
+                const compact = (root?.clientWidth || 0) <= 1100;
+                return { scrollTop: root?.scrollTop || 0, scrollHeight: root?.scrollHeight || 0, clientHeight: root?.clientHeight || 0, headingId, buttonId: button?.getAttribute('data-toc-id'), headingTop: heading?.getBoundingClientRect().top || 0, visibleTop: compact ? (tocRect?.bottom || 0) : (rootRect?.top || 0) };
+            });
+            if (tocPosition.scrollTop <= 0 || tocPosition.headingTop < tocPosition.visibleTop - 2)
+                throw Error(`toc target did not scroll into view at ${width}: ${JSON.stringify(tocPosition)}`);
+            await page.goto(base + '/library/toc');
+            await page.locator('.library-internal-link').click();
+            await page.getByText('跳转目标', { exact: true }).waitFor();
+            if (new URL(page.url()).pathname !== '/library/target') throw Error(`markdown link navigation failed at ${width}`);
+            await page.goBack();
+            await page.getByRole('heading', { name: '目录验收文章', exact: true, level: 1 }).waitFor();
+            await page.locator('.library-relation-target').click();
+            await page.getByText('跳转目标', { exact: true }).waitFor();
+            if (new URL(page.url()).pathname !== '/library/target') throw Error(`relation link navigation failed at ${width}`);
+            checks.push({ width, libraryToc: true, markdownNavigation: true, relationNavigation: true, overflow: await page.evaluate(() => document.documentElement.scrollWidth > innerWidth) });
+            await page.goBack();
+            await page.getByRole('heading', { name: '目录验收文章', exact: true, level: 1 }).waitFor();
+        }
+        await page.goto(base + '/assistant');
+        const aiInput = page.getByRole('textbox', { name: 'AI 助手输入框', exact: true });
+        await aiInput.fill('请参考知识库');
+        await page.getByRole('button', { name: '发送', exact: true }).click();
+        await page.locator('.ai-knowledge-source').first().waitFor();
+        await page.locator('.ai-knowledge-source').first().click();
+        await page.getByText('跳转目标', { exact: true }).waitFor();
+        if (new URL(page.url()).pathname !== '/library/target') throw Error('AI knowledge source navigation failed');
+        checks.push({ aiKnowledgeSourceNavigation: true });
         await context.close();
         for (const mode of ['slow', 'failure', 'math-failure']) {
             const c = await browser.newContext();
