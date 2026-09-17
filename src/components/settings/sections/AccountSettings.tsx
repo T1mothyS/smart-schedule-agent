@@ -16,8 +16,7 @@ export function AccountSettings({ user, onLogout }: { user: SettingsUser; onLogo
       <SettingRow label="登录状态">
         <div className="settings-actions">
           <span className="settings-status-text">已登录</span>
-          <Button tag="button" variant="outline" onClick={async () => {
-            try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* 本地仍可退出 */ }
+          <Button tag="button" variant="outline" onClick={() => {
             onLogout();
             window.location.href = '/login';
           }}>退出登录</Button>

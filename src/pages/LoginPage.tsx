@@ -2,12 +2,25 @@
  * 登录/注册页面
  */
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 
 import { Button, Input, MessagePlugin } from 'tdesign-react';
 import { useAuth } from '../hooks/useAuth';
 
 type Mode = 'login' | 'register';
+
+function getSafeNextPath(pathname: string, search: string): string | null {
+  const queryNext = new URLSearchParams(search).get('next');
+  const candidate = queryNext || (pathname.startsWith('/tools') ? `${pathname}${search}` : null);
+  if (!candidate || !candidate.startsWith('/') || candidate.startsWith('//')) return null;
+  try {
+    const url = new URL(candidate, window.location.origin);
+    if (url.origin !== window.location.origin) return null;
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return null;
+  }
+}
 
 export function LoginPage() {
   const [mode, setMode] = useState<Mode>('login');
@@ -22,14 +35,15 @@ export function LoginPage() {
   const [sending, setSending] = useState(false);
 
   const { login, register, sendRegisterCode, isAuthenticated } = useAuth();
-  const navigate = useNavigate();
+  const location = useLocation();
+  const nextPath = getSafeNextPath(location.pathname, location.search);
 
-  // 监听 isAuthenticated 变化，App 路由会同步切换，无需手动 navigate
+  // 工具页面是受保护的原始 HTML，登录后需要完整跳转让服务器交付文件。
   useEffect(() => {
     if (isAuthenticated) {
-      navigate('/today', { replace: true });
+      window.location.replace(nextPath || '/today');
     }
-  }, [isAuthenticated, navigate]);
+  }, [isAuthenticated, nextPath]);
 
   // 倒计时
   useEffect(() => {
@@ -77,7 +91,7 @@ export function LoginPage() {
         await login(email, password);
         MessagePlugin.success('登录成功！');
         // 强制刷新确保所有全局状态重置
-        window.location.href = '/today';
+        window.location.href = nextPath || '/today';
       } catch (e: any) {
         MessagePlugin.error(e.message);
       } finally {

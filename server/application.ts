@@ -46,6 +46,7 @@ import { addLog } from './log-service.js';
 
 import { createDailyReportCloudMcpRouter } from './daily-report-cloud-mcp.js';
 import { createDailyReportCloudOAuthRouter } from './daily-report-cloud-auth.js';
+import { createToolsApiRouter } from './protected-tools.js';
 
 // 数据库实例（等待初始化后赋值）
 let db: typeof dbModule;
@@ -53,7 +54,7 @@ let dbInitialized = false;
 let inviteCodesInitialized = false;
 export const runtimeConfig = readRuntimeConfig();
 const { isProduction, JWT_SECRET, backgroundJobsEnabled } = runtimeConfig;
-export const { signUserToken, authenticate, requireAdmin } = createAuth({ secret: JWT_SECRET, getUserById: id => db.getUserById(id) });
+export const { signUserToken, authenticate, authenticatePage, requireAdmin, setPageSessionCookie, setPageSessionFromBearer, clearPageSessionCookie } = createAuth({ secret: JWT_SECRET, isProduction, getUserById: id => db.getUserById(id) });
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,6 +64,7 @@ export const app = createApp({
   oauthRouter: createDailyReportCloudOAuthRouter(), mcpRouter: createDailyReportCloudMcpRouter(),
   media: { route: DAILY_REPORT_MEDIA_ROUTE, root: dailyReportMediaRoot() },
   staticPath: path.resolve(__dirname, '../dist'),
+  protectedTools: { root: path.resolve(__dirname, '../protected-tools'), authenticatePage, isReady: () => dbInitialized },
 });
 
 // 日志 API
@@ -86,7 +88,9 @@ app.use(createRetiredRouter({ authenticate }));
 
 app.use(createAiRouter({ authenticate }));
 
-app.use(createAccountsRouter({ authenticate, signUserToken }));
+app.use(createAccountsRouter({ authenticate, signUserToken, setPageSessionCookie, setPageSessionFromBearer, clearPageSessionCookie }));
+
+app.use(createToolsApiRouter({ authenticate, root: path.resolve(__dirname, '../protected-tools') }));
 
 app.use(createAdminRouter({ authenticate, requireAdmin }));
 

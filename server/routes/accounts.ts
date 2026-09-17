@@ -10,7 +10,7 @@ import { addLog } from '../log-service.js';
 import { getInviteCodeRole } from '../invite-code-service.js';
 import * as db from '../db.js';
 
-export function createAccountsRouter({ authenticate, signUserToken }: Pick<ReturnType<typeof createAuth>, 'authenticate' | 'signUserToken'>) {
+export function createAccountsRouter({ authenticate, signUserToken, setPageSessionCookie, setPageSessionFromBearer, clearPageSessionCookie }: Pick<ReturnType<typeof createAuth>, 'authenticate' | 'signUserToken' | 'setPageSessionCookie' | 'setPageSessionFromBearer' | 'clearPageSessionCookie'>) {
   const app = Router();
   app.post("/api/auth/send-register-code", async (req, res) => {
     try {
@@ -112,6 +112,7 @@ export function createAccountsRouter({ authenticate, signUserToken }: Pick<Retur
       // 生成 JWT
       const token = signUserToken(user);
       addLog('info', 'auth', `新用户注册: ${email}，权限: ${role}`, { userId, role });
+      setPageSessionCookie(res, token);
       res.json({ success: true, token, user: { id: user.id, email: user.email, role: user.role } });
     } catch (error: any) {
       addLog('error', 'auth', `注册失败: ${error.message}`);
@@ -145,6 +146,7 @@ export function createAccountsRouter({ authenticate, signUserToken }: Pick<Retur
       db.updateUserLastLogin(user.id);
 
       addLog('info', 'auth', `用户登录: ${email}`, { userId: user.id, role: user.role });
+      setPageSessionCookie(res, token);
       res.json({ success: true, token, user: { id: user.id, email: user.email, role: user.role } });
     } catch (error: any) {
       addLog('error', 'auth', `登录失败: ${error.message}`);
@@ -159,7 +161,14 @@ export function createAccountsRouter({ authenticate, signUserToken }: Pick<Retur
     const user = db.getUserById(payload.userId);
     if (!user) return res.status(404).json({ error: '用户不存在' });
 
+    setPageSessionFromBearer(req, res);
     res.json({ user });
+  });
+
+  // 登出接口不要求当前 Bearer 有效，以便失效账号也能清理网页 Cookie。
+  app.post("/api/auth/logout", (_req, res) => {
+    clearPageSessionCookie(res);
+    res.json({ success: true });
   });
 
   // 获取所有用户列表（管理员）- 支持分页和搜索

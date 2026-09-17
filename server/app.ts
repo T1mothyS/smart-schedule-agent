@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'node:path';
 import { createApiRateLimiter, securityHeaders } from './http-security.js';
+import { createProtectedToolsRouter } from './protected-tools.js';
 
 export interface AppDependencies {
   isProduction: boolean;
@@ -10,6 +11,7 @@ export interface AppDependencies {
   mcpRouter?: express.RequestHandler;
   media?: { route: string; root: string };
   staticPath?: string;
+  protectedTools?: { root: string; authenticatePage: express.RequestHandler; isReady: () => boolean };
   registerRoutes?: (app: express.Express) => void;
 }
 
@@ -39,6 +41,10 @@ export function createApp(deps: AppDependencies): express.Express {
   if (deps.media) app.use(deps.media.route, express.static(deps.media.root, {
     dotfiles: 'deny', fallthrough: false, index: false, maxAge: '1y', immutable: true, redirect: false,
   }));
+  if (deps.protectedTools) {
+    // 必须位于主站静态资源和 SPA fallback 之前，避免工具路径被 index.html 接管。
+    app.use('/tools', createProtectedToolsRouter(deps.protectedTools));
+  }
   if (deps.isProduction && deps.staticPath) app.use(express.static(deps.staticPath));
   deps.registerRoutes?.(app);
   return app;

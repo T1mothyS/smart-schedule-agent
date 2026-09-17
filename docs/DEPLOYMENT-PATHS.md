@@ -24,7 +24,7 @@
 
 ### 步骤
 
-1. 在本地完成类型检查、测试、生产构建和差异检查；生成不含生产配置、数据和依赖目录的归档包。
+1. 在本地完成类型检查、测试、生产构建和差异检查；生成不含生产配置、数据和依赖目录、但保留 `protected-tools/` 的归档包。
 2. 记录归档包 SHA-256。上传到服务器临时位置后再次计算并比较哈希；只接受完全一致的包。
 3. 在服务器做只读预检，确认服务、磁盘、现有 `data/`、生产配置、依赖目录和回滚空间可用；规范化比较依赖清单。
 4. 在切换前备份生产配置和数据，保留到新版本完成验收之后；备份不下载回本地、不提交 Git。
@@ -68,6 +68,23 @@
 - `.deploy`、连续记录和本地 Git commit 的对应关系。
 
 GitHub push、tag 和 Release 是版本发布记录，和服务器部署分开记录、分开授权、分开验收。
+
+## 受保护工具纯 HTML 快传路径
+
+纯 HTML 应用只修改 `protected-tools/<slug>/index.html` 和 `protected-tools/manifest.json` 时，可以使用独立工具发布编号和 SHA-256，不重新构建 React、重启 PM2 或升级整站版本。先在本地审阅 HTML，再运行：
+
+```powershell
+pwsh -NoProfile -File scripts/prepare-protected-tool-release.ps1 `
+  -InputPath .\new-tool.html `
+  -Slug new-tool `
+  -Title "新工具" `
+  -Summary "工具用途说明" `
+  -CspProfile inline
+```
+
+脚本只生成临时发布包 `protected-tools/manifest.json`、目标 slug 的 `index.html` 和 `release.json`，记录独立 `releaseId`、HTML SHA-256 与清单 SHA-256，不连接服务器、不修改生产目录。获得明确上传授权后，将这两个文件上传到服务器暂存目录，分别核对哈希；备份线上目标工具目录和清单，把暂存内容原子切换到 `protected-tools/`，再用真实登录会话核对 `/api/tools`、工具页面和回滚材料。服务器运行时按请求读取清单，因此纯 HTML 快传不需要 PM2 重启。
+
+这条快速路径只适用于本人控制或已经审阅的 HTML；同域工具不是第三方插件沙箱。如果涉及 React、Express、API、认证、CSP 规则或运行时依赖，必须回到路径 A/B，重新走整站版本、预构建、备份和回滚流程。
 
 ## 固化的历史教训
 

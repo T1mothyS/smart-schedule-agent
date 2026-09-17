@@ -4,7 +4,7 @@ export function SettingsLayout({ isAdmin, children }: { isAdmin: boolean; childr
   const contentRef = useRef<HTMLDivElement>(null);
   const sections = [
     ['account', '账户'], ['ai', 'AI'], ['guides', '接入指南'], ['notifications', '通知'],
-    ['daily-report', '日报'], ['library', '知识库'], ['mail', '邮箱'], ['data', '数据'],
+    ['daily-report', '日报'], ['library', '知识库'], ['tools', '挂载工具'], ['mail', '邮箱'], ['data', '数据'],
     ...(isAdmin ? [['admin', '管理']] : []),
   ];
 

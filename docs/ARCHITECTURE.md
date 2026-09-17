@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: `375469e` + Phase 5 CSS/验证收尾 / `0.21.4-260916.0715`（2026-09-16，本地源码；其他领域以各节证据为准）。
+- Last verified commit/version: Tools 挂载应用实现 checkpoint / `0.22.0-260917.2044`（2026-09-17，本地源码；其他领域以各节证据为准）。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
 - Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
@@ -33,9 +33,10 @@ React/Vite 与 Electron 壳都使用同一套前端页面。Electron 主进程�
 | src/components/NoteBoard.tsx | AI 记事的 CRUD、颜色、完成和导出 |
 | src/components/DailyReportsPage.tsx | 日报列表、独立阅读页和显式重发 |
 | src/components/LibraryPage.tsx、library/LibraryDetailPage.tsx | 知识库列表与异步阅读、评论、版本 |
+| src/pages/ToolsPage.tsx | 登录后的挂载应用菜单；不加入产品顶部导航 |
 | src/components/settings/ | Settings V2 的 Dialog、Layout、Section、Row 和领域设置 |
 
-当前登录后页面路由是 /today、/schedule、/assistant、/reminders、/reports、/reports/:date、/library 和 /library/:id；/import 重定向到 /assistant?tool=email-import；未登录时使用 /login。设置通过产品壳按钮打开 SettingsDialog，没有独立 /settings 路由。
+当前登录后页面路由是 /today、/schedule、/assistant、/reminders、/reports、/reports/:date、/library、/library/:id 和 /tools；/import 重定向到 /assistant?tool=email-import；未登录时使用 /login。设置通过产品壳按钮打开 SettingsDialog，没有独立 /settings 路由；Tools 只从设置中的“挂载工具”进入，不加入产品顶部导航。
 
 ### 前端加载边界（Phase 2，0.21.1-260915.1408）
 
@@ -54,9 +55,19 @@ Phase 5 后，server/routes/ 拥有全部领域 HTTP 处理器，包括日程、
 
 认证中间件先解析登录身份；业务接口使用当前用户 ID 查询或写入数据。管理员接口额外检查管理员角色。外部日报接口使用独立的按账号绑定令牌，权限与登录会话分开。
 
+挂载工具保留现有 API 的 Bearer JWT 认证，同时为原始 HTML 页面和资源使用同一 JWT 派生的 `HttpOnly`、`SameSite=Lax` 页面 Cookie。登录/注册写入该 Cookie，`/api/auth/me` 为已有 Bearer 会话补写，退出接口清理；Cookie 校验仍检查账号禁用状态和 `auth_version`，不会替代 API 鉴权。
+
 领域路由保持已有认证、所有权及 Phase 3 可靠写入协议；固定路径先于参数路由，SPA fallback 最后安装。关闭 runtime 会停止新调度并等待在途 HTTP 与后台 Promise；外部服务超时和强制终止的边界见 [Phase 4 验证记录](PHASE4-APP-RUNTIME-ROUTERS.md)。
 
 Phase 5 的所有权、等价性和迁移验收见 [Phase 5 验证记录](PHASE5-DOMAIN-BOUNDARIES.md)。
+
+### 挂载工具边界
+
+`protected-tools/manifest.json` 是工具菜单的清单来源；`GET /api/tools` 只在 Bearer 认证后返回当前启用工具的 `slug`、标题、说明、路径和 `kind=mounted`。原始 HTML 放在 `protected-tools/<slug>/index.html`，由 `/tools/<slug>/` 的专用门禁在主站静态资源和 SPA fallback 之前交付。未知 slug、路径遍历、资源目录和 fallback 均不能绕过门禁；工具响应使用 `private, no-store`。
+
+工具路径使用独立 CSP profile：默认挂载工具允许其受审阅 HTML 所需的内联脚本；支付宝规划器额外允许 `https://cdn.plot.ly` 和 `https://render.alipay.com` iframe。主站的 CSP 不放宽。三个初始应用继续使用浏览器 `localStorage`，扑克牌档案和支付宝参数不会按账号同步。
+
+这条路径只适合本人控制或已经审阅的 HTML。由于它们仍处于同域，受信任的应用脚本可以看到浏览器本地存储；它不是第三方插件沙箱。未来若要挂载不受信任的代码，必须改用独立 origin 或更严格的沙箱边界。
 
 ## 4. 持久化
 
@@ -95,4 +106,4 @@ server/db.ts 保留兼容导出；server/database/connection.ts 拥有连接与�
 
 ## 7. 构建产物
 
-Vite Web 构建写入 dist/；Electron TypeScript 编译写入 dist-electron/；build:electron 准备只含 main.js、preload.js、app-url.json、package.json 和桌面图标的 dist-desktop/；安装包写入 release/。构建需要合法 HTTPS 的 ELECTRON_APP_URL 或 APP_URL，但该值不应写入提交或覆盖 .env。
+Vite Web 构建写入 dist/；Electron TypeScript 编译写入 dist-electron/；build:electron 准备只含 main.js、preload.js、app-url.json、package.json 和桌面图标的 dist-desktop/；安装包写入 release/。部署包还必须保留受保护工具的 `protected-tools/` 目录，它不属于 `dist/`，不能只上传前端构建产物。构建需要合法 HTTPS 的 ELECTRON_APP_URL 或 APP_URL，但该值不应写入提交或覆盖 .env。

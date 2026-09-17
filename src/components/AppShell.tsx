@@ -14,7 +14,7 @@ const productNavItems: Array<{ section: Section; label: string; icon?: string; I
 ];
 
 interface AppShellProps {
-  activeSection: Section;
+  activeSection: Section | null;
   onSectionChange: (section: Section) => void;
   theme: string;
   onToggleTheme: () => void;

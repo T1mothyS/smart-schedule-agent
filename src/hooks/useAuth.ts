@@ -41,7 +41,8 @@ export function useAuth() {
     }
     try {
       const res = await fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
+        credentials: 'same-origin',
       });
       if (res.ok) {
         const data = await res.json();
@@ -67,6 +68,7 @@ export function useAuth() {
     const res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify({ email, password }),
     });
     const data = await res.json();
@@ -80,6 +82,7 @@ export function useAuth() {
     const res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify({ email, password, code, invite_code }),
     });
     const data = await res.json();
@@ -93,6 +96,7 @@ export function useAuth() {
     const res = await fetch('/api/auth/send-register-code', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
       body: JSON.stringify({ email, password, invite_code }),
     });
     const data = await res.json();
@@ -101,6 +105,7 @@ export function useAuth() {
 
   // 登出
   const logout = () => {
+    void fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin', keepalive: true }).catch(() => undefined);
     localStorage.removeItem(TOKEN_KEY);
     setState({ user: null, token: null, isLoading: false, isAuthenticated: false });
   };

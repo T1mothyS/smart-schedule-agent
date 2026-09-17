@@ -1,0 +1,712 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>支付宝会员成长值预测器 · 交互审计版</title>
+<style>
+  :root{
+    --bg:#f5f7fb; --card:#fff; --text:#182233; --muted:#718096; --line:#e8edf5;
+    --accent:#2b63ff; --accent2:#7a5cff; --good:#14966f; --warn:#b77800; --bad:#c94b4b;
+    --shadow:0 10px 30px rgba(28,45,80,.08); --radius:18px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#eef4ff 0,#f7f9fc 280px);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;color:var(--text)}
+  a{color:#2858d8;text-decoration:none} a:hover{text-decoration:underline}
+  .wrap{max-width:1180px;margin:auto;padding:22px}
+  .hero{padding:28px;border-radius:24px;background:linear-gradient(135deg,#163dce,#1e2c88 58%,#142062);color:#fff;box-shadow:var(--shadow)}
+  h1{font-size:30px;margin:0 0 8px}.hero p{margin:0;color:#dce5ff;line-height:1.7}
+  .tabs{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+  .tabbtn{background:rgba(255,255,255,.12);color:#eaf0ff;border:1px solid rgba(255,255,255,.18);padding:9px 14px;border-radius:12px}
+  .tabbtn.active{background:#fff;color:#2349b8}
+  .pane{display:none}.pane.active{display:block}
+  .grid{display:grid;grid-template-columns:390px 1fr;gap:18px;margin-top:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
+  .card h2{font-size:19px;margin:0 0 14px}.section-title{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  .badge{font-size:12px;padding:5px 9px;border-radius:999px;background:#eef3ff;color:#3158d7;white-space:nowrap}
+  .badge.good{background:#effaf6;color:#11795b}.badge.warn{background:#fff7e5;color:#9a6500}.badge.bad{background:#fff0f0;color:#b33d3d}
+  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+  input,select{width:100%;border:1px solid #dce3ee;border-radius:11px;padding:10px 11px;font-size:14px;background:#fff;color:var(--text);outline:none}
+  input:focus,select:focus{border-color:#7e9cff;box-shadow:0 0 0 3px rgba(43,99,255,.08)}
+  .full{grid-column:1/-1}.help{font-size:12px;color:var(--muted);line-height:1.6;margin-top:5px}
+  .switchline{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-top:1px dashed var(--line);margin-top:8px;gap:12px}
+  .switchline input{width:20px;height:20px}
+  .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  button{border:0;border-radius:11px;padding:10px 14px;font-weight:700;cursor:pointer}
+  .primary{background:var(--accent);color:#fff}.secondary{background:#edf2ff;color:#3158d7}.ghost{background:#f3f5f8;color:#4d5b70}
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  .metric{border:1px solid var(--line);border-radius:15px;padding:14px;background:linear-gradient(180deg,#fff,#fbfcff)}
+  .metric .k{font-size:12px;color:var(--muted)} .metric .v{font-size:22px;font-weight:800;margin-top:5px}.metric .s{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.45}
+  .timeline{margin-top:14px}.event{display:grid;grid-template-columns:110px 1fr;gap:12px;padding:12px 0;border-top:1px solid var(--line)}
+  .event:first-child{border-top:0}.date{font-weight:800}.event .name{font-weight:750}.event .desc{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;background:var(--accent)}
+  .plotbox{width:100%;height:430px;border-radius:14px;background:#fbfcff;border:1px solid var(--line);margin-top:10px;overflow:hidden}
+  .strategy{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .tip{border-radius:14px;padding:14px;background:#f7f9ff;border:1px solid #e6ebfb;line-height:1.65;font-size:13px}
+  .tip strong{display:block;font-size:15px;margin-bottom:4px}
+  .tip.good{background:#effaf6;border-color:#d5f0e6}.tip.warn{background:#fff8ea;border-color:#f4e4bd}.tip.bad{background:#fff1f1;border-color:#f2d2d2}
+  table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px 8px;text-align:right;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}
+  th{font-size:12px;color:var(--muted)}
+  details{margin-top:12px;border-top:1px solid var(--line);padding-top:12px}summary{cursor:pointer;font-weight:700}
+  .notice{font-size:12px;color:#68758a;line-height:1.7;margin-top:12px}
+  .resultbox{margin-top:12px;padding:14px;border-radius:14px;background:#f4f7ff;border:1px solid #dfe7ff;line-height:1.7}.resultbox b{font-size:17px}
+  .audit{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.audititem{padding:12px;border:1px solid var(--line);border-radius:14px;background:#fbfcff}.audititem .t{font-weight:800;font-size:13px}.audititem .d{font-size:12px;color:var(--muted);margin-top:5px;line-height:1.55}
+  .rules{margin-top:18px}.rules-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.rulebox{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:var(--shadow)}
+  .rulebox h3{margin:0 0 10px;font-size:17px}.rulebox p,.rulebox li{font-size:13px;line-height:1.7;color:#41506a}.rulebox ul{padding-left:20px;margin:8px 0}.quote{border-left:4px solid #a9bbff;background:#f5f7ff;padding:10px 12px;border-radius:0 10px 10px 0;font-size:13px;line-height:1.7;color:#34425a}
+  .source{font-size:12px;color:var(--muted);margin-top:8px}.official-frame{width:100%;height:520px;border:1px solid var(--line);border-radius:12px;background:#fff;margin-top:10px}.pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#f1f4f9;color:#617087;font-size:11px;margin-right:5px;margin-bottom:5px}
+  .debugline{font-size:12px;margin-top:10px;padding:10px 12px;border-radius:10px;background:#f7f9fc;border:1px dashed #dce3ee;color:#5d6a7e;line-height:1.6}
+
+  .breakbox{margin-top:14px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff}
+  .breakhead{padding:12px 14px;background:#f7f9fc;border-bottom:1px solid var(--line);font-weight:800;font-size:14px}
+  .breaknote{font-size:12px;color:var(--muted);font-weight:400;margin-top:4px;line-height:1.55}
+  .breaktable{width:100%;border-collapse:collapse;font-size:12px}
+  .breaktable th,.breaktable td{padding:9px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  .breaktable th{color:var(--muted);font-weight:700;background:#fbfcff}
+  .breaktable td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .tag-reset{display:inline-block;padding:2px 7px;border-radius:999px;background:#fff0f0;color:#b33d3d;font-weight:700}
+  .tag-keep{display:inline-block;padding:2px 7px;border-radius:999px;background:#effaf6;color:#11795b;font-weight:700}
+  .tag-up{display:inline-block;padding:2px 7px;border-radius:999px;background:#eef3ff;color:#3158d7;font-weight:700}
+  .charthelp{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:8px;line-height:1.6}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:999px;background:#f5f7fb;border:1px solid var(--line)}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}.metrics{grid-template-columns:1fr 1fr}.strategy,.rules-grid{grid-template-columns:1fr}.audit{grid-template-columns:1fr}}
+  @media(max-width:520px){.wrap{padding:12px}.hero{padding:22px 18px}h1{font-size:24px}.form-grid{grid-template-columns:1fr}.full{grid-column:auto}.metrics{grid-template-columns:1fr 1fr}.event{grid-template-columns:92px 1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="hero">
+    <h1>支付宝会员成长值预测器 · 交互审计版</h1>
+    <p>按会员等级有效期、升级/保级、消费成长值和金融理财周度成长值重新建模。页面把“成长值”和“支付宝积分”严格分开，避免把两套规则混在一起。</p>
+    <div class="tabs">
+      <button class="tabbtn active" data-tab="planner">成长值测算</button>
+      <button class="tabbtn" data-tab="rules">规则说明</button>
+    </div>
+  </section>
+
+  <div id="planner" class="pane active">
+    <div class="grid">
+      <aside class="card">
+        <div class="section-title"><h2>你的参数</h2><span class="badge">v4 · 交互审计</span></div>
+        <div class="form-grid">
+          <div><label>测算起始日</label><input id="startDate" type="date" value="2026-09-04"></div>
+          <div><label>当前会员有效期至</label><input id="expiryDate" type="date" value="2027-07-01"></div>
+          <div><label>当前实际等级</label>
+            <select id="currentLevel"><option value="0" selected>大众</option><option value="1">黄金</option><option value="2">铂金</option><option value="3">钻石</option></select>
+          </div>
+          <div><label>本有效期已累计成长值</label><input id="currentGrowth" type="number" min="0" step="1" value="522"></div>
+          <div><label>理财 / 基金 / 黄金 AUM（元）</label><input id="wealthAum" type="number" min="0" step="100" value="21000"></div>
+          <div><label>余额宝 AUM（元）</label><input id="yuebaoAum" type="number" min="0" step="100" value="0"></div>
+          <div><label>每月新增合格 AUM（元）</label><input id="monthlyDeposit" type="number" min="0" step="100" value="6000"></div>
+          <div><label>每月新增资金入账日</label><input id="depositDay" type="number" min="1" max="28" value="1"></div>
+          <div><label>每月消费成长值</label><input id="consumeGrowth" type="number" min="0" step="1" value="50"></div>
+          <div><label>每月缴费 / 还款成长值</label><input id="utilityGrowth" type="number" min="0" step="1" value="60"></div>
+          <div><label>每月其他固定成长值</label><input id="otherGrowth" type="number" min="0" step="1" value="0"></div>
+          <div><label>预测年数</label><input id="years" type="number" min="1" max="15" step="1" value="6"></div>
+          <div class="full help">消费成长值请填“按单笔取整之后”的月度估计，而不是简单用整月消费额 ÷ 20。例如两笔 19 元消费不是 1.9 分，而是 0 分。</div>
+        </div>
+
+        <details>
+          <summary>规则参数（支付宝改规则时改这里）</summary>
+          <div class="form-grid" style="margin-top:12px">
+            <div><label>黄金门槛</label><input id="goldT" type="number" value="2000"></div>
+            <div><label>铂金门槛</label><input id="platT" type="number" value="6000"></div>
+            <div><label>钻石门槛</label><input id="diaT" type="number" value="18000"></div>
+            <div><label>理财类：每 1000 元 / 周成长值</label><input id="wealthWeeklyRate" type="number" step="0.01" value="1"></div>
+            <div><label>理财类：周上限</label><input id="wealthWeeklyCap" type="number" value="1250"></div>
+            <div><label>余额宝：每 1000 元 / 周成长值</label><input id="yuebaoWeeklyRate" type="number" step="0.01" value="1"></div>
+            <div><label>余额宝：周上限</label><input id="yuebaoWeeklyCap" type="number" value="750"></div>
+            <div><label>新周期基础成长值</label><input id="newCycleBase" type="number" min="0" value="0"></div>
+          </div>
+          <div class="switchline">
+            <div><b>升级后开启新的等级有效期</b><div class="help">默认开启。新等级有效期从升级日开始；新有效期内重新累计成长值。</div></div>
+            <input id="resetOnUpgrade" type="checkbox" checked>
+          </div>
+        </details>
+
+        <div class="actions">
+          <button class="primary" onclick="recalc()">重新计算</button>
+          <button class="secondary" onclick="saveSettings()">保存参数</button>
+          <button class="ghost" onclick="exportSettings()">导出参数</button>
+          <button class="ghost" onclick="resetDefaults()">恢复默认</button>
+        </div>
+        <div class="notice">金融成长值按“每 7 天结算一次、用该 7 天日均余额计算”进行近似，并对每 1000 元取整和周上限做了限制。支付宝真实周界、入账时点可能不同，因此预测日期仍保留约 ±7 天误差。</div>
+      </aside>
+
+      <main>
+        <section class="card">
+          <div class="section-title"><h2>预测结果</h2><span id="statusBadge" class="badge">计算中</span></div>
+          <div class="metrics">
+            <div class="metric"><div class="k">当前月均成长速度</div><div id="mMonthly" class="v">—</div><div class="s">消费 + 缴费 + 按当前 AUM 折算</div></div>
+            <div class="metric"><div class="k">黄金</div><div id="mGold" class="v">—</div><div id="sGold" class="s">门槛 2000</div></div>
+            <div class="metric"><div class="k">铂金</div><div id="mPlat" class="v">—</div><div id="sPlat" class="s">门槛 6000</div></div>
+            <div class="metric"><div class="k">钻石</div><div id="mDia" class="v">—</div><div id="sDia" class="s">门槛 18000</div></div>
+          </div>
+          <div id="debugLine" class="debugline"></div>
+          <div id="chart" class="plotbox"></div>
+          <div class="charthelp">
+            <span class="chip">鼠标悬停：看当日成长值、等级、AUM 和事件说明</span>
+            <span class="chip">拖拽：框选放大</span>
+            <span class="chip">Shift + 拖拽：平移</span>
+            <span class="chip">滚轮：缩放</span>
+            <span class="chip">双击：还原视图</span>
+          </div>
+          <div class="breakbox">
+            <div class="breakhead">图上所有断点 / spike 审计
+              <div class="breaknote">每一个“突然掉下去”的点都会在这里写明：发生日期、发生前成长值、发生后成长值、等级变化、有效期变化，以及为什么清零。</div>
+            </div>
+            <div style="overflow:auto">
+              <table class="breaktable">
+                <thead><tr><th>日期</th><th>事件</th><th>等级</th><th>成长值</th><th>是否清零</th><th>新的有效期</th><th>原因</th></tr></thead>
+                <tbody id="breakBody"></tbody>
+              </table>
+            </div>
+          </div>
+          <div id="timeline" class="timeline"></div>
+        </section>
+
+        <section class="card" style="margin-top:18px">
+          <div class="section-title"><h2>模型自检</h2><span id="selfTestBadge" class="badge">运行中</span></div>
+          <div id="audit" class="audit"></div>
+        </section>
+
+        <section class="card" style="margin-top:18px">
+          <h2>目标反推</h2>
+          <div class="form-grid">
+            <div><label>目标等级</label><select id="targetLevel"><option value="1">黄金</option><option value="2" selected>铂金</option><option value="3">钻石</option></select></div>
+            <div><label>希望最晚达到日期</label><input id="targetDate" type="date" value="2028-12-31"></div>
+          </div>
+          <div class="actions"><button class="primary" onclick="optimize()">计算最低资金要求</button></div>
+          <div id="optResult" class="resultbox">点击“计算最低资金要求”，会分别反推：<b>最低每月新增理财类 AUM</b> 与 <b>最低一次性补充理财类 AUM</b>。</div>
+        </section>
+
+        <section class="card" style="margin-top:18px">
+          <h2>成长值策略</h2>
+          <div id="strategy" class="strategy"></div>
+        </section>
+
+        <section class="card" style="margin-top:18px">
+          <h2>周期明细</h2>
+          <div style="overflow:auto"><table>
+            <thead><tr><th>日期</th><th>合格 AUM</th><th>等级</th><th>周期成长值</th><th>事件</th></tr></thead>
+            <tbody id="tableBody"></tbody>
+          </table></div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="rules" class="pane rules">
+    <div class="rules-grid">
+      <section class="rulebox">
+        <h3>1. 先分清：成长值 ≠ 支付宝积分</h3>
+        <p><b>成长值</b>决定大众 / 黄金 / 铂金 / 钻石会员等级；<b>支付宝积分</b>主要用于兑换权益。2026 年支付宝对“积分”获取规则做过调整，但公开通知同时明确：会员等级仍由成长值决定。</p>
+        <div class="quote">官方说明页的核心表述可概括为：“会员等级由成长值决定，与积分无关。”</div>
+        <div class="source">当前积分调整参考：<a href="https://www.ithome.com/0/972/406.htm" target="_blank" rel="noopener">2026-07-03 积分规则调整报道</a></div>
+      </section>
+
+      <section class="rulebox">
+        <h3>2. 会员等级与门槛</h3>
+        <ul>
+          <li>大众会员：0–1999 成长值</li>
+          <li>黄金会员：2000–5999 成长值</li>
+          <li>铂金会员：6000–17999 成长值</li>
+          <li>钻石会员：18000 及以上成长值</li>
+        </ul>
+        <div class="quote">规则原文短摘：“用户等级积分达到对应升级门槛，则立即升级。”</div>
+        <div class="source">支付宝规则入口：<a href="https://render.alipay.com/p/c/h5-member/gradeRule.html" target="_blank" rel="noopener">等级规则</a></div>
+      </section>
+
+      <section class="rulebox">
+        <h3>3. 有效期、升级、保级与清零</h3>
+        <p>会员等级有效期为 1 年。当前有效期内一旦达到更高等级门槛，新等级立即生效，新等级有效期从升级日重新计算；新等级有效期重新开始累计成长值。若整个有效期内没有再次升级，则到期日根据本有效期累计成长值重新定级，随后进入下一有效期并重新累计。</p>
+        <div class="quote">建模口径：升级 = 新等级立即生效 + 新有效期开始 + 新周期成长值从 0 重新累计；到期结算 = 先按旧周期成长值定级，再把旧周期成长值清零。</div>
+        <p><b>因此：</b>“当前等级”和“本周期成长值”是两个不同字段。比如当前是黄金会员，但本周期成长值只有 522，完全可能；这代表尚未达到 2000 的黄金保级线，不代表“黄金未达”。</p>
+      </section>
+
+      <section class="rulebox">
+        <h3>4. 消费购物成长值</h3>
+        <p>公开的会员成长值页面显示，生活消费按“单笔实付每满 20 元 +1 成长值”的思路计算，关键是<b>单笔分别取整</b>，不是把整月消费额先相加再除以 20。</p>
+        <ul>
+          <li>花呗支付：每 20 元 +1，月上限 200</li>
+          <li>门店买单：每 20 元 +1，月上限 1000</li>
+          <li>商户支付宝付款：每 20 元 +1，月上限 1000</li>
+          <li>淘宝天猫购物：每 20 元 +1，月上限 500</li>
+          <li>生活消费整体还存在每日成长值上限；实际以你账户页面展示为准</li>
+        </ul>
+        <p>本预测器不要求你逐笔录入，而是直接输入“每月消费成长值”的保守估计。你当前填 50/月，就是把碎片化小额消费损失考虑进去后的口径。</p>
+      </section>
+
+      <section class="rulebox">
+        <h3>5. 生活缴费 / 还款</h3>
+        <p>公开页面长期采用“符合条件的缴费行为，每笔 +10 成长值、每个项目每月限前 3 笔”的结构，常见包括手机充值、信用卡还款、水电燃气等。不同年份可见项目会变化，因此本页把这部分做成手工输入。</p>
+        <p>你当前设置 60/月，等价于按两个稳定项目各做满 3 笔 × 10 分。只要你的真实操作确实如此，这个输入是合理的。</p>
+      </section>
+
+      <section class="rulebox">
+        <h3>6. 金融理财成长值</h3>
+        <p>公开的成长值页面显示，理财/基金/黄金与余额宝均按<b>周度日均余额</b>计成长值，每 1000 元对应 1 成长值，但周上限不同：</p>
+        <ul>
+          <li>理财 / 基金 / 黄金：每周上限约 1250</li>
+          <li>余额宝：每周上限约 750</li>
+          <li>蚂蚁保：部分合格产品曾按投保金额计成长值、月上限 1000，但产品资格变化较快，本模型默认不自动计入</li>
+        </ul>
+        <p>旧版把全部 AUM 当作“无限上限、连续按日增长”，对你现在 2.1 万元影响不大，但在反推几十万或上百万元资金时会明显高估，所以本版已拆分两类 AUM，并加上周度取整和封顶。</p>
+      </section>
+
+      <section class="rulebox">
+        <h3>7. 本页采用的建模近似</h3>
+        <div><span class="pill">已精确处理</span>等级门槛</div>
+        <div><span class="pill">已精确处理</span>当前等级与周期成长值分离</div>
+        <div><span class="pill">已精确处理</span>AUM 每 1000 元取整与周上限</div>
+        <div><span class="pill">近似处理</span>消费 / 缴费成长值按全年均匀发生</div>
+        <div><span class="pill">近似处理</span>金融成长值按起始日起每 7 天结算</div>
+        <p>所以本页适合做“什么时候大概率能升级”的规划，不适合替代支付宝 App 的实际入账日。</p>
+      </section>
+
+      <section class="rulebox">
+        <h3>8. 规则原文与来源入口</h3>
+        <p>为了避免把过时的旧版规则硬编码成“永久真相”，页面保留了官方规则入口，同时把会影响计算的核心条款逐条整理在本页。</p>
+        <ul>
+          <li><a href="https://render.alipay.com/p/c/h5-member/gradeRule.html" target="_blank" rel="noopener">支付宝：等级规则</a></li>
+          <li><a href="https://render.alipay.com/p/c/18pircu98dmo" target="_blank" rel="noopener">支付宝：会员成长值规则升级公告</a></li>
+          <li><a href="https://www.ithome.com/0/972/406.htm" target="_blank" rel="noopener">2026 年积分规则调整（注意：这是“积分”，不是成长值）</a></li>
+        </ul>
+        <p><b>官方原文嵌入：</b>下面直接尝试加载支付宝官方规则页；如果支付宝限制第三方页面嵌入，浏览器会显示空白或拦截提示，此时点击上面的“支付宝：等级规则”即可打开原页。</p>
+        <iframe class="official-frame" src="https://render.alipay.com/p/c/h5-member/gradeRule.html" loading="lazy" referrerpolicy="no-referrer" title="支付宝会员等级规则原文"></iframe>
+        <details><summary>展开“成长值规则升级公告”官方原页</summary><iframe class="official-frame" src="https://render.alipay.com/p/c/18pircu98dmo" loading="lazy" referrerpolicy="no-referrer" title="支付宝会员成长值规则升级公告"></iframe></details>
+        <p class="help">本页本地保存的是可计算的逐条整理版和少量原文短摘；完整原文由上面的支付宝官方页面实时加载，避免把未来已更新的旧规则固化在本地文件里。</p>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<script>
+const LEVELS=["大众","黄金","铂金","钻石"];
+const STORAGE_KEY="alipayGrowthPlanner.v4"; // 与旧版隔离，避免历史 localStorage 静默覆盖新默认值
+const ids=["startDate","expiryDate","currentLevel","currentGrowth","wealthAum","yuebaoAum","monthlyDeposit","consumeGrowth","utilityGrowth","otherGrowth","years","goldT","platT","diaT","wealthWeeklyRate","wealthWeeklyCap","yuebaoWeeklyRate","yuebaoWeeklyCap","newCycleBase","depositDay","resetOnUpgrade","targetLevel","targetDate"];
+
+const NUMERIC_SELECT_IDS=new Set(["currentLevel","targetLevel"]);
+function v(id){
+  const e=document.getElementById(id);
+  if(e.type==="checkbox") return e.checked;
+  if(e.type==="number") return Number(e.value);
+  if(e.tagName==="SELECT" && NUMERIC_SELECT_IDS.has(id)) return Number(e.value);
+  return e.value;
+}
+function thresholds(){ return [0,v("goldT"),v("platT"),v("diaT")]; }
+function fmtDate(d){ return d?`${d.getFullYear()}.${String(d.getMonth()+1).padStart(2,"0")}.${String(d.getDate()).padStart(2,"0")}`:"—"; }
+function fmtMoney(x){ return Math.round(x).toLocaleString("zh-CN")+" 元"; }
+function addYears(d,n){ const x=new Date(d); x.setFullYear(x.getFullYear()+n); return x; }
+function addDays(d,n){ const x=new Date(d); x.setDate(x.getDate()+n); return x; }
+function sameDay(a,b){return a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate();}
+function dayKey(d){return `${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`;}
+function nextMonthDepositDate(d,day){
+  let y=d.getFullYear(),m=d.getMonth()+1;if(m===12){y++;m=0}
+  return new Date(y,m,Math.min(day,28));
+}
+function levelFromGrowth(g,t){ let lv=0; for(let i=1;i<t.length;i++) if(g>=t[i]) lv=i; return lv; }
+function clamp(x,lo,hi){return Math.max(lo,Math.min(hi,x));}
+
+function getCfg(overrides={}){
+  return Object.assign({
+    start:new Date(v("startDate")+"T00:00:00"), expiry:new Date(v("expiryDate")+"T00:00:00"),
+    level:v("currentLevel"), growth:v("currentGrowth"), wealthAum:v("wealthAum"), yuebaoAum:v("yuebaoAum"),
+    monthlyDeposit:v("monthlyDeposit"), monthlyFixed:v("consumeGrowth")+v("utilityGrowth")+v("otherGrowth"),
+    years:v("years"), t:thresholds(), wealthRate:v("wealthWeeklyRate"), wealthCap:v("wealthWeeklyCap"),
+    yuebaoRate:v("yuebaoWeeklyRate"), yuebaoCap:v("yuebaoWeeklyCap"), base:v("newCycleBase"), day:v("depositDay"), reset:v("resetOnUpgrade")
+  },overrides);
+}
+
+function weeklyGrowth(avgAum,rate,cap){
+  // “每1000元 +1”按完整千元档位取整，再封顶；不足1000不计。
+  return Math.min(cap,Math.floor(Math.max(0,avgAum)/1000)*rate);
+}
+
+function simulate(cfg){
+  let d=new Date(cfg.start), end=addYears(cfg.start,cfg.years), expiry=new Date(cfg.expiry);
+  let level=cfg.level, growth=cfg.growth, wealthAum=cfg.wealthAum, yuebaoAum=cfg.yuebaoAum, nextDep=nextMonthDepositDate(d,cfg.day);
+  let events=[], points=[], snapshots=[], lastMonth=-1;
+  let weekWealthSum=0, weekYuebaoSum=0, weekDays=0;
+  let keepMarkedForCycle=false;
+
+  function pushEvent(type,date,opts={}){
+    events.push(Object.assign({
+      type, date:new Date(date), level, levelBefore:level, levelAfter:level,
+      growthBefore:growth, growthAfter:growth, growth:growth,
+      aum:wealthAum+yuebaoAum, expiryBefore:new Date(expiry), expiryAfter:new Date(expiry),
+      reset:false, minor:false, reason:""
+    },opts));
+  }
+
+  while(d<=end){
+    if(sameDay(d,nextDep)){
+      wealthAum += cfg.monthlyDeposit;
+      pushEvent("deposit",d,{text:`新增合格 AUM ${fmtMoney(cfg.monthlyDeposit)}`,minor:true});
+      nextDep=nextMonthDepositDate(d,cfg.day);
+    }
+
+    growth += cfg.monthlyFixed*12/365.2425;
+
+    weekWealthSum += wealthAum; weekYuebaoSum += yuebaoAum; weekDays++;
+    if(weekDays===7){
+      const wAvg=weekWealthSum/7, yAvg=weekYuebaoSum/7;
+      const wPts=weeklyGrowth(wAvg,cfg.wealthRate,cfg.wealthCap);
+      const yPts=weeklyGrowth(yAvg,cfg.yuebaoRate,cfg.yuebaoCap);
+      const before=growth;
+      growth += wPts+yPts;
+      pushEvent("finance",d,{
+        growthBefore:before,growthAfter:growth,growth,
+        text:`周度金融成长值 +${Math.round(wPts+yPts)}`,minor:true,
+        reason:"7 天日均 AUM 结算"
+      });
+      weekWealthSum=0; weekYuebaoSum=0; weekDays=0;
+    }
+
+    if(level>0 && !keepMarkedForCycle && growth>=cfg.t[level]){
+      keepMarkedForCycle=true;
+      pushEvent("retain",d,{
+        text:`${LEVELS[level]}保级线已达标`,
+        reason:`本周期成长值达到当前等级保级线 ${cfg.t[level]}；只做标记，不清零、不改有效期`
+      });
+    }
+
+    if(level<3 && growth>=cfg.t[level+1]){
+      const oldLevel=level, beforeGrowth=growth, oldExpiry=new Date(expiry);
+      level++;
+      const newExpiry=addYears(d,1);
+      expiry=newExpiry;
+      const afterGrowth=cfg.reset?cfg.base:beforeGrowth;
+      pushEvent("upgrade",d,{
+        levelBefore:oldLevel,levelAfter:level,level,
+        growthBefore:beforeGrowth,growthAfter:afterGrowth,growth:beforeGrowth,
+        expiryBefore:oldExpiry,expiryAfter:new Date(newExpiry),
+        reset:cfg.reset,
+        text:`升级为${LEVELS[level]}`,
+        reason:`成长值达到${LEVELS[level]}升级门槛 ${cfg.t[level]}；新等级立即生效，有效期改为自该日起 1 年${cfg.reset?"；新周期成长值清零重新累计":"；当前设置为不清零"}`
+      });
+      growth=afterGrowth;
+      keepMarkedForCycle=false;
+      weekWealthSum=0; weekYuebaoSum=0; weekDays=0;
+    }
+
+    if(d>=expiry){
+      const oldLevel=level, beforeGrowth=growth, oldExpiry=new Date(expiry);
+      const newLevel=levelFromGrowth(beforeGrowth,cfg.t);
+      const newExpiry=addYears(d,1);
+      level=newLevel;
+      growth=cfg.base;
+      expiry=newExpiry;
+      pushEvent("expiry",d,{
+        levelBefore:oldLevel,levelAfter:newLevel,level:newLevel,
+        growthBefore:beforeGrowth,growthAfter:growth,growth:beforeGrowth,
+        expiryBefore:oldExpiry,expiryAfter:new Date(newExpiry),
+        reset:true,
+        text:`周期结算：${LEVELS[oldLevel]} → ${LEVELS[newLevel]}`,
+        reason:`当前等级有效期到期；先按本周期累计成长值 ${Math.round(beforeGrowth)} 重新定级，再清零进入下一周期`
+      });
+      keepMarkedForCycle=false;
+      weekWealthSum=0; weekYuebaoSum=0; weekDays=0;
+    }
+
+    // 每日点：保证图上的突然下降发生在真实事件日，而不是被“月度采样”挪到月初。
+    points.push({date:new Date(d),growth,aum:wealthAum+yuebaoAum,level});
+    if(d.getDate()===1 && [0,3,6,9].includes(d.getMonth())) snapshots.push({date:new Date(d),aum:wealthAum+yuebaoAum,growth,level,event:"季度快照"});
+    d.setDate(d.getDate()+1);
+  }
+  return {events,points,snapshots,final:{date:end,aum:wealthAum+yuebaoAum,growth,level}};
+}
+
+function findFirstUpgrade(res,lv){ return res.events.find(e=>e.type==="upgrade" && e.level===lv); }
+function levelDisplay(res,cfg,lv){
+  if(cfg.level>=lv) return {text:cfg.level===lv?"当前等级":"已达到",kind:"current",date:null};
+  const e=findFirstUpgrade(res,lv);
+  return e?{text:fmtDate(e.date),kind:"future",date:e.date}:{text:"预测期内未达",kind:"miss",date:null};
+}
+
+function drawChart(res,cfg){
+  const chart=document.getElementById("chart");
+  const data=res.points;if(data.length<2) return;
+
+  const x=data.map(p=>p.date);
+  const y=data.map(p=>p.growth);
+  const custom=data.map(p=>[LEVELS[p.level], p.aum]);
+
+  const lineTrace={
+    type:"scatter",
+    mode:"lines",
+    name:"周期成长值",
+    x,y,
+    customdata:custom,
+    line:{color:"#2b63ff",width:3},
+    hovertemplate:
+      "日期：%{x|%Y-%m-%d}<br>"+
+      "周期成长值：%{y:.0f}<br>"+
+      "会员等级：%{customdata[0]}<br>"+
+      "合格 AUM：%{customdata[1]:,.0f} 元<extra></extra>"
+  };
+
+  const upgrades=res.events.filter(e=>e.type==="upgrade");
+  const expiries=res.events.filter(e=>e.type==="expiry");
+  const retains=res.events.filter(e=>e.type==="retain");
+
+  function eventTrace(events,name,color,symbol){
+    return {
+      type:"scatter",
+      mode:"markers",
+      name,
+      x:events.map(e=>e.date),
+      y:events.map(e=>e.growthAfter),
+      marker:{size:9,color,symbol,line:{width:1,color:"#fff"}},
+      customdata:events.map(e=>[
+        e.text||name,
+        LEVELS[e.levelBefore],
+        LEVELS[e.levelAfter],
+        Math.round(e.growthBefore),
+        Math.round(e.growthAfter),
+        fmtDate(e.expiryAfter),
+        e.reason || ""
+      ]),
+      hovertemplate:
+        "事件：%{customdata[0]}<br>"+
+        "日期：%{x|%Y-%m-%d}<br>"+
+        "等级：%{customdata[1]} → %{customdata[2]}<br>"+
+        "成长值：%{customdata[3]} → %{customdata[4]}<br>"+
+        "新的有效期至：%{customdata[5]}<br>"+
+        "原因：%{customdata[6]}<extra></extra>"
+    };
+  }
+
+  const traces=[
+    lineTrace,
+    eventTrace(upgrades,"升级并清零","#2b63ff","diamond"),
+    eventTrace(expiries,"到期结算并清零","#d14b4b","circle"),
+    eventTrace(retains,"达到保级线（不清零）","#b77800","square")
+  ];
+
+  const shapes=[];
+  const annotations=[];
+
+  upgrades.forEach(e=>{
+    shapes.push({
+      type:"line",xref:"x",yref:"paper",x0:e.date,x1:e.date,y0:0,y1:1,
+      line:{color:"#2b63ff",width:1,dash:"dot"}
+    });
+    annotations.push({
+      x:e.date,y:1.02,xref:"x",yref:"paper",text:`升级<br>${fmtDate(e.date)}`,
+      showarrow:false,font:{size:10,color:"#2b63ff"}
+    });
+  });
+  expiries.forEach(e=>{
+    shapes.push({
+      type:"line",xref:"x",yref:"paper",x0:e.date,x1:e.date,y0:0,y1:1,
+      line:{color:"#d14b4b",width:1,dash:"dash"}
+    });
+    annotations.push({
+      x:e.date,y:1.02,xref:"x",yref:"paper",text:`到期清零<br>${fmtDate(e.date)}`,
+      showarrow:false,font:{size:10,color:"#d14b4b"}
+    });
+  });
+  retains.forEach(e=>{
+    shapes.push({
+      type:"line",xref:"x",yref:"paper",x0:e.date,x1:e.date,y0:0,y1:1,
+      line:{color:"#b77800",width:1,dash:"dot"}
+    });
+  });
+
+  const layout={
+    margin:{l:60,r:20,t:50,b:70},
+    paper_bgcolor:"#fbfcff",
+    plot_bgcolor:"#fbfcff",
+    hovermode:"closest",
+    dragmode:"zoom",
+    showlegend:true,
+    legend:{orientation:"h",yanchor:"bottom",y:1.12,xanchor:"left",x:0},
+    xaxis:{
+      title:"日期",
+      showgrid:false,
+      rangeslider:{visible:true},
+      tickformat:"%Y-%m-%d"
+    },
+    yaxis:{
+      title:"周期成长值",
+      zeroline:false,
+      gridcolor:"#e5eaf2"
+    },
+    shapes,
+    annotations
+  };
+
+  const config={
+    responsive:true,
+    scrollZoom:true,
+    displaylogo:false,
+    modeBarButtonsToRemove:["lasso2d","select2d","autoScale2d"],
+    toImageButtonOptions:{format:"png",filename:"alipay-growth-chart"}
+  };
+
+  Plotly.newPlot(chart,traces,layout,config);
+}
+
+function monthlyFinanceEstimate(cfg){
+  const w=weeklyGrowth(cfg.wealthAum,cfg.wealthRate,cfg.wealthCap)*52/12;
+  const y=weeklyGrowth(cfg.yuebaoAum,cfg.yuebaoRate,cfg.yuebaoCap)*52/12;
+  return w+y;
+}
+
+function recalc(){
+  const cfg=getCfg(),res=simulate(cfg);
+  const gold=levelDisplay(res,cfg,1), plat=levelDisplay(res,cfg,2), dia=levelDisplay(res,cfg,3);
+  const monthlyNow=cfg.monthlyFixed+monthlyFinanceEstimate(cfg);
+  document.getElementById("mMonthly").textContent=Math.round(monthlyNow)+" /月";
+  document.getElementById("mGold").textContent=gold.text;
+  document.getElementById("mPlat").textContent=plat.text;
+  document.getElementById("mDia").textContent=dia.text;
+  document.getElementById("sGold").textContent=cfg.level===1?`当前黄金；${cfg.growth>=cfg.t[1]?"已过保级线":"保级还差 "+Math.max(0,Math.ceil(cfg.t[1]-cfg.growth))}`:`门槛 ${cfg.t[1]}`;
+  document.getElementById("sPlat").textContent=cfg.level===2?`当前铂金；${cfg.growth>=cfg.t[2]?"已过保级线":"保级还差 "+Math.max(0,Math.ceil(cfg.t[2]-cfg.growth))}`:`门槛 ${cfg.t[2]}`;
+  document.getElementById("sDia").textContent=cfg.level===3?`当前钻石；${cfg.growth>=cfg.t[3]?"已过保级线":"保级还差 "+Math.max(0,Math.ceil(cfg.t[3]-cfg.growth))}`:`门槛 ${cfg.t[3]}`;
+  document.getElementById("statusBadge").textContent=`当前 ${LEVELS[cfg.level]} · 周期成长值 ${Math.round(cfg.growth)} · AUM ${fmtMoney(cfg.wealthAum+cfg.yuebaoAum)}`;
+
+  const nextLv=Math.min(3,cfg.level+1);
+  let debug=`当前等级与本周期成长值分开计算：你现在选择的是「${LEVELS[cfg.level]}」，成长值 ${Math.round(cfg.growth)}。`;
+  if(cfg.level<3) debug+=` 下一升级门槛是 ${LEVELS[nextLv]} ${cfg.t[nextLv]}。`;
+  if(cfg.level>0) debug+=` 当前等级保级线是 ${cfg.t[cfg.level]}，到期日 ${fmtDate(cfg.expiry)}。`;
+  if(cfg.level===0 && gold.kind==="future") debug+=` 按当前参数，黄金不是“未达”，模型预测约 ${gold.text} 达到。`;
+  document.getElementById("debugLine").textContent=debug;
+
+  const breakEvents=res.events.filter(e=>e.type==="upgrade"||e.type==="expiry");
+  document.getElementById("breakBody").innerHTML = breakEvents.length ? breakEvents.map(e=>{
+    const lv=`${LEVELS[e.levelBefore]} → ${LEVELS[e.levelAfter]}`;
+    const g=`${Math.round(e.growthBefore)} → ${Math.round(e.growthAfter)}`;
+    const reset=e.reset?`<span class="tag-reset">是，清零</span>`:`<span class="tag-keep">否</span>`;
+    return `<tr>
+      <td><b>${fmtDate(e.date)}</b></td>
+      <td>${e.type==="upgrade"?`<span class="tag-up">升级</span> ${e.text}`:`<span class="tag-reset">到期结算</span> ${e.text}`}</td>
+      <td>${lv}</td>
+      <td class="num">${g}</td>
+      <td>${reset}</td>
+      <td>${fmtDate(e.expiryAfter)}</td>
+      <td>${e.reason}</td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="7" class="help">预测期内没有清零或周期重置事件。</td></tr>`;
+
+  const important=res.events.filter(e=>!e.minor && e.type!=="deposit").slice(0,18);
+  document.getElementById("timeline").innerHTML = important.length ? important.map(e=>`
+    <div class="event"><div class="date">${fmtDate(e.date)}</div><div>
+      <div class="name"><span class="dot"></span>${e.text}</div>
+      <div class="desc">${e.reason || ""}${e.type==="retain"?`；成长值 ${Math.round(e.growthAfter)}，不清零。`:`；成长值 ${Math.round(e.growthBefore)} → ${Math.round(e.growthAfter)}。`}</div>
+    </div></div>`).join("") :
+    `<div class="help">预测期内没有等级变化。</div>`;
+
+  const rows=[...res.events.filter(e=>!e.minor).slice(0,24),...res.snapshots.slice(0,10)].sort((a,b)=>a.date-b.date).slice(0,30);
+  document.getElementById("tableBody").innerHTML=rows.map(r=>{
+    const growthCell=(r.growthBefore!==undefined && (r.type==="upgrade"||r.type==="expiry"))?`${Math.round(r.growthBefore)} → ${Math.round(r.growthAfter)}`:Math.round(r.growth);
+    const lvCell=(r.levelBefore!==undefined && (r.type==="upgrade"||r.type==="expiry"))?`${LEVELS[r.levelBefore]} → ${LEVELS[r.levelAfter]}`:LEVELS[r.level];
+    return `<tr><td>${fmtDate(r.date)}</td><td>${fmtMoney(r.aum)}</td><td>${lvCell}</td><td>${growthCell}</td><td>${r.text||r.event}</td></tr>`;
+  }).join("");
+  drawChart(res,cfg); renderStrategy(cfg,res); runSelfTests(cfg,res);
+}
+
+function reachesBy(cfg,targetLv,targetDate){
+  if(cfg.level>=targetLv) return true;
+  const years=Math.max(1,Math.ceil((targetDate-cfg.start)/(365.2425*864e5))+1);
+  const res=simulate(Object.assign({},cfg,{years}));
+  return res.events.some(e=>e.type==="upgrade" && e.level>=targetLv && e.date<=targetDate);
+}
+
+function binaryMin(testFn,lo,hi,step=100){
+  if(!testFn(hi)) return null;
+  while(hi-lo>step){ const mid=(lo+hi)/2; if(testFn(mid)) hi=mid; else lo=mid; }
+  return Math.ceil(hi/step)*step;
+}
+
+function optimize(){
+  const cfg=getCfg(), targetLv=v("targetLevel"), targetDate=new Date(v("targetDate")+"T23:59:59");
+  if(targetDate<=cfg.start){document.getElementById("optResult").innerHTML="目标日期必须晚于测算起始日。";return;}
+  if(cfg.level>=targetLv){document.getElementById("optResult").innerHTML=`你当前已经是 <b>${LEVELS[cfg.level]}</b>，无需追加资金来“达到”${LEVELS[targetLv]}。`;return;}
+
+  const minMonthly=binaryMin(md=>reachesBy(Object.assign({},cfg,{monthlyDeposit:md}),targetLv,targetDate),0,300000,100);
+  const minTopup=binaryMin(extra=>reachesBy(Object.assign({},cfg,{wealthAum:cfg.wealthAum+extra}),targetLv,targetDate),0,3000000,1000);
+  const currentOK=reachesBy(cfg,targetLv,targetDate);
+
+  let html=`目标：最晚 <b>${fmtDate(targetDate)}</b> 达到 <b>${LEVELS[targetLv]}</b><br>`;
+  html+=currentOK?`按当前方案（每月新增 ${fmtMoney(cfg.monthlyDeposit)}）已经能达到。<br>`:`按当前方案无法在目标日前达到。<br>`;
+  html+=`若只调整“每月新增理财类 AUM”，模型给出的最低值约为 <b>${minMonthly===null?"在当前周上限下，30 万/月以内仍不够":fmtMoney(minMonthly)+"/月"}</b>。<br>`;
+  html+=`若只做“一次性补充理财类 AUM”且之后仍按原月增，最低额约为 <b>${minTopup===null?"在当前周上限下，300 万以内仍不够":fmtMoney(minTopup)}</b>。<br>`;
+  html+=`注意：超过理财类周上限后，继续加钱不会继续线性增加成长值。`;
+  document.getElementById("optResult").innerHTML=html;
+}
+
+function renderStrategy(cfg,res){
+  const finMonthly=monthlyFinanceEstimate(cfg), fixed=cfg.monthlyFixed;
+  const gold=levelDisplay(res,cfg,1),plat=levelDisplay(res,cfg,2);
+  const goldText=gold.kind==="current"?`黄金：<b>${gold.text}</b>`:(gold.kind==="future"?`黄金约 <b>${gold.text}</b>`:`黄金：预测期内未达`);
+  const platText=plat.kind==="current"?`铂金：<b>${plat.text}</b>`:(plat.kind==="future"?`铂金约 <b>${plat.text}</b>`:`铂金：预测期内未达`);
+  document.getElementById("strategy").innerHTML=`
+    <div class="tip good"><strong>① 先把“本来就会发生”的成长值吃满</strong>
+      你当前按消费 ${v("consumeGrowth")} + 缴费/还款 ${v("utilityGrowth")} + 其他 ${v("otherGrowth")} = <b>${fixed} 分/月</b>。不要为了会员等级额外制造消费。
+    </div>
+    <div class="tip"><strong>② 当前 AUM 的金融贡献</strong>
+      按周度取整与上限计算，当前合格 AUM 的金融成长值折合约 <b>${Math.round(finMonthly)} 分/月</b>。2.1 万元这一级别远未触及周上限。
+    </div>
+    <div class="tip warn"><strong>③ “每月消费额 ÷ 20”会高估</strong>
+      正确口径是逐笔计算完整的 20 元档位。很多 10～19 元的小额支付不会贡献成长值，因此你手工填 50/月比直接按总消费额换算更稳妥。
+    </div>
+    <div class="tip"><strong>④ 大额 AUM 不再无限线性加分</strong>
+      理财/基金/黄金与余额宝分别有周上限。旧版反推到几十万、上百万元时会高估，本版已经封顶。
+    </div>
+    <div class="tip"><strong>⑤ 当前路径</strong>
+      ${goldText}；${platText}。状态展示现在会先判断“当前实际等级”，不会再把已经达到的等级写成“未达”。
+    </div>
+    <div class="tip good"><strong>⑥ 规则与模型分开</strong>
+      规则说明页标出了哪些是规则、哪些是预测近似。以后支付宝改成长值规则，只需要改“规则参数”，不必重写整页。
+    </div>`;
+}
+
+function runSelfTests(cfg,res){
+  const tests=[];
+  // 1) 已达到等级绝不能显示“未达”
+  const lvOk=[1,2,3].every(lv=>cfg.level<lv || levelDisplay(res,cfg,lv).kind==="current");
+  tests.push({ok:lvOk,t:"当前等级状态",d:lvOk?"已达到的等级不会再被显示成“未达”。":"发现等级状态判断异常。"});
+  // 2) 当前默认参数必须能在有效期前预测到黄金（这是旧版最直观的回归测试）
+  const isDefaultish=cfg.level===0 && Math.round(cfg.growth)===522 && Math.round(cfg.wealthAum)===21000 && Math.round(cfg.monthlyDeposit)===6000 && Math.round(cfg.monthlyFixed)===110;
+  const g=findFirstUpgrade(res,1);
+  const defaultOk=!isDefaultish || (!!g && g.date<=cfg.expiry);
+  tests.push({ok:defaultOk,t:"黄金回归测试",d:isDefaultish?(defaultOk?`默认参数预测 ${fmtDate(g.date)} 前达到黄金。`:"默认参数竟未在当前有效期内达到黄金，需检查模型。") : "当前参数已变化，跳过默认快照断言。"});
+  // 3) AUM规则取整与封顶
+  const capOk=weeklyGrowth(2000000,cfg.wealthRate,cfg.wealthCap)<=cfg.wealthCap && weeklyGrowth(999,cfg.wealthRate,cfg.wealthCap)===0;
+  tests.push({ok:capOk,t:"金融成长值封顶",d:capOk?"不足1000不计；超过周上限不继续线性增加。":"金融成长值取整/封顶异常。"});
+  // 4) 旧版缓存隔离
+  const storageOk=STORAGE_KEY!=="alipayGrowthPlanner";
+  tests.push({ok:storageOk,t:"旧版缓存隔离",d:storageOk?"使用 v3 独立缓存键，旧设置不会静默覆盖新默认值。":"仍在复用旧版缓存键。"});
+  // 5) 到期结算不应把等级“向上升”：若已达到更高门槛，应该在到期前即时升级
+  const badExpiryUpgrade=res.events.find(e=>e.type==="expiry" && e.levelAfter>e.levelBefore);
+  const expiryInvariant=!badExpiryUpgrade;
+  tests.push({ok:expiryInvariant,t:"即时升级不变量",d:expiryInvariant?"到期结算只会保级或降级，不会出现“大众→黄金”这类本应提前升级的异常。":`异常：${fmtDate(badExpiryUpgrade.date)} 到期时从 ${LEVELS[badExpiryUpgrade.levelBefore]} 升到 ${LEVELS[badExpiryUpgrade.levelAfter]}。`});
+  const numericSelectOk=(typeof cfg.level==="number") && (typeof v("currentLevel")==="number") && (typeof v("targetLevel")==="number");
+  tests.push({ok:numericSelectOk,t:"等级选择框数值化",d:numericSelectOk?"currentLevel / targetLevel 已按数字处理，不会再出现字符串拼接导致的升级判断失效。":"等级选择框仍被当作字符串处理。"});
+
+  document.getElementById("audit").innerHTML=tests.map(x=>`<div class="audititem"><div class="t">${x.ok?"✓":"✕"} ${x.t}</div><div class="d">${x.d}</div></div>`).join("");
+  const pass=tests.filter(x=>x.ok).length;
+  const b=document.getElementById("selfTestBadge");b.textContent=`${pass}/${tests.length} 通过`;b.className="badge "+(pass===tests.length?"good":"bad");
+}
+
+function saveSettings(){ const o={};ids.forEach(id=>o[id]=v(id));localStorage.setItem(STORAGE_KEY,JSON.stringify(o));alert("参数已保存在当前浏览器（v4 独立配置）。");}
+function loadSettings(){ try{const o=JSON.parse(localStorage.getItem(STORAGE_KEY));if(!o)return;ids.forEach(id=>{if(o[id]===undefined)return;const e=document.getElementById(id); if(e.type==="checkbox")e.checked=o[id];else e.value=o[id];});}catch(e){} }
+function exportSettings(){
+  const o={};ids.forEach(id=>o[id]=v(id));
+  const blob=new Blob([JSON.stringify(o,null,2)],{type:"application/json"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="alipay-growth-settings-v4.json";a.click();URL.revokeObjectURL(a.href);
+}
+function resetDefaults(){ localStorage.removeItem(STORAGE_KEY);location.reload(); }
+
+document.querySelectorAll(".tabbtn").forEach(b=>b.addEventListener("click",()=>{
+  document.querySelectorAll(".tabbtn").forEach(x=>x.classList.toggle("active",x===b));
+  document.querySelectorAll(".pane").forEach(x=>x.classList.toggle("active",x.id===b.dataset.tab));
+}));
+document.querySelectorAll("input,select").forEach(e=>e.addEventListener("change",recalc));
+loadSettings();recalc();
+</script>
+</body>
+</html>

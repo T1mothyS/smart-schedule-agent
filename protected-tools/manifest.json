@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "slug": "pelican-bicycle",
+      "title": "Pelican Bicycle",
+      "summary": "一个轻量的 Pelican Bicycle 动画应用。",
+      "enabled": true,
+      "cspProfile": "inline"
+    },
+    {
+      "slug": "alipay-growth-planner",
+      "title": "支付宝成长规划器",
+      "summary": "查看和规划支付宝会员成长参数与目标。",
+      "enabled": true,
+      "cspProfile": "plotly-alipay"
+    },
+    {
+      "slug": "poker-tracker",
+      "title": "扑克牌收集追踪",
+      "summary": "记录扑克牌收藏、切换档案，并支持本地导入导出。",
+      "enabled": true,
+      "cspProfile": "inline"
+    }
+  ]
+}

@@ -5,7 +5,7 @@ import { APP_CONFIG } from '../../config';
 import { SettingsPage } from './SettingsPage';
 import './settings.css';
 
-export function SettingsDialog({ onClose, onOpenAdmin, restoreFocusTo }: { onClose: () => void; onOpenAdmin: () => void; restoreFocusTo?: HTMLElement | null }) {
+export function SettingsDialog({ onClose, onOpenAdmin, onOpenTools, restoreFocusTo }: { onClose: () => void; onOpenAdmin: () => void; onOpenTools?: () => void; restoreFocusTo?: HTMLElement | null }) {
   const triggerRef = useRef(restoreFocusTo ?? document.activeElement as HTMLElement | null);
   const frameRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -57,7 +57,7 @@ export function SettingsDialog({ onClose, onOpenAdmin, restoreFocusTo }: { onClo
             <X size={20} aria-hidden="true" />
           </button>
         </div>
-        <SettingsPage onOpenAdmin={onOpenAdmin} />
+        <SettingsPage onOpenAdmin={onOpenAdmin} onOpenTools={onOpenTools} />
       </div>
     </Dialog>
   );

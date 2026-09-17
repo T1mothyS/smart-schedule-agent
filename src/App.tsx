@@ -16,6 +16,7 @@ const ReminderPage = lazy(() => import('./components/ReminderPage').then(module 
 const DailyReportsPage = lazy(() => import('./components/DailyReportsPage').then(module => ({ default: module.DailyReportsPage })));
 const DailyReportReaderPage = lazy(() => import('./components/DailyReportsPage').then(module => ({ default: module.DailyReportReaderPage })));
 const LibraryPage = lazy(() => import('./components/LibraryPage').then(module => ({ default: module.LibraryPage })));
+const ToolsPage = lazy(() => import('./pages/ToolsPage').then(module => ({ default: module.ToolsPage })));
 
 function App() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -70,6 +71,7 @@ function App() {
           <Route path="/reports/:date" element={<FeatureBoundary key={location.pathname}><DailyReportReaderPage /></FeatureBoundary>} />
           <Route path="/library" element={<AppContent />} />
           <Route path="/library/:id" element={<AppContent />} />
+          <Route path="/tools" element={<AppContent />} />
           <Route path="*" element={<Navigate to="/today" replace />} />
         </>
       )}
@@ -85,7 +87,8 @@ function AppContent() {
   const [showAdmin, setShowAdmin] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const activeSection = location.pathname.startsWith('/reports') ? 'reports' : location.pathname.startsWith('/library') ? 'library' : location.pathname === '/schedule' ? 'schedule' : location.pathname === '/assistant' ? 'assistant' : location.pathname === '/reminders' ? 'reminders' : 'today';
+  const isToolsPage = location.pathname === '/tools' || location.pathname === '/tools/';
+  const activeSection: 'today' | 'schedule' | 'assistant' | 'reminders' | 'reports' | 'library' | null = isToolsPage ? null : location.pathname.startsWith('/reports') ? 'reports' : location.pathname.startsWith('/library') ? 'library' : location.pathname === '/schedule' ? 'schedule' : location.pathname === '/assistant' ? 'assistant' : location.pathname === '/reminders' ? 'reminders' : 'today';
   const changeSection = (section: 'today' | 'schedule' | 'assistant' | 'reminders' | 'reports' | 'library') => navigate(section === 'schedule' ? '/schedule' : section === 'assistant' ? '/assistant' : section === 'reminders' ? '/reminders' : section === 'reports' ? '/reports' : section === 'library' ? '/library' : '/today');
 
   // 设置弹窗打开/关闭时更新 Tab 标题
@@ -94,8 +97,10 @@ function AppContent() {
       ? 'AI Calendar - 设置 / Settings'
       : showAdmin
       ? 'AI Calendar - 管理面板 / Admin'
+      : activeSection === null
+      ? 'AI Calendar - Tools'
       : 'AI Calendar - 首页 / Home';
-  }, [showSettings, showAdmin]);
+  }, [activeSection, showSettings, showAdmin]);
 
   return (
     <>
@@ -109,8 +114,8 @@ function AppContent() {
         user={user}
         onLogout={logout}
       >
-        <FeatureBoundary key={activeSection}>
-        {activeSection === 'today' ? <ActionCenterPage /> : activeSection === 'schedule' ? (
+        <FeatureBoundary key={activeSection ?? 'tools'}>
+        {activeSection === null ? <ToolsPage /> : activeSection === 'today' ? <ActionCenterPage /> : activeSection === 'schedule' ? (
           <SchedulePage user={user} />
         ) : activeSection === 'assistant' ? <AiAssistantPage /> : activeSection === 'reminders' ? (
           <ReminderPage />
@@ -122,6 +127,7 @@ function AppContent() {
         restoreFocusTo={settingsTriggerRef.current}
         onClose={() => setShowSettings(false)}
         onOpenAdmin={() => { setShowSettings(false); setShowAdmin(true); }}
+        onOpenTools={() => { setShowSettings(false); navigate('/tools'); }}
       /></FeatureBoundary>}
 
       {/* 管理员弹层 */}

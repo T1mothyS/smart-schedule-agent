@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: `8854a38` / `0.21.0-260915.0924`（2026-09-15，源码核对）。
+- Last verified commit/version: Tools 挂载应用实现 checkpoint / `0.22.0-260917.2044`（2026-09-17，本地源码核对）。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
 - Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
@@ -34,6 +34,7 @@
 | AI 计划和导入 | ai-intent.test.ts、ai-json.test.ts、ai-plan.test.ts、codebuddy-config.test.ts | /assistant 和 /import 生成草稿、确认前不写入、错误降级 | 真实 AI 另行授权；验证账号 Key 和服务限流 |
 | AI 记事 | note-item.test.ts、note-export.test.ts、note-color-migration.test.ts | NoteBoard 创建/编辑/完成/恢复/删除、TXT/CSV、窄屏抽屉 | 生产数据备份、恢复和账号隔离；不把记事当待办 |
 | 设置 | Settings V2 浏览器证据、notification-preferences-client.test.ts、user-mail-api.test.ts | 390×844、430×932、768×1024、1440×900；浅色/暗色、长文本、保存/取消/删除/撤销 | 真实设置读取/保存需授权；不把 synthetic API 证据写成生产验收 |
+| Tools 挂载应用 | protected-tools.test.ts、scripts/tools-browser-smoke.cjs、ToolsPage、`GET /api/tools` | Settings → 挂载工具 → Tools；四视口、浅色/暗色、卡片链接、键盘焦点、无横向溢出；三个 HTML 应用真实打开效果 | 真实登录 Cookie、工具页面、Plotly/支付宝 iframe 降级和浏览器本地数据需单独授权验收 |
 | 附件、导出和备份 | export-service.test.ts、core.test.ts、attachment 相关实现 | 下载、大小/MIME、检查备份、合并/替换取消路径 | 备份前快照、恢复演练、附件权限和回滚 |
 | 管理员 | admin-api-sharing.test.ts、管理员 API | 普通用户隐藏管理入口；管理员危险操作有确认 | 维护模式、全站备份、恢复和删除必须单独授权 |
 | 知识库 | library.test.ts；db、library-service、publish-token-service | `/library` 与 `/library/:id` 检查只读入口、搜索、关系状态、版本、评论、单条/全库导出；隔离 V2 批次验证 CREATED/UPDATED/UNCHANGED | 三篇样本只允许本地隔离账号；不读取生产数据库、不使用生产令牌、不部署 |
@@ -48,7 +49,7 @@
 - Playwright 浏览器下载会增加锁文件、CI 时间和维护边界；
 - 当前 CI 先保证 npm ci、类型、服务端测试和构建稳定。
 
-现阶段的最小 UI smoke 范围是 /login、/today、/schedule、/assistant、/reminders、/reports、/library，以及通过产品壳按钮打开 SettingsDialog（没有独立 /settings 路由）。另检查 /import 重定向到 /assistant?tool=email-import，并验证导入草稿及确认流程。下次引入项目级浏览器测试时，必须先补 fixture、console error 处理、viewport 断言和 CI 浏览器安装，再决定是否加入 workflow。
+现阶段的最小 UI smoke 范围是 /login、/today、/schedule、/assistant、/reminders、/reports、/library、/tools，以及通过产品壳按钮打开 SettingsDialog（没有独立 /settings 路由）。另检查 /import 重定向到 /assistant?tool=email-import，并验证导入草稿及确认流程。Tools 的服务器门禁、Cookie、清单、未知 slug、路径遍历和 CSP 由 `protected-tools.test.ts` 覆盖；浏览器验收再覆盖 Settings 跳转、卡片和三个真实 HTML。下次引入项目级浏览器测试时，必须先补 fixture、console error 处理、viewport 断言和 CI 浏览器安装，再决定是否加入 workflow。
 
 ## 4. Bundle 观察基线
 
