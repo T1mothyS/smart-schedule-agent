@@ -1,8 +1,8 @@
 # CalDAV 单向桥接：手动试点合同
 
-- Status: CONTRACT / DEPLOYED-OFF / LOCAL PILOT，主应用桥接代码已部署但开关保持关闭，未连接真实日程。
+- Status: CONTRACT / CONFIGURED-OFF-WRITE / PRODUCTION PILOT，主应用桥接已绑定单个账号的单个日历，预览已启用但写入开关保持关闭；首次真实预览因两个源事件的全天范围不明确而阻断，未向 CalDAV 写入。
 - Scope: 一个明确绑定账号、明确选择日历的 AI Calendar → CalDAV 手动投影。
-- Baseline: 基于 `4c1491f` / `0.22.1-260918.1909`，2026-09-18 新增桥接；具体提交/版本以 Git 和 package.json 为准。
+- Baseline: 基于 `cc8e9c5` / `0.23.0-260918.2200`，2026-09-18 新增桥接；具体提交/版本以 Git 和 package.json 为准。
 - Authority: `server/caldav-projection.ts`、`server/caldav-bridge.ts`、`server/routes/caldav.ts` 与测试。
 - Update trigger: 字段映射、认证、状态文件、接口、部署开关和真机结果变化。
 - Do not use for: 宣称自动后台同步、双向同步、实际手机提醒或生产连接已验收。
@@ -68,4 +68,6 @@ API 复用 Bearer JWT 和当前账号检查；只读日报令牌及网页 Cookie
 
 真实本地链路：独立 POC Python 环境执行 `python -X utf8 infra/caldav-poc/bridge_smoke.py`。自动使用临时数据库和随机 CalDAV 凭据，经过真实主应用 CRUD/API → 桥接 → Radicale → reader：6 类创建、修改、删除、重复执行、只读拒绝均通过，原有 9 个合成 seed 保留。此工具强制回环 HTTP，测试中显式替换虚构 HTTPS origin；**不证明公网 TLS、手机或生产部署**。
 
-下一步只做隔离试点：当前主应用桥接代码已按部署 runbook 上线但默认关闭 → 明确测试账号、单个测试日历与目标集合 → 先启用预览检查操作 → 获授权后开启写入并执行小批次 → 用户观察手机新建/修改/删除、只读交互、近未来提醒和重连 → 再完成至少 24h 后台观察。尚不开放真实账号全部日程或自动定时同步。
+下一步只做隔离试点：明确测试账号、单个测试日历与目标集合 → 先启用预览检查操作 → 获授权后开启写入并执行小批次 → 用户观察手机新建/修改/删除、只读交互、近未来提醒和重连 → 再完成至少 24h 后台观察。尚不开放真实账号全部日程或自动定时同步。
+
+2026-09-18 生产配置回执：主应用已配置单一账号、单一默认日历、独立 CalDAV 写入凭据和既有目标集合；`CALDAV_BRIDGE_WRITE_ENABLED=false`、提醒保持关闭。首个经认证预览返回 `200` / `manual-pilot`，操作数为 `0`，包含两个 `AMBIGUOUS_ALL_DAY_RANGE`，没有可用 `planToken`；桥接账本仍未创建，未发生远端写入。修正 POC 凭据文件所有者后，POC 本机和公网只读 `PROPFIND` 均返回 `207`。需先修正这两个源事件的全天日期语义，再重新预览并由用户确认具体批次。
