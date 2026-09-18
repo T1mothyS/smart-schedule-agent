@@ -9,7 +9,7 @@ export function recoverSystemRestore(directory: string): void {
   const marker = path.join(directory, SYSTEM_RESTORE_JOURNAL);
   if (!fs.existsSync(marker)) return;
   const entries = JSON.parse(fs.readFileSync(marker, 'utf8')) as RestoreEntry[];
-  const allowed = new Set(['chat.db', 'schedule.db', 'reminder.db', 'activity.db', 'attachments', 'daily-report-media']);
+  const allowed = new Set(['chat.db', 'schedule.db', 'reminder.db', 'activity.db', 'attachments', 'daily-report-media', 'caldav-bridge']);
   if (!Array.isArray(entries) || !entries.length) throw new Error('全站恢复记录不正确');
   for (const entry of entries) {
     if (!allowed.has(entry.target) || !entry.previous.startsWith(`.${entry.target}.pre-restore-`)

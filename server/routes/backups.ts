@@ -5,6 +5,7 @@ import express from 'express';
 import path from 'path';
 import * as reminderStore from '../reminder-store.js';
 import * as backupService from '../backup-service.js';
+import { withBridgeRestore, withBridgeSnapshot } from '../caldav-control.js';
 
 export function createBackupsRouter({ authenticate, requireAdmin }: Pick<ReturnType<typeof createAuth>, 'authenticate' | 'requireAdmin'>) {
   const app = Router();
@@ -32,11 +33,11 @@ export function createBackupsRouter({ authenticate, requireAdmin }: Pick<ReturnT
     }
   });
 
-  app.post("/api/backups/restore", authenticate, backupRawBody, (req, res) => {
+  app.post("/api/backups/restore", authenticate, backupRawBody, async (req, res) => {
     try {
       const password = Buffer.from(String(req.header('x-backup-password') || ''), 'base64').toString('utf8');
       const mode = req.query.mode === 'replace' ? 'replace' : 'merge';
-      const result = backupService.restoreUserBackup((req as any).user.userId, req.body as Buffer, password, mode);
+      const result = await withBridgeRestore(() => backupService.restoreUserBackup((req as any).user.userId, req.body as Buffer, password, mode), (req as any).user.userId);
       res.json({ success: true, result });
     } catch (error: any) {
       res.status(400).json({ error: error?.message || '恢复备份失败' });
@@ -49,7 +50,7 @@ export function createBackupsRouter({ authenticate, requireAdmin }: Pick<ReturnT
 
   app.post("/api/admin/backups", authenticate, requireAdmin, async (_req, res) => {
     try {
-      const backup = backupService.createSystemSnapshot(true);
+      const backup = await withBridgeSnapshot(() => backupService.createSystemSnapshot(true));
       const oss = await backupService.uploadPendingSystemSnapshots();
       res.json({ backup, oss });
     } catch (error: any) {
@@ -68,9 +69,9 @@ export function createBackupsRouter({ authenticate, requireAdmin }: Pick<ReturnT
     }
   });
 
-  app.post("/api/admin/backups/restore", authenticate, requireAdmin, backupRawBody, (req, res) => {
+  app.post("/api/admin/backups/restore", authenticate, requireAdmin, backupRawBody, async (req, res) => {
     try {
-      backupService.restoreSystemSnapshot(req.body as Buffer, String(req.header('x-restore-confirmation') || ''));
+      await withBridgeRestore(() => backupService.restoreSystemSnapshot(req.body as Buffer, String(req.header('x-restore-confirmation') || '')));
       res.json({ success: true, restartRequired: true });
       setTimeout(() => process.exit(0), 500);
     } catch (error: any) {

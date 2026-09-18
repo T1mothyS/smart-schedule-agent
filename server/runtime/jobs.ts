@@ -7,6 +7,8 @@ import { enqueueDueDailyDigestNotifications, enqueueDueHighPriorityScheduleEmail
 import * as activityStore from '../activity-store.js';
 import * as backupService from '../backup-service.js';
 import { pollEmailImports } from '../email-import-service.js';
+import { runCaldavTick } from '../caldav-service.js';
+import { withBridgeSnapshot } from '../caldav-control.js';
 
 export function createBackgroundJobs({ isReady, resolveAiImportCredential, cleanupAiScheduleHistory }: {
   isReady: () => boolean;
@@ -14,6 +16,7 @@ export function createBackgroundJobs({ isReady, resolveAiImportCredential, clean
   cleanupAiScheduleHistory: () => number;
 }) {
   return createJobRunner([
+    { name: 'caldav', expression: '*/5 * * * *', run: async () => { if (isReady()) await runCaldavTick(); } },
     { name: 'reminders', expression: '* * * * *', run: async () => {
       const tickStartedAt = Date.now();
       if (!isReady()) {
@@ -87,7 +90,7 @@ export function createBackgroundJobs({ isReady, resolveAiImportCredential, clean
     { name: 'daily-backup', expression: '30 3 * * *', timezone: process.env.APP_TIMEZONE || 'Asia/Shanghai', run: async () => {
       if (!isReady() || !process.env.BACKUP_ENCRYPTION_KEY) return;
       try {
-        const backup = backupService.createSystemSnapshot(true);
+        const backup = await withBridgeSnapshot(() => backupService.createSystemSnapshot(true));
         const oss = await backupService.uploadPendingSystemSnapshots();
         addLog('info', 'system', '每日系统备份完成: ' + backup.filename, { size: backup.size, oss });
       } catch (error: any) {

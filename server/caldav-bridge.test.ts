@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { bridgeConfig, createCaldavBridge, createDavTransport, type BridgeConfig, type DavTransport, type SourceSnapshot } from './caldav-bridge.js';
-import { icalHash, projectEvent } from './caldav-projection.js';
+import { digest, icalHash, projectEvent } from './caldav-projection.js';
 import type { Schedule } from './schedule-store.js';
 const config: BridgeConfig = { userId: 'owner', calendarIds: ['owner:personal'], collectionUrl: 'https://caldav.example.invalid/poc-reader/poc/', username: 'synthetic', password: 'synthetic-only', timezone: 'Asia/Shanghai', alarms: false, writeEnabled: true, includeCompleted: false };
 function event(overrides: Partial<Schedule> = {}): Schedule {
@@ -13,11 +13,11 @@ function event(overrides: Partial<Schedule> = {}): Schedule {
 function fixture() {
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aical-caldav-unit-')), 'state.json');
   const source: SourceSnapshot = { complete: true, calendars: ['owner:personal'], schedules: [event()] };
-  const remote = new Map<string, { etag: string; hash: string }>(); let sequence = 0;
+  const remote = new Map<string, { etag: string; hash: string; ical?: string }>(); let sequence = 0;
   const calls: string[] = [];
   const transport: DavTransport = {
     async get(key) { calls.push('GET'); return remote.get(key) || null; },
-    async put(key, ical, tag) { calls.push('PUT'); assert.equal(remote.get(key)?.etag || null, tag); remote.set(key, { etag: `"${++sequence}"`, hash: icalHash(ical) }); },
+    async put(key, ical, tag) { calls.push('PUT'); assert.equal(remote.get(key)?.etag || null, tag); remote.set(key, { etag: `"${++sequence}"`, hash: icalHash(ical), ical }); },
     async delete(key, tag) { calls.push('DELETE'); assert.equal(remote.get(key)?.etag, tag); remote.delete(key); },
   };
   return { source, remote, calls, file, transport, bridge: createCaldavBridge(config, file, () => source, transport) };
@@ -58,7 +58,9 @@ test('completed source events are excluded and existing projections are retired'
 test('source gaps, unsupported events and stale preview cannot delete', async () => {
   const f = fixture(); await apply(f.bridge); f.source.calendars = []; await assert.rejects(f.bridge.preview(), /SOURCE_SNAPSHOT_INCOMPLETE/);
   f.source.calendars = config.calendarIds; f.source.schedules[0].is_repeated = true; f.source.schedules[0].repeat_rule = 'monthly';
-  assert.equal((await f.bridge.preview()).planToken, ''); await assert.rejects(f.bridge.sync(''), /PREVIEW_CHANGED/);
+  const held = await f.bridge.preview(); assert.equal(held.complete, false); assert.equal(held.operations[0].action, 'held');
+  await f.bridge.sync(held.planToken); assert.equal(f.remote.size, 1);
+  await assert.rejects(f.bridge.sync(''), /PREVIEW_CHANGED/);
   f.source.schedules = [event()]; const p = await f.bridge.preview(); f.source.schedules[0].title = 'changed';
   await assert.rejects(f.bridge.sync(p.planToken), /PREVIEW_CHANGED/); assert(!f.calls.includes('DELETE'));
 });
@@ -114,4 +116,50 @@ test('pilot limit includes retiring resources before any remote mutation', async
   f.source.schedules = Array.from({ length: 500 }, (_, index) => event({ id: `replacement-${index}` }));
   await assert.rejects(f.bridge.preview(), /PILOT_LIMIT_EXCEEDED/);
   assert.equal(f.calls.length, 0); assert.equal(fs.readFileSync(f.file, 'utf8'), before);
+});
+
+test('all scope projects scheduled todos, hidden/new calendars and authoritative cycles without source mutations', async () => {
+  const f = fixture(); f.source.cycles = []; f.source.calendars.push('hidden');
+  f.source.schedules.push(event({ id: 'todo', type: 'todo', calendar_id: 'hidden' }), event({ id: 'unscheduled', type: 'todo', is_unscheduled: true }), event({ id: 'done', is_completed: true }), event({ id: 'reminder-cycle:cycle', type: 'todo' }));
+  f.source.cycles.push({ task: { id: 'task', userId: 'owner', type: 'sim', name: '合成保号', enabled: true, timezone: 'Asia/Shanghai', config: {} as any, createdAt: '2026-09-18T00:00:00Z', updatedAt: '2026-09-18T00:00:00Z' }, cycle: { id: 'cycle', taskId: 'task', cycleKey: 'test', periodStart: '2026-09-01', dueDate: '2026-09-20', status: 'expired', completedAt: null, completedNote: null, createdAt: '2026-09-18T00:00:00Z', updatedAt: '2026-09-18T00:00:00Z' } });
+  const before = JSON.stringify(f.source); const bridge = createCaldavBridge({ ...config, scope: 'all' }, f.file, () => f.source, f.transport);
+  const plan = await bridge.preview(); assert.deepEqual(plan.counts, { event: 1, todo: 1, cycle: 1 });
+  await bridge.sync(plan.planToken); assert.equal(JSON.stringify(f.source), before); assert.equal(f.remote.size, 3);
+  assert([...f.remote.values()].some(r => r.ical?.includes('SUMMARY:待办：')));
+  const cycle = [...f.remote.values()].find(r => r.ical?.includes('SUMMARY:周期事务：'))!;
+  assert.match(cycle.ical!, /DTSTART;VALUE=DATE:20260920/); assert.doesNotMatch(cycle.ical!, /RRULE/);
+  const todoKey = projectEvent(f.source.schedules[1], config).key;
+  f.source.schedules[1].title = '更新'; await apply(bridge); assert(f.remote.has(todoKey));
+  f.source.schedules[1].is_completed = true; f.source.cycles[0].task.enabled = false; await apply(bridge); assert.equal(f.remote.size, 1);
+  f.source.schedules[1].is_completed = false; f.source.cycles[0].task.enabled = true;
+  f.source.cycles[0].cycle!.id = 'next'; f.source.cycles[0].cycle!.dueDate = '2026-10-20';
+  f.source.calendars.push('new'); f.source.schedules.push(event({ id: 'new-event', calendar_id: 'new' }));
+  await apply(bridge); assert.equal(f.remote.size, 4); assert(f.remote.has(todoKey));
+});
+
+test('quarantined conversion preserves old resource while unrelated changes proceed', async () => {
+  const f = fixture(); await apply(f.bridge); const old = [...f.remote.values()][0];
+  f.source.schedules[0].is_repeated = true; f.source.schedules[0].repeat_rule = 'monthly';
+  f.source.schedules.push(event({ id: 'valid-new' }));
+  const plan = await f.bridge.preview(); assert.equal(plan.complete, false); assert.equal(plan.operations.filter(o => o.action === 'held').length, 1);
+  await f.bridge.sync(plan.planToken); assert.equal(f.remote.size, 2); assert.equal([...f.remote.values()][0], old);
+});
+
+test('v1 migration backs up remote content before preserving UID and adopting all scope', async () => {
+  const f = fixture(); await apply(f.bridge); const ledger = JSON.parse(fs.readFileSync(f.file, 'utf8'));
+  ledger.version = 1; ledger.binding = digest(JSON.stringify([config.userId, config.calendarIds, config.collectionUrl])); fs.writeFileSync(f.file, JSON.stringify(ledger));
+  f.source.cycles = []; const bridge = createCaldavBridge({ ...config, scope: 'all' }, f.file, () => f.source, f.transport);
+  const keys = [...f.remote.keys()]; const plan = await bridge.preview(); assert.equal(plan.migrationRequired, true);
+  assert.equal(JSON.parse(fs.readFileSync(f.file, 'utf8')).version, 1);
+  await bridge.sync(plan.planToken); assert.equal(JSON.parse(fs.readFileSync(f.file, 'utf8')).version, 2); assert.deepEqual([...f.remote.keys()], keys);
+  const backupName = fs.readdirSync(path.dirname(f.file)).find(name => name.startsWith('migration-'))!;
+  const backup = JSON.parse(fs.readFileSync(path.join(path.dirname(f.file), backupName), 'utf8'));
+  assert.equal(backup.ledger.version, 1); assert.match(backup.resources[keys[0]].ical, /BEGIN:VEVENT/);
+});
+
+test('missing cycle snapshot blocks access and bulk deletions are flagged', async () => {
+  const f = fixture(); const bridge = createCaldavBridge({ ...config, scope: 'all' }, f.file, () => f.source, f.transport);
+  await assert.rejects(bridge.preview(), /SOURCE_SNAPSHOT_INCOMPLETE/); assert.equal(f.calls.length, 0);
+  f.source.cycles = []; f.source.schedules = Array.from({ length: 10 }, (_, i) => event({ id: String(i) }));
+  await apply(bridge); f.source.schedules = []; assert.equal((await bridge.preview()).requiresDeleteConfirmation, true);
 });

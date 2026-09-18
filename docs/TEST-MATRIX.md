@@ -71,9 +71,9 @@ node scripts/browser-smoke.cjs '<包含 dist 的隔离源码目录>'
 
 默认证据写入系统临时目录，可用 BROWSER_SMOKE_OUTPUT 指定。仅启动随机端口的回环静态服务；拦截合成 API，阻止非本地网络，不启动真实后端。覆盖四 viewport、设置浅/暗色、导航返回、日期深链、日程草稿、焦点、富内容及分包失败。请检查输出截图；断言通过不等于所有视觉细节无误。结果与未覆盖项目见 [Phase 2 验收](PHASE2-FRONTEND-LOADING.md)。
 
-## CalDAV 手动试点
+## CalDAV 全量单向桥接
 
-CalDAV 手动试点的 `caldav-bridge.test.ts`、`caldav-api.test.ts` 随 `npm test` 覆盖账号隔离、投影、幂等、完整源快照、冲突、模糊响应恢复与删除保护。`infra/caldav-poc/bridge_smoke.py` 另外启动本地隔离 Radicale，经真实应用 CRUD 验证六类合成事件和只读权限，并保留原有九个测试资源。以上不能替代荣耀手机提醒/后台/修改删除验收；具体边界见 [CalDAV 合同](CALDAV-BRIDGE.md)。
+`caldav-bridge.test.ts`、`caldav-api.test.ts`、`caldav-control.test.ts` 随 npm test 覆盖全量/周期纯读、迁移备份、异常保留、授权/退避/批量删除、恢复及备份排他；core 的系统恢复覆盖账本与暂停状态。`infra/caldav-poc/bridge_smoke.py` 验证9个来源的真实 API/Radicale CRUD、只读权限、源库不变并保留原有9个seed。browser-smoke 覆盖四视口浅暗主题、长文本、操作/错误和启用门槛；这些不能替代荣耀手机提醒/后台/修改删除验收。具体边界见 [CalDAV 合同](CALDAV-BRIDGE.md)。
 
 ## Phase 3 故障与恢复
 

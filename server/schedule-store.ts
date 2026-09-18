@@ -547,6 +547,11 @@ export function getAllCalendars(userId?: string): Calendar[] {
   return queryAll<any>('SELECT * FROM calendars WHERE user_id = ? ORDER BY is_default DESC, created_at ASC', [userId]).map(rowToCalendar);
 }
 
+// Integration reads must not seed defaults or rewrite legacy ownership.
+export function readOwnedCalendars(userId: string): Calendar[] {
+  return queryAll<any>('SELECT * FROM calendars WHERE user_id = ? ORDER BY id', [userId]).map(rowToCalendar);
+}
+
 // 获取单个日程表
 export function getCalendar(id: string, userId?: string): Calendar | null {
   const row = userId

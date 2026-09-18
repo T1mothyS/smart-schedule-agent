@@ -22,12 +22,20 @@ if (process.argv[2] === 'transaction') {
   const backups = await import('./backup-service.js');
   const attachments = path.join(root, 'attachments'); fs.mkdirSync(attachments, { recursive: true });
   fs.writeFileSync(path.join(attachments, 'proof.txt'), 'snapshot');
+  const bridgeRoot = path.join(root, 'caldav-bridge');
+  if (process.argv[2] === 'caldav-restore') {
+    fs.mkdirSync(bridgeRoot); fs.writeFileSync(path.join(bridgeRoot, 'state.json'), JSON.stringify({ version: 2, binding: 'snapshot', entries: {} }));
+  }
   const snapshot = backups.createSystemSnapshot(false);
   const encrypted = fs.readFileSync(snapshot.path);
+  // system-restore exercises old snapshots with no bridge field; they preserve existing ownership.
+  fs.mkdirSync(bridgeRoot, { recursive: true });
+  fs.writeFileSync(path.join(bridgeRoot, 'state.json'), JSON.stringify({ version: 2, binding: 'preserve-current', entries: {} }));
+  fs.writeFileSync(path.join(bridgeRoot, 'control.json'), JSON.stringify({ version: 1, enabled: true, failures: 0 }));
   make('preserve-before-restore');
   fs.writeFileSync(path.join(attachments, 'proof.txt'), 'preserve current file');
   fs.writeFileSync(path.join(root, 'expected.json'), JSON.stringify(Object.fromEntries(names.map(name => [name, fs.readFileSync(path.join(root, name)).toString('base64')]))));
-  fs.renameSync = ((from, to) => { rename(from, to); if (String(from).includes('.restore-') && String(to) === path.join(root, 'schedule.db')) process.exit(86); }) as typeof fs.renameSync;
+  fs.renameSync = ((from, to) => { rename(from, to); if (String(from).includes('.restore-') && String(to) === path.join(root, process.argv[2] === 'caldav-restore' ? 'caldav-bridge' : 'schedule.db')) process.exit(86); }) as typeof fs.renameSync;
   backups.restoreSystemSnapshot(encrypted, 'RESTORE AI CALENDAR');
 }
 throw new Error('Crash point was not reached');

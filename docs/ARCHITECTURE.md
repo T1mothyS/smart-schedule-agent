@@ -49,7 +49,7 @@ App 保留登录、产品壳和 Today；SchedulePage、AiAssistantPage、Reminde
 
 ## 3. 后端
 
-Phase 4（`0.21.3-260915.1936`）后，server/index.ts 保留 CLI 与测试兼容入口；直接执行时先加载配置，再交给 runtime 启动。server/app.ts 的 createApp(deps) 是无配置/数据/定时器/监听副作用的独立工厂，负责 HTTP 中间件顺序。server/runtime/ 拥有配置、四库初始化、监听端口与五组后台任务的 start/stop。
+Phase 4（`0.21.3-260915.1936`）后，server/index.ts 保留 CLI 与测试兼容入口；直接执行时先加载配置，再交给 runtime 启动。server/app.ts 的 createApp(deps) 是无配置/数据/定时器/监听副作用的独立工厂，负责 HTTP 中间件顺序。server/runtime/ 拥有配置、四库初始化、监听端口与六组后台任务的 start/stop（原五组加 CalDAV）。
 
 Phase 5 后，server/routes/ 拥有全部领域 HTTP 处理器，包括日程、周期事务、完成、AI、settings/admin 和备份。server/application.ts 仅组合中间件、路由、健康检查及运行时依赖。四 store 仍是进程级单例；多数据目录测试使用独立进程。
 
@@ -104,9 +104,9 @@ server/db.ts 保留兼容导出；server/database/connection.ts 拥有连接与�
 
 本地 NoSend、发布接口返回、QUEUED、SMTP accepted 和收件箱到达属于不同证据层级，不能相互替代。Local 发布阶段不抓取外站新闻图；Cloud 服务端可受控获取显式媒体，无批次时逐图 Best Effort，有批次时检查 READY、归属与完整性，正文完整性保持硬闸门。`dry_run=true` 不保存日报或队列，但可能托管媒体文件。不得把外部项目凭据或运行数据带入仓库。完整合同见 [Cloud 文档](CHATGPT-WORK-CLOUD.md)。
 
-## CalDAV 手动试点边界（2026-09-18）
+## CalDAV 全量单向边界（2026-09-19）
 
-应用进程内纯读已绑定账号的选定日历，经认证的 preview/sync 接口投影至独立 CalDAV 集合，默认关闭且无自动 worker。持久映射在 `DATA_DIR/caldav-bridge/state.json`，原子保存待确认写入与 ETag；只删除映射内对象。现有四库系统快照不包含映射与 Radicale 数据，恢复前须停桥接并单独备份二者。配置、受限字段及恢复流程以 [CalDAV 合同](CALDAV-BRIDGE.md) 为准。
+应用进程内纯读当前账号日历、已排期待办与权威当前周期，经共享服务手动/每5分钟投影到独立 CalDAV 集合；自动化默认暂停，需要范围确认与手机核心验证声明。原五组后台任务之外增加 caldav，复用唯一 worker 与关闭等待。账本v2分离目标身份/范围，保留既有资源键并备份迁移；只删除映射内对象。系统加密快照包含账本与控制状态，恢复事务包含桥接目录且恢复后暂停；Radicale 数据仍独立备份。完整配置、协议、恢复及未验证边界见 [CalDAV 合同](CALDAV-BRIDGE.md)。
 
 ## 7. 构建产物
 

@@ -42,7 +42,7 @@ test('entry import outside NODE_ENV=test never starts a listener or cron tasks',
       assert.equal(cron.getTasks().size, 0);
       const { backgroundJobs } = await import(${JSON.stringify(new URL('./application.ts', import.meta.url).href)});
       backgroundJobs.start(); backgroundJobs.start();
-      assert.equal(cron.getTasks().size, 5);
+      assert.equal(cron.getTasks().size, 6);
       await backgroundJobs.stop();
       assert.equal(cron.getTasks().size, 0);
     `;

@@ -13,6 +13,7 @@ import * as activityStore from './activity-store.js';
 import * as attachmentService from './attachment-service.js';
 import { dailyReportMediaRoot } from './daily-report-media-service.js';
 import * as dailyReportCloudStore from './daily-report-cloud-store.js';
+import { captureBridgeState, pauseForRestoreSync } from './caldav-control.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,6 +49,7 @@ interface SystemBackupPayload {
   databases: Record<string, string>;
   files: Array<{ relativePath: string; base64: string }>;
   dailyReportMedia?: Array<{ relativePath: string; base64: string }>;
+  caldavBridge?: Record<string, string>;
 }
 
 function remapForeignUserPayload(source: UserBackupPayload): UserBackupPayload {
@@ -270,6 +272,7 @@ export function inspectUserBackup(buffer: Buffer, password: string): Record<stri
 }
 
 export function restoreUserBackup(userId: string, buffer: Buffer, password: string, mode: 'merge' | 'replace'): Record<string, unknown> {
+  pauseForRestoreSync(userId);
   const decrypted = decryptBackup<UserBackupPayload>(buffer, password);
   validateUserPayload(decrypted);
   const targetAccount = db.exportUserAccountData(userId).user;
@@ -379,6 +382,7 @@ export function createSystemSnapshot(uploadToOss = true): { filename: string; pa
     },
     files: collectFiles(attachmentService.attachmentsRoot()),
     dailyReportMedia: collectFiles(dailyReportMediaRoot()),
+    caldavBridge: captureBridgeState(),
   };
   const encrypted = encryptBackup(payload, password);
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -471,6 +475,7 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
   if (process.env.MAINTENANCE_MODE !== 'true') throw new Error('全站恢复只允许在 MAINTENANCE_MODE=true 时执行');
   if (process.env.BACKGROUND_JOBS_ENABLED === 'true') throw new Error('全站恢复前必须关闭后台任务并重启到维护模式');
   if (confirmation !== 'RESTORE AI CALENDAR') throw new Error('恢复确认文字不正确');
+  pauseForRestoreSync();
   const password = process.env.BACKUP_ENCRYPTION_KEY || '';
   const payload = decryptBackup<SystemBackupPayload>(buffer, password);
   if (payload.format !== 'aicalendar-system' || payload.version !== FORMAT_VERSION) throw new Error('系统备份版本不正确');
@@ -507,6 +512,12 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
   const mediaFiles = payload.dailyReportMedia;
   if (mediaFiles !== undefined && !Array.isArray(mediaFiles)) throw new Error('系统备份日报图片清单不正确');
   const shouldRestoreMedia = mediaFiles !== undefined;
+  const bridgeRoot = path.join(resolvedDataDir, 'caldav-bridge');
+  const bridgeTemp = path.join(resolvedDataDir, `.caldav-bridge.restore-${transactionId}`);
+  const bridgePrevious = path.join(resolvedDataDir, `.caldav-bridge.pre-restore-${transactionId}`);
+  const shouldRestoreBridge = payload.caldavBridge !== undefined;
+  let bridgeBackedUp = false;
+  let bridgeActivated = false;
   let attachmentBackedUp = false;
   let attachmentActivated = false;
   let reportMediaBackedUp = false;
@@ -514,6 +525,17 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
   let committed = false;
 
   try {
+    if (shouldRestoreBridge) {
+      if (!payload.caldavBridge || typeof payload.caldavBridge !== 'object' || Array.isArray(payload.caldavBridge)
+        || Object.keys(payload.caldavBridge).some(name => !['state.json', 'control.json'].includes(name))) throw new Error('CalDAV 备份结构不正确');
+      fs.mkdirSync(bridgeTemp);
+      for (const [name, content] of Object.entries(payload.caldavBridge)) {
+        if (typeof content !== 'string' || Buffer.byteLength(content) > 1024 * 1024) throw new Error('CalDAV 备份大小不正确');
+        JSON.parse(content);
+        if (name === 'state.json') fs.writeFileSync(path.join(bridgeTemp, name), content, { mode: 0o600, flag: 'wx' });
+      }
+      fs.writeFileSync(path.join(bridgeTemp, 'control.json'), JSON.stringify({ version: 1, enabled: false, failures: 0, lastError: 'RESTORE_REVIEW_REQUIRED' }), { mode: 0o600, flag: 'wx' });
+    }
     for (const file of databaseFiles) fs.writeFileSync(file.temp, file.restored, { flag: 'wx' });
     fs.mkdirSync(attachmentTemp, { recursive: false });
     if (!Array.isArray(payload.files)) throw new Error('系统备份附件清单不正确');
@@ -553,6 +575,7 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
       ...databaseFiles.map(file => ({ target: file.name, previous: path.basename(file.previous), existed: fs.existsSync(file.target) })),
       { target: path.basename(attachmentRoot), previous: path.basename(attachmentPrevious), existed: fs.existsSync(attachmentRoot) },
       ...(shouldRestoreMedia ? [{ target: path.basename(reportMediaRoot), previous: path.basename(reportMediaPrevious), existed: fs.existsSync(reportMediaRoot) }] : []),
+      ...(shouldRestoreBridge ? [{ target: 'caldav-bridge', previous: path.basename(bridgePrevious), existed: fs.existsSync(bridgeRoot) }] : []),
     ];
     atomicWriteFile(path.join(DATA_DIR, SYSTEM_RESTORE_JOURNAL), Buffer.from(JSON.stringify(restoreEntries)));
     for (const file of databaseFiles) {
@@ -569,6 +592,7 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
       fs.renameSync(reportMediaRoot, reportMediaPrevious);
       reportMediaBackedUp = true;
     }
+    if (shouldRestoreBridge && fs.existsSync(bridgeRoot)) { fs.renameSync(bridgeRoot, bridgePrevious); bridgeBackedUp = true; }
     for (const file of databaseFiles) {
       fs.renameSync(file.temp, file.target);
       file.activated = true;
@@ -579,6 +603,7 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
       fs.renameSync(reportMediaTemp, reportMediaRoot);
       reportMediaActivated = true;
     }
+    if (shouldRestoreBridge) { fs.renameSync(bridgeTemp, bridgeRoot); bridgeActivated = true; }
     fs.unlinkSync(path.join(DATA_DIR, SYSTEM_RESTORE_JOURNAL));
     committed = true;
     blockPersistenceUntilRestart();
@@ -591,6 +616,8 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
           rollbackErrors.push(`${label}: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`);
         }
       };
+      if (bridgeActivated && fs.existsSync(bridgeRoot)) attemptRollback('移除新 CalDAV 状态', () => fs.rmSync(bridgeRoot, { recursive: true, force: true }));
+      if (bridgeBackedUp && fs.existsSync(bridgePrevious)) attemptRollback('恢复旧 CalDAV 状态', () => fs.renameSync(bridgePrevious, bridgeRoot));
       if (attachmentActivated && fs.existsSync(attachmentRoot)) {
         attemptRollback('删除新附件目录', () => fs.rmSync(attachmentRoot, { recursive: true, force: true }));
       }
@@ -635,9 +662,17 @@ export function restoreSystemSnapshot(buffer: Buffer, confirmation: string): voi
       try { fs.rmSync(reportMediaTemp, { recursive: true, force: true }); }
       catch (error) { console.warn('[Backup] 无法清理日报图片暂存目录:', error); }
     }
+    if (fs.existsSync(bridgeTemp)) {
+      try { fs.rmSync(bridgeTemp, { recursive: true, force: true }); }
+      catch { console.warn('[Backup] 无法清理 CalDAV 暂存目录'); }
+    }
   }
 
   // 切换已经完整提交；旧文件只作为清理对象，清理失败不再反向破坏新的一致状态。
+  if (fs.existsSync(bridgePrevious)) {
+    try { fs.rmSync(bridgePrevious, { recursive: true, force: true }); }
+    catch { console.warn('[Backup] 无法清理旧 CalDAV 目录'); }
+  }
   for (const file of databaseFiles) {
     if (fs.existsSync(file.previous)) {
       try { fs.unlinkSync(file.previous); }

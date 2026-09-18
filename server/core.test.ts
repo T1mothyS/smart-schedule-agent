@@ -523,6 +523,9 @@ test('全站恢复统一替换四个数据库和附件且不遗留暂存文件',
     const mediaRoot = dailyReportMedia.dailyReportMediaRoot();
     const originalMedia = path.join(mediaRoot, `${'d'.repeat(64)}.png`);
     fs.writeFileSync(originalMedia, 'original media', 'utf8');
+    const bridgeRoot = path.join(tempDir, 'caldav-bridge'); fs.mkdirSync(bridgeRoot, { recursive: true });
+    fs.writeFileSync(path.join(bridgeRoot, 'state.json'), JSON.stringify({ version: 2, binding: 'synthetic', entries: {} }));
+    fs.writeFileSync(path.join(bridgeRoot, 'control.json'), JSON.stringify({ version: 1, enabled: true, failures: 0 }));
     const snapshot = backups.createSystemSnapshot(false);
     const encrypted = backups.readSystemSnapshot(snapshot.filename);
     const databaseNames = ['chat.db', 'schedule.db', 'reminder.db', 'activity.db'];
@@ -535,6 +538,7 @@ test('全站恢复统一替换四个数据库和附件且不遗留暂存文件',
     fs.writeFileSync(originalAttachment, 'changed attachment', 'utf8');
     fs.writeFileSync(path.join(attachmentRoot, 'extra.txt'), 'remove me', 'utf8');
     fs.writeFileSync(originalMedia, 'changed media', 'utf8');
+    fs.writeFileSync(path.join(bridgeRoot, 'state.json'), 'changed after snapshot');
 
     backups.restoreSystemSnapshot(encrypted, 'RESTORE AI CALENDAR');
 
@@ -545,6 +549,8 @@ test('全站恢复统一替换四个数据库和附件且不遗留暂存文件',
     assert.equal(fs.readFileSync(originalAttachment, 'utf8'), 'original attachment');
     assert.equal(fs.existsSync(path.join(attachmentRoot, 'extra.txt')), false);
     assert.equal(fs.readFileSync(originalMedia, 'utf8'), 'original media');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(bridgeRoot, 'state.json'), 'utf8')).binding, 'synthetic');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(bridgeRoot, 'control.json'), 'utf8')).enabled, false);
     assert.equal(fs.readdirSync(tempDir).some(name => name.includes('.restore-') || name.includes('.pre-restore-')), false);
   } finally {
     if (previousKey === undefined) delete process.env.BACKUP_ENCRYPTION_KEY;

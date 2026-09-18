@@ -15,6 +15,8 @@ const entry = (id) => {
     return { id, kind: 'article', type: 'knowledge', sourceId: id, slug: id, title: fixture.title, summary: '本地合成验收数据', content: 'source', html: fixture.html, tags: [], status: 'active', sourceType: 'codex', sourceRef: null, sourceUrl: null, metadata: {}, relations: [], contentHash: 'synthetic', createdAt: '2026-09-15T00:00:00Z', updatedAt: '2026-09-15T00:00:00Z', publishedAt: null, archivedAt: null };
 };
 const seen = new Set(), errors = [], checks = [];
+let caldavEnabled = false, caldavFailure = false, caldavConfirmed = false;
+const caldavPlan = { planToken: 'a'.repeat(64), scopeVersion: 'b'.repeat(64), complete: false, counts: { event: 3, todo: 4, cycle: 2 }, exclusions: { completed: 24, unscheduled: 2 }, issues: [{ sourceId: 'synthetic-long-source-'.repeat(9), code: 'AMBIGUOUS_ALL_DAY_RANGE' }], operations: [{ sourceId: 'synthetic', action: 'create' }, { sourceId: 'synthetic-old', action: 'delete' }] };
 const emptyApis = new Set(['/api/action-center', '/api/notifications', '/api/schedules', '/api/cycle-reminders', '/api/ai-schedule/history', '/api/note-items', '/api/daily-reports', '/api/check-login', '/api/user-api-key', '/api/notification-preferences', '/api/integrations/daily-report-token', '/api/daily-report/cloud-context', '/api/daily-report/delivery-policy', '/api/integrations/library-token', '/api/user-mail-account', '/api/admin/users']);
 const server = http.createServer((req, res) => { let file = path.join(root, 'dist', new URL(req.url, 'http://local').pathname); if (!file.startsWith(path.join(root, 'dist') + path.sep)) {
     res.writeHead(403);
@@ -37,7 +39,17 @@ const server = http.createServer((req, res) => { let file = path.join(root, 'dis
             seen.add(u.pathname);
             let body = {};
             const p = u.pathname;
-            if (p === '/api/auth/me')
+            if (p.startsWith('/api/integrations/caldav/')) {
+                await new Promise(resolve => setTimeout(resolve, 300));
+                if (caldavFailure) return route.fulfill({ status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'CALDAV_NETWORK_ERROR' }) });
+                if (p.endsWith('/preview')) body = caldavPlan;
+                else if (p.endsWith('/sync')) { caldavConfirmed = true; body = { ...caldavPlan, complete: true, applied: true, issues: [] }; }
+                else {
+                    if (p.endsWith('/automation')) caldavEnabled = route.request().postDataJSON().enabled;
+                    body = { mode: 'full-one-way', enabled: caldavEnabled, writeEnabled: true, automationAvailable: true, busy: false, scopeVersion: caldavPlan.scopeVersion, confirmedScope: caldavConfirmed ? caldavPlan.scopeVersion : undefined, lastSuccess: '2026-09-19T01:00:00Z' };
+                }
+            }
+            else if (p === '/api/auth/me')
                 body = { user: { id: 'synthetic', email: 'test@example.invalid', role: 'admin' } };
             else if (p === '/api/library/preferences')
                 body = { preference: { sort: 'created_desc' } };
@@ -90,6 +102,29 @@ const server = http.createServer((req, res) => { let file = path.join(root, 'dis
             await page.locator('.settings-dialog-frame').waitFor();
             await page.waitForTimeout(600);
             await page.screenshot({ path: path.join(out, `settings-${width}.png`) });
+            await page.locator('#settings-caldav').scrollIntoViewIfNeeded();
+            const caldav = page.locator('#settings-caldav');
+            await caldav.getByRole('button', { name: '预览变更', exact: true }).click();
+            await caldav.getByText('存在待处理项，尚未完成全量', { exact: true }).waitFor();
+            await caldav.locator('summary').filter({ hasText: '提示或待处理项' }).click();
+            checks.push({ width, caldav: true, overflow: await caldav.evaluate(el => el.scrollWidth > el.clientWidth + 1) });
+            await page.screenshot({ path: path.join(out, `caldav-${width}-light.png`) });
+            if (width === 390) {
+                if (!await caldav.getByRole('button', { name: '启用自动同步', exact: true }).isDisabled()) throw Error('automation gate missing');
+                page.once('dialog', d => d.accept());
+                await caldav.getByRole('button', { name: '确认同步', exact: true }).click();
+                await caldav.getByText('本批次已写入 CalDAV，请在手机刷新后检查。', { exact: true }).waitFor();
+                await caldav.getByRole('checkbox').check();
+                await caldav.getByRole('button', { name: '启用自动同步', exact: true }).click();
+                await caldav.getByText('自动同步已开启', { exact: true }).waitFor();
+                await caldav.getByRole('button', { name: '暂停自动同步', exact: true }).click();
+                await caldav.getByText('自动同步已暂停', { exact: true }).waitFor();
+                caldavFailure = true;
+                await caldav.getByRole('button', { name: '预览变更', exact: true }).click();
+                await caldav.getByRole('alert').waitFor();
+                await page.screenshot({ path: path.join(out, 'caldav-error-390.png') });
+                caldavFailure = false;
+            }
             await page.getByRole('button', { name: '关闭设置', exact: true }).click();
             await page.getByRole('button', { name: '打开管理面板', exact: true }).click();
             await page.locator('.admin-modal').waitFor();
@@ -100,6 +135,10 @@ const server = http.createServer((req, res) => { let file = path.join(root, 'dis
             await page.locator('.settings-dialog-frame').waitFor();
             await page.waitForTimeout(600);
             await page.screenshot({ path: path.join(out, `settings-dark-${width}.png`) });
+            await page.locator('#settings-caldav').scrollIntoViewIfNeeded();
+            await page.locator('#settings-caldav').getByRole('button', { name: '预览变更', exact: true }).click();
+            await page.locator('#settings-caldav').getByText('存在待处理项，尚未完成全量', { exact: true }).waitFor();
+            await page.screenshot({ path: path.join(out, `caldav-${width}-dark.png`) });
             await page.getByRole('button', { name: '关闭设置', exact: true }).click();
             await page.getByRole('button', { name: '切换主题', exact: true }).click();
         }

@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { recoverPersistence } from './persistence.js';
-for (const mode of ['transaction', 'system-restore']) {
+for (const mode of ['transaction', 'system-restore', 'caldav-restore']) {
   test('process interruption recovers ' + mode + ' before database initialization', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aicalendar-crash-'));
     fs.writeFileSync(path.join(root, '.synthetic-crash-test'), 'synthetic');
@@ -16,7 +16,11 @@ for (const mode of ['transaction', 'system-restore']) {
     recoverPersistence(root);
     recoverPersistence(root); // Repeated startup recovery is harmless.
     for (const [name, base64] of Object.entries(before)) assert.equal(fs.readFileSync(path.join(root, name)).toString('base64'), base64, name);
-    if (mode === 'system-restore') assert.equal(fs.readFileSync(path.join(root, 'attachments/proof.txt'), 'utf8'), 'preserve current file');
+    if (mode !== 'transaction') {
+      assert.equal(fs.readFileSync(path.join(root, 'attachments/proof.txt'), 'utf8'), 'preserve current file');
+      assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'caldav-bridge/state.json'), 'utf8')).binding, 'preserve-current');
+      assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'caldav-bridge/control.json'), 'utf8')).enabled, false);
+    }
     assert.equal(fs.existsSync(path.join(root, '.persistence-undo.json')), false);
     assert.equal(fs.existsSync(path.join(root, '.system-restore.json')), false);
     fs.rmSync(root, { recursive: true, force: true });

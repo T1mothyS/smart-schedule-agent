@@ -395,7 +395,7 @@ cp .env.example .env
 | 文件 | 作用 |
 | --- | --- |
 | `server/index.ts`、`server/app.ts` | CLI 兼容入口与无副作用 HTTP 应用工厂 |
-| `server/runtime/` | 配置、四库初始化、监听端口与五组后台任务的显式启动/关闭 |
+| `server/runtime/` | 配置、四库初始化、监听端口与六组后台任务（含受控 CalDAV）的显式启动/关闭 |
 | `server/routes/`、`server/application.ts` | 领域路由与应用组合入口；见 [Phase 5 验证](docs/PHASE5-DOMAIN-BOUNDARIES.md) |
 | `server/db.ts`、`server/database/` | 兼容导出、连接、schema/migrations 与 chat.db 领域查询 |
 | `server/schedule-store.ts` | `schedule.db` 的日历、分类、日程和用户隔离访问层 |
@@ -678,7 +678,7 @@ pm2 restart smart-schedule --update-env
 
 当用户量、附件量或并发明显增长后，再评估迁移到独立 PostgreSQL、对象存储直传和独立任务进程；当前阶段不需要提前增加这些维护成本。
 
-CalDAV 单向桥接目前为默认关闭的手动试点，无自动同步或设置页面；配置与受限能力见 [CalDAV 桥接合同](docs/CALDAV-BRIDGE.md)，手机验证见 [荣耀 POC](docs/CALDAV-HONOR-POC.md)。
+设置页提供“荣耀日历同步”：预览/确认、状态和自动化启停。全部日历的未完成已排期日程/待办及当前周期可单向投影；生产扩大范围、自动化和提醒需分阶段验收。配置与恢复边界见 [CalDAV 桥接合同](docs/CALDAV-BRIDGE.md)，真机证据见 [荣耀 POC](docs/CALDAV-HONOR-POC.md)。
 
 ## 16. License
 

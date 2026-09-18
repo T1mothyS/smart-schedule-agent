@@ -10,6 +10,7 @@ import { MailSettings } from './sections/MailSettings';
 import { DataSettings } from './sections/DataSettings';
 import { AdminSettings } from './sections/AdminSettings';
 import { ToolsSettings } from './sections/ToolsSettings';
+import { CaldavSettings } from './sections/CaldavSettings';
 
 export function SettingsPage({ onOpenAdmin, onOpenTools }: { onOpenAdmin?: () => void; onOpenTools?: () => void }) {
   const { user, authHeaders, logout, isLoading } = useAuth();
@@ -21,6 +22,7 @@ export function SettingsPage({ onOpenAdmin, onOpenTools }: { onOpenAdmin?: () =>
       <AccountSettings user={user} onLogout={logout} />
       <AiSettings authHeaders={authHeaders} />
       <IntegrationGuideSettings authHeaders={authHeaders} />
+      <CaldavSettings authHeaders={authHeaders} />
       <NotificationSettings authHeaders={authHeaders} userEmail={user.email} />
       <DailyReportSettings authHeaders={authHeaders} />
       <LibraryIntegrationSettings authHeaders={authHeaders} />

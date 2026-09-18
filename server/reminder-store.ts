@@ -820,6 +820,15 @@ export function getDueReminders(now = new Date()): DueReminder[] {
   return result;
 }
 
+// Mirrors the current-cycle selection without ensureCurrentCycle or delivery creation.
+export function readReminderProjectionSources(userId: string): Array<{ task: ReminderTask; cycle: ReminderCycle | null }> {
+  return queryAll<any>('SELECT * FROM reminder_tasks WHERE user_id = ? ORDER BY id', [userId]).map(row => {
+    const task = rowToTask(row);
+    const cycle = queryOne<any>('SELECT * FROM reminder_cycles WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1', [task.id]);
+    return { task, cycle: cycle ? rowToCycle(cycle) : null };
+  });
+}
+
 export function claimDelivery(id: string): boolean {
   const changed = run(
     `UPDATE reminder_deliveries SET status = 'sending', attempts = attempts + 1, updated_at = ?
