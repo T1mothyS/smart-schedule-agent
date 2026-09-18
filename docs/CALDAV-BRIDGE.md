@@ -1,6 +1,6 @@
 # CalDAV 单向桥接：手动试点合同
 
-- Status: CONTRACT / LOCAL PILOT，未部署主应用桥接，未连接真实日程。
+- Status: CONTRACT / DEPLOYED-OFF / LOCAL PILOT，主应用桥接代码已部署但开关保持关闭，未连接真实日程。
 - Scope: 一个明确绑定账号、明确选择日历的 AI Calendar → CalDAV 手动投影。
 - Baseline: 基于 `4c1491f` / `0.22.1-260918.1909`，2026-09-18 新增桥接；具体提交/版本以 Git 和 package.json 为准。
 - Authority: `server/caldav-projection.ts`、`server/caldav-bridge.ts`、`server/routes/caldav.ts` 与测试。
@@ -68,4 +68,4 @@ API 复用 Bearer JWT 和当前账号检查；只读日报令牌及网页 Cookie
 
 真实本地链路：独立 POC Python 环境执行 `python -X utf8 infra/caldav-poc/bridge_smoke.py`。自动使用临时数据库和随机 CalDAV 凭据，经过真实主应用 CRUD/API → 桥接 → Radicale → reader：6 类创建、修改、删除、重复执行、只读拒绝均通过，原有 9 个合成 seed 保留。此工具强制回环 HTTP，测试中显式替换虚构 HTTPS origin；**不证明公网 TLS、手机或生产部署**。
 
-下一步只做隔离试点：部署主应用桥接代码但默认关闭 → 明确测试账号、单个测试日历与目标集合 → 先启用预览检查操作 → 获授权后开启写入并执行小批次 → 用户观察手机新建/修改/删除、只读交互、近未来提醒和重连 → 再完成至少 24h 后台观察。尚不开放真实账号全部日程或自动定时同步。
+下一步只做隔离试点：当前主应用桥接代码已按部署 runbook 上线但默认关闭 → 明确测试账号、单个测试日历与目标集合 → 先启用预览检查操作 → 获授权后开启写入并执行小批次 → 用户观察手机新建/修改/删除、只读交互、近未来提醒和重连 → 再完成至少 24h 后台观察。尚不开放真实账号全部日程或自动定时同步。
