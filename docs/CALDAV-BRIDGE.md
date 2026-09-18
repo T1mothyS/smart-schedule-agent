@@ -30,6 +30,8 @@
 
 API 复用 Bearer JWT 和当前账号检查；只读日报令牌及网页 Cookie 都不能授权。没有接收用户提供的上游 URL/账号/password 的 API，避免跨账号改目标。两接口受 30 次/分钟速率限制；维护模式拒绝执行。
 
+当前实现没有 CalDAV 设置、预览或确认同步按钮；`preview`/`sync` 由受控手动试点调用。这是为了先验证真实数据、删除边界、ETag 冲突和手机呈现，不是最终产品交互。当前网站侧的“出行/工作/社交/生活/健康/其他”是日程分类，不是 `个人/工作/家庭` 日历选择器；产品化前必须将两者分开呈现。
+
 - `POST /api/integrations/caldav/preview`，body `{}`：返回 `mode: manual-pilot`、`writeEnabled`、`planToken`、`operations`、`issues`、`excluded`。预览完整读取源与已知目标资源，不写本地状态、不写 CalDAV。仅返回归属当前用户的 sourceId/资源键与操作，不返回凭据或日程正文。
 - `POST /api/integrations/caldav/sync`，body `{ "planToken": "预览结果" }`：重新检查源、状态和远端 ETag，计划仍完全匹配且写开关启用才执行。成功返回 `applied: true`。预检查发现变化返回 409；上游条件写入冲突返回 502/CALDAV_CONFLICT。排查后重新预览，不自动覆盖。
 - 操作包括 `create/update/delete/unchanged/recover`；被排除的类型不会投影。原来已投影但后来删除、变为 todo 或未排期的事件，将在下一次预览列为 delete，需再次确认。
