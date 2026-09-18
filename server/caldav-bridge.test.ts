@@ -97,6 +97,11 @@ test('unsafe configuration URLs and sensitive transport errors are rejected', as
   await assert.rejects(transport.get(projectEvent(event(), config).key), error => String(error).includes('CALDAV_NETWORK_ERROR') && !String(error).includes('secret-upstream-body'));
 });
 
+test('bridge defaults to all calendars when scope is not explicitly configured', () => {
+  const env = { CALDAV_BRIDGE_ENABLED: 'true', CALDAV_BRIDGE_USER_ID: 'owner', CALDAV_BRIDGE_CALENDAR_IDS: 'owner:personal', CALDAV_BRIDGE_COLLECTION_URL: 'https://example.invalid/calendar/', CALDAV_BRIDGE_USERNAME: 'writer', CALDAV_BRIDGE_PASSWORD: 'not-real' };
+  assert.equal(bridgeConfig(env)?.scope, 'all');
+});
+
 test('failed pending update can change again before retry without losing ownership', async () => {
   const f = fixture(); await apply(f.bridge); const put = f.transport.put;
   f.source.schedules[0].title = 'first revision'; f.transport.put = async () => { throw new Error('before send'); };
@@ -135,6 +140,15 @@ test('all scope projects scheduled todos, hidden/new calendars and authoritative
   f.source.cycles[0].cycle!.id = 'next'; f.source.cycles[0].cycle!.dueDate = '2026-10-20';
   f.source.calendars.push('new'); f.source.schedules.push(event({ id: 'new-event', calendar_id: 'new' }));
   await apply(bridge); assert.equal(f.remote.size, 4); assert(f.remote.has(todoKey));
+});
+
+test('all scope keeps overdue unfinished events eligible', async () => {
+  const f = fixture(); f.source.cycles = [];
+  f.source.schedules = [event({ id: 'overdue', start_time: '2026-01-01T09:00:00', end_time: '2026-01-01T10:00:00' })];
+  const bridge = createCaldavBridge({ ...config, scope: 'all' }, f.file, () => f.source, f.transport);
+  const plan = await bridge.preview();
+  assert.equal(plan.counts?.event, 1);
+  assert.equal(plan.exclusions?.completed, undefined);
 });
 
 test('quarantined conversion preserves old resource while unrelated changes proceed', async () => {

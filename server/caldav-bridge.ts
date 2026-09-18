@@ -38,7 +38,7 @@ export function bridgeConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig
     username: env.CALDAV_BRIDGE_USERNAME || '', password: env.CALDAV_BRIDGE_PASSWORD || '',
     timezone: env.CALDAV_BRIDGE_TIMEZONE || 'Asia/Shanghai', alarms: env.CALDAV_BRIDGE_ALARMS_ENABLED === 'true',
     writeEnabled: env.CALDAV_BRIDGE_WRITE_ENABLED === 'true', includeCompleted: env.CALDAV_BRIDGE_INCLUDE_COMPLETED === 'true',
-    scope: (env.CALDAV_BRIDGE_SCOPE || 'selected') as 'selected' | 'all',
+    scope: (env.CALDAV_BRIDGE_SCOPE || 'all') as 'selected' | 'all',
   };
   let url: URL;
   try { url = new URL(result.collectionUrl); } catch { throw new CaldavError('INVALID_BRIDGE_CONFIG', 503); }
