@@ -1,6 +1,6 @@
 # AI Calendar × 荣耀 CalDAV：研究与 POC
 
-- Status: RESEARCH / LOCAL-VERIFIED，公网与真机 NOT TESTED
+- Status: RESEARCH / PUBLIC-POC-VERIFIED，荣耀真机 NOT TESTED
 - Scope: 合成日程的独立 CalDAV 服务；不连接正式数据库、不实现生产同步。
 - Baseline: `010a2b3` / `0.22.0-260917.2044` 源码调查，2026-09-18。
 - Authority: 源码、隔离测试、带日期的真机证据；官方说明仅证明列明范围。
@@ -54,7 +54,7 @@
 
 运行与部署模板见 [POC 操作说明](../infra/caldav-poc/README.md)。依赖固定为 Radicale `3.8.0`、Waitress `3.0.2`、bcrypt `4.3.0` 及锁定的传递依赖，Windows Python `3.12.7` 进行本地测试。9 个合成资源通过独立解析器校验。
 
-| 验证内容 | 本地结果 | 证明边界 |
+| 验证内容 | 结果 | 证明边界 |
 |---|---|---|
 | XML 实体拒绝、日志允许字段、请求体保持/大小上限、URL 限制 | PASS | 不记录测试注入的认证/内容/未知路径 |
 | UTF-8、75 octet folding、全天排他结束、重复例外 | PASS | 样例语法与结构，不是手机呈现 |
@@ -64,12 +64,12 @@
 | 写账号创建/修改/删除、过期 ETag | PASS | 成功更新与删除，旧条件返回 412 |
 | 可写测试日历、calendar-multiget、sync-collection | PASS | 服务支持探测，不是荣耀实际使用证据 |
 | 重复 seed、服务重启 | PASS | 原对象保留、无覆盖，重启后对象/ETag 保留 |
-| 公网 TLS、Nginx 路径、Linux systemd | NOT TESTED | 尚未部署 |
+| 公网 TLS、Nginx 路径、Linux systemd | PASS（2026-09-18） | 独立服务已部署；HTTPS 路径、认证边界、loopback-only 监听和资源限制已验收 |
 | 荣耀同步、只读体验、提醒触发、24 小时稳定性 | NOT TESTED | 等待用户真机参与 |
 
 本地集成测试只持有随机临时凭据，日志另检验明文及 Basic Base64 均未出现。第一次启动发现 Windows 默认编码不能读取中文配置路径，使用进程级 UTF-8 修正；第一次集合创建返回 409，确认为父集合尚未创建，修正 writer 初始化而不增加 reader 权限。失败现场仅保留在临时目录。
 
-服务器只读预检确认 Linux/Python/Nginx 路线可继续准备，没有 Docker，缺少 ensurepip；具体资源、域名、证书与连接参数仅记入本机 runbook。未安装、上传、改证书、改 Nginx 或重启生产。
+服务器只读预检确认 Linux/Python/Nginx 路线可继续准备，没有 Docker，缺少 ensurepip；具体资源、域名、证书、连接参数和回滚现场仅记入本机 runbook。2026-09-18 已完成隔离 POC 部署：systemd 服务 active 且未 enable，5232 仅 loopback 监听；公网无凭据 PROPFIND 返回 401，`poc-reader` discovery/calendar-query 通过并读取 9 个合成资源，四账号 cycle 的 CRUD、只读、越权和 ETag 检查通过；主站 health/home 保持 200，服务日志敏感模式计数为 0。上述结果不包含荣耀真机行为或提醒可靠性。
 
 ## 真机执行表与判定
 
@@ -96,8 +96,8 @@
 
 ## 阶段门槛与交接
 
-- 当前已完成：源码映射、路线比较、隔离运行代码、协议/脱敏测试、服务器只读预检、离线部署准备。
-- 下一步：审阅本机具体部署方案后单独授权，再部署 POC 并执行用户手机测试。
+- 当前已完成：源码映射、路线比较、隔离运行代码、协议/脱敏测试、服务器只读预检、离线部署、Nginx 路径和公网协议验收。
+- 下一步：使用 `poc-reader` 执行荣耀手机登录、发现、只读呈现、更新删除和提醒测试；完成后再决定是否进入正式单向接入设计。
 - 放行条件：连接、普通/全天更新删除、只读体验、时区和实际提醒通过；后台观察无数据破坏或无法恢复问题，延迟如实记录并确认满足使用需求。
 - 未通过时：记录 FAIL/PARTIAL 与可复现证据，先排除配置/网络，再决定替代服务或接入方式；不自动改 Radicale、不擅自接入真实数据。
 - 研究结束后：提交正式单向接入实现设计，再实施；未来双向另立阶段。
