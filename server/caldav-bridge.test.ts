@@ -6,7 +6,7 @@ import test from 'node:test';
 import { bridgeConfig, createCaldavBridge, createDavTransport, type BridgeConfig, type DavTransport, type SourceSnapshot } from './caldav-bridge.js';
 import { icalHash, projectEvent } from './caldav-projection.js';
 import type { Schedule } from './schedule-store.js';
-const config: BridgeConfig = { userId: 'owner', calendarIds: ['owner:personal'], collectionUrl: 'https://caldav.example.invalid/poc-reader/poc/', username: 'synthetic', password: 'synthetic-only', timezone: 'Asia/Shanghai', alarms: false, writeEnabled: true };
+const config: BridgeConfig = { userId: 'owner', calendarIds: ['owner:personal'], collectionUrl: 'https://caldav.example.invalid/poc-reader/poc/', username: 'synthetic', password: 'synthetic-only', timezone: 'Asia/Shanghai', alarms: false, writeEnabled: true, includeCompleted: false };
 function event(overrides: Partial<Schedule> = {}): Schedule {
   return { id: 'one', user_id: 'owner', calendar_id: 'owner:personal', type: 'event', title: '会议 📅', start_time: '2026-09-20T14:00:00', end_time: '2026-09-20T15:00:00', all_day: false, category: 'work', priority: 'medium', is_completed: false, is_repeated: false, is_high_risk: false, reminders: [], created_at: '2026-09-18T00:00:00Z', updated_at: '2026-09-18T01:00:00Z', ...overrides };
 }
@@ -32,6 +32,7 @@ test('CalDAV projection: stable UID, UTC, cross-day, all-day, recurrence and UTF
   assert.notEqual(projectEvent(event({ user_id: 'other' }), config).key, a.key);
   assert.match(projectEvent(event({ all_day: true, start_time: '2026-09-20T00:00:00', end_time: undefined }), config).ical, /DTEND;VALUE=DATE:20260921/);
   assert.match(projectEvent(event({ start_time: '2026-09-20T23:30:00+08:00', end_time: '2026-09-21T00:30:00+08:00' }), config).ical, /DTEND:20260920T163000Z/);
+  assert.match(projectEvent(event({ end_time: undefined }), config).ical, /DTEND:20260920T070000Z/);
   assert.equal(projectEvent(event({ start_time: '2026-09-20T06:00:00Z' }), config).hash, projectEvent(event(), config).hash);
 });
 test('unsupported semantics fail explicitly; alarm mapping is opt-in', () => {
@@ -46,6 +47,13 @@ test('preview has no mutations; sync is idempotent and removes only ledger-owned
   await f.bridge.sync(p.planToken); await apply(f.bridge); assert.equal(f.calls.filter(c => c === 'PUT').length, 1);
   f.remote.set('seed.ics', { etag: '"seed"', hash: 'seed' }); f.source.schedules[0].title = 'changed'; await apply(f.bridge);
   f.source.schedules = []; await apply(f.bridge); assert.equal(f.remote.size, 1); assert(f.remote.has('seed.ics'));
+});
+test('completed source events are excluded and existing projections are retired', async () => {
+  const f = fixture(); await apply(f.bridge); assert.equal(f.remote.size, 1);
+  f.source.schedules[0].is_completed = true;
+  const preview = await f.bridge.preview();
+  assert.equal(preview.excluded, 1); assert.equal(preview.operations[0].action, 'delete');
+  await f.bridge.sync(preview.planToken); assert.equal(f.remote.size, 0);
 });
 test('source gaps, unsupported events and stale preview cannot delete', async () => {
   const f = fixture(); await apply(f.bridge); f.source.calendars = []; await assert.rejects(f.bridge.preview(), /SOURCE_SNAPSHOT_INCOMPLETE/);

@@ -6,7 +6,7 @@ import type { Schedule } from './schedule-store.js';
 
 export interface BridgeConfig {
   userId: string; calendarIds: string[]; collectionUrl: string;
-  username: string; password: string; timezone: string; alarms: boolean; writeEnabled: boolean;
+  username: string; password: string; timezone: string; alarms: boolean; writeEnabled: boolean; includeCompleted: boolean;
 }
 export interface SourceSnapshot { complete: true; calendars: string[]; schedules: Schedule[] }
 interface Entry { hash: string; etag: string | null; sourceId: string; pending?: boolean; previousHash?: string }
@@ -33,7 +33,7 @@ export function bridgeConfig(env: NodeJS.ProcessEnv = process.env): BridgeConfig
     userId: env.CALDAV_BRIDGE_USER_ID || '', calendarIds, collectionUrl: env.CALDAV_BRIDGE_COLLECTION_URL || '',
     username: env.CALDAV_BRIDGE_USERNAME || '', password: env.CALDAV_BRIDGE_PASSWORD || '',
     timezone: env.CALDAV_BRIDGE_TIMEZONE || 'Asia/Shanghai', alarms: env.CALDAV_BRIDGE_ALARMS_ENABLED === 'true',
-    writeEnabled: env.CALDAV_BRIDGE_WRITE_ENABLED === 'true',
+    writeEnabled: env.CALDAV_BRIDGE_WRITE_ENABLED === 'true', includeCompleted: env.CALDAV_BRIDGE_INCLUDE_COMPLETED === 'true',
   };
   let url: URL;
   try { url = new URL(result.collectionUrl); } catch { throw new CaldavError('INVALID_BRIDGE_CONFIG', 503); }
@@ -106,7 +106,8 @@ export function createCaldavBridge(config: BridgeConfig, stateFile: string, read
     const ids = new Set<string>();
     for (const row of source.schedules) {
       if (ids.has(row.id)) throw new CaldavError('DUPLICATE_SOURCE_ID'); ids.add(row.id);
-      if (!config.calendarIds.includes(row.calendar_id) || row.type !== 'event' || row.is_unscheduled || row.id.startsWith('reminder-cycle:')) { excluded++; continue; }
+      if (!config.calendarIds.includes(row.calendar_id) || row.type !== 'event' || row.is_unscheduled
+        || row.id.startsWith('reminder-cycle:') || (!config.includeCompleted && row.is_completed)) { excluded++; continue; }
       try {
         const projected = projectEvent(row, config); desired.set(projected.key, projected);
         if (!config.alarms && row.reminders.length) issues.push({ sourceId: row.id, code: 'ALARMS_DISABLED' });

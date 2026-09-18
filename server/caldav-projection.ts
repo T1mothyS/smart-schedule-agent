@@ -7,6 +7,7 @@ export class CaldavError extends Error {
 }
 export interface ProjectionOptions { timezone: string; alarms: boolean }
 export interface ProjectedEvent { key: string; sourceId: string; ical: string; hash: string }
+export const DEFAULT_EVENT_DURATION_MINUTES = 60;
 
 function escapeText(value: string): string {
   if (/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(value)) throw new CaldavError('UNSUPPORTED_CONTROL_CHARACTER');
@@ -64,11 +65,13 @@ export function projectEvent(event: Schedule, options: ProjectionOptions): Proje
   } else {
     const start = instant(event.start_time, options.timezone);
     lines.push(`DTSTART:${utc(start)}`);
-    if (event.end_time) {
-      const end = instant(event.end_time, options.timezone);
-      if (end.getTime() <= start.getTime()) throw new CaldavError('INVALID_DURATION');
-      lines.push(`DTEND:${utc(end)}`);
-    }
+    // Source data may intentionally omit an end time. Keep the website value unchanged,
+    // but emit a finite target duration because some CalDAV clients hide start-only events.
+    const end = event.end_time
+      ? instant(event.end_time, options.timezone)
+      : new Date(start.getTime() + DEFAULT_EVENT_DURATION_MINUTES * 60_000);
+    if (end.getTime() <= start.getTime()) throw new CaldavError('INVALID_DURATION');
+    lines.push(`DTEND:${utc(end)}`);
   }
   if (event.is_repeated) lines.push(`RRULE:FREQ=${event.repeat_rule!.toUpperCase()}`);
   const description = [event.description, event.notes].filter(Boolean).join('\n\n');

@@ -2,7 +2,7 @@
 
 - Status: CONTRACT / CONFIGURED-WRITE-ON-MANUAL / PRODUCTION PILOT，主应用桥接已绑定单个账号的单个日历；写入仅由获授权的手动预览/确认调用触发，没有自动 worker；首个批次已创建 25 条资源。
 - Scope: 一个明确绑定账号、明确选择日历的 AI Calendar → CalDAV 手动投影。
-- Baseline: 基于 `cc8e9c5` / `0.23.0-260918.2200`，2026-09-18 新增桥接；具体提交/版本以 Git 和 package.json 为准。
+- Baseline: 基于 `0.23.1-260918.2350` 的桥接兼容修正；具体提交/版本以 Git 和 package.json 为准。
 - Authority: `server/caldav-projection.ts`、`server/caldav-bridge.ts`、`server/routes/caldav.ts` 与测试。
 - Update trigger: 字段映射、认证、状态文件、接口、部署开关和真机结果变化。
 - Do not use for: 宣称自动后台同步、双向同步、实际手机提醒或生产连接已验收。
@@ -27,6 +27,7 @@
 | `CALDAV_BRIDGE_USERNAME/PASSWORD` | 独立写账号凭据；不复用手机只读密码或主应用登录密码 |
 | `CALDAV_BRIDGE_TIMEZONE` | 无偏移源时间的显式解释；首期仅 Asia/Shanghai、Asia/Hong_Kong、UTC，默认上海 |
 | `CALDAV_BRIDGE_ALARMS_ENABLED` | 默认 false；仅在明确测试提醒时启用 |
+| `CALDAV_BRIDGE_INCLUDE_COMPLETED` | 默认 false；完成的源日程不投影到手机，但不会从网页源库删除；仅在明确需要历史镜像时设为 true |
 
 API 复用 Bearer JWT 和当前账号检查；只读日报令牌及网页 Cookie 都不能授权。没有接收用户提供的上游 URL/账号/password 的 API，避免跨账号改目标。两接口受 30 次/分钟速率限制；维护模式拒绝执行。
 
@@ -40,11 +41,11 @@ API 复用 Bearer JWT 和当前账号检查；只读日报令牌及网页 Cookie
 
 ## 映射与范围
 
-- 仅 `type=event` 且已排期；不投影 todo、周期事务、AI 草稿。按实际日历 ID 选择，不调用会同步周期事务的 GET schedules 或会初始化默认项的 getAllCalendars。
+- 仅 `type=event` 且已排期；默认不投影已完成日程，不投影 todo、周期事务、AI 草稿。按实际日历 ID 选择，不调用会同步周期事务的 GET schedules 或会初始化默认项的 getAllCalendars。todo 不是普通事件，若以后纳入需单独实现并验收 VTODO。
 - UID/文件名由账号、日历、事件 ID 的确定性 SHA-256 生成。标题、备注变化保持同一 UID；跨日历移动会显示为旧投影撤回、新投影创建，预览明确列出。
 - 支持 2000 年起的普通/跨午夜事件，明确偏移或 UTC 保持时间点，无偏移时间按配置解释后输出 UTC。首期不处理 DST 时区或历史时区变更；不猜服务器 OS 时区。
 - 全天只支持现有 UI 的单日格式（日期或本地零点、无结束时间），输出 DATE 与次日排他 DTEND。历史多日/带偏移的全天格式明确阻断，需确认源语义后扩展。
-- 普通事件没有结束时间时保持无 DTEND，不擅自补一小时；结束早于或等于开始则阻断。无结束时间的手机呈现仍须实测。
+- 普通事件没有结束时间时，源数据库保持不变；桥接输出按网页表单默认补一个 60 分钟的 `DTEND`，避免部分手机隐藏 start-only 事件。结束早于或等于开始仍阻断。
 - `daily/weekly` 对应无终止 RRULE，因为现有源模型没有 COUNT/UNTIL；不将 POC 的 3 次样例约束伪造到业务数据。持续重复的手机表现要再次验收。monthly、复杂 RRULE、EXDATE/RECURRENCE-ID 均不支持。
 - `description` 与 `notes` 非空时以空行连接到 DESCRIPTION；location 输出 LOCATION；不外发内部风险/完成/优先级等字段。文本转义、UTF-8 按字节折行，来源时间固定生成 DTSTAMP/CREATED/LAST-MODIFIED。
 - 提醒默认关闭。显式开启后只接受非全天事件的单个 0–10080 分钟数字 DISPLAY 提醒，拒绝多提醒或异常字符串，不冒充源邮件调度行为。实际触发单独验收。
