@@ -1,6 +1,6 @@
 # CalDAV 单向桥接：手动试点合同
 
-- Status: CONTRACT / CONFIGURED-WRITE-ON-MANUAL / PRODUCTION PILOT，主应用桥接已绑定单个账号的单个日历；写入仅由获授权的手动预览/确认调用触发，没有自动 worker；首个批次已创建 25 条资源。
+- Status: CONTRACT / CONFIGURED-WRITE-ON-MANUAL / PRODUCTION PILOT，主应用桥接已绑定单个账号的单个日历；写入仅由获授权的手动预览/确认调用触发，没有自动 worker；首个批次曾创建 25 条资源，按默认排除完成历史后当前目标集合保留 1 条未完成事件。
 - Scope: 一个明确绑定账号、明确选择日历的 AI Calendar → CalDAV 手动投影。
 - Baseline: 基于 `0.23.1-260918.2350` 的桥接兼容修正；具体提交/版本以 Git 和 package.json 为准。
 - Authority: `server/caldav-projection.ts`、`server/caldav-bridge.ts`、`server/routes/caldav.ts` 与测试。
@@ -76,3 +76,5 @@ API 复用 Bearer JWT 和当前账号检查；只读日报令牌及网页 Cookie
 2026-09-18 生产配置回执：主应用已配置单一账号、单一默认日历、独立 CalDAV 写入凭据和既有目标集合；`CALDAV_BRIDGE_WRITE_ENABLED=false`、提醒保持关闭。首个经认证预览返回 `200` / `manual-pilot`，操作数为 `0`，包含两个 `AMBIGUOUS_ALL_DAY_RANGE`，没有可用 `planToken`；桥接账本仍未创建，未发生远端写入。修正 POC 凭据文件所有者后，POC 本机和公网只读 `PROPFIND` 均返回 `207`。需先修正这两个源事件的全天日期语义，再重新预览并由用户确认具体批次。
 
 2026-09-18 生产手动桥接回执（两条源日程重新保存后）：用户已将两个历史源记录改为各自日期内的普通定时日程，服务器复核分别为 `2026-08-20 09:00–10:00` 与 `2026-09-07 09:00–10:00`，本轮未再次修改源数据。重新认证预览返回 `200` / `manual-pilot`，25 条 `create`、无 `issue`、无排除项；开启写入后同步返回 `200` / `applied=true`，账本记录 25 条且 `pending=0`、无残留锁。目标集合本机 `PROPFIND` 返回 `207` 并看到 25 个桥接资源，主应用 health `ok`、PM2 `online`。本批次没有源侧更新/删除，也没有自动任务；手机变更呈现、提醒、断网恢复和 24h 后台观察仍未验收。
+
+2026-09-19 生产兼容修正与历史过滤回执：版本 `0.23.1-260918.2350`（提交 `f7b5ab8`）已部署并通过主应用 health `200/ok`、PM2 `online` 验收。目标资源先完成独立备份；认证预览返回 `200`，25 个操作中 `delete=24`、`unchanged=1`、`excluded=108`、无 issue；随后同步返回 `200/applied=true`。账本已收敛为 1 条、无 `pending`/残留锁，目标集合 `PROPFIND=207` 且仅剩 1 个桥接资源。源库复核仍有 25 条 `event`、其中 24 条已完成；“预约纪念币”仍保留在网页源库且 `end_time` 为空，只是不再投影到手机。当前排除项包含 24 条已完成事件和 84 条 todo；todo 尚未转换为 VTODO，因此不能宣称网页上的所有待办已同步到手机。首次部署脚本曾因 PM2 停止状态判断错误中止，旧版本已恢复在线，修正脚本重试成功；未发生源库删除。手机端实际视觉、提醒、断网恢复和 24h 后台观察仍未验收。
