@@ -1,0 +1,23 @@
+[auth]
+type = htpasswd
+htpasswd_filename = /var/lib/ai-calendar-caldav-poc/users
+htpasswd_encryption = bcrypt
+delay = 1
+
+[rights]
+type = from_file
+file = /opt/ai-calendar-caldav-poc/rights
+
+[storage]
+filesystem_folder = /var/lib/ai-calendar-caldav-poc/collections
+
+[web]
+type = none
+
+[logging]
+level = warning
+mask_passwords = True
+bad_put_request_content = False
+
+[server]
+max_content_length = 1048576

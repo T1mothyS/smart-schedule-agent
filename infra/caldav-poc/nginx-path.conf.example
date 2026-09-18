@@ -1,0 +1,23 @@
+# Insert INSIDE the existing HTTPS server block. No new public port.
+# Explicit path URL only: do not take over the main site's /.well-known/caldav.
+location = /caldav-poc {
+    return 308 /caldav-poc/;
+}
+location ^~ /caldav-poc/ {
+    client_max_body_size 1m;
+    proxy_pass http://127.0.0.1:5232/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Script-Name /caldav-poc;
+    proxy_set_header X-Remote-User "";
+    proxy_set_header Remote-User "";
+    proxy_set_header X-Forwarded-User "";
+    proxy_set_header Connection "";
+    proxy_connect_timeout 5s;
+    proxy_read_timeout 30s;
+    proxy_send_timeout 30s;
+    # Safe protocol records come from serve.py; no raw URI/header/body logs here.
+    access_log off;
+    error_log /dev/null crit;
+}

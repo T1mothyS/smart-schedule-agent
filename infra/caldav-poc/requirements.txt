@@ -1,0 +1,17 @@
+# Independent POC runtime; never install into the AI Calendar Node environment.
+Radicale==3.8.0
+bcrypt==4.3.0
+waitress==3.0.2
+# Transitive versions from the verified POC runtime (2026-09-18).
+certifi==2026.7.22
+charset-normalizer==3.5.1
+defusedxml==0.7.1
+idna==3.20
+libpass==1.9.3
+pika==1.4.4
+python-dateutil==2.9.0.post0
+pytz==2026.3.post1
+requests==2.34.2
+six==1.17.0
+urllib3==2.8.0
+vobject==0.9.9

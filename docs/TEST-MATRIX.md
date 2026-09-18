@@ -3,6 +3,7 @@
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
 - Last verified commit/version: Tools 挂载应用实现 checkpoint / `0.22.0-260917.2044`（2026-09-17，本地源码核对）。
+- CalDAV 补充验证：2026-09-18，隔离 POC 与主应用回归；仅覆盖下述独立入口，真机尚未验证。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
 - Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
@@ -38,6 +39,10 @@
 | 附件、导出和备份 | export-service.test.ts、core.test.ts、attachment 相关实现 | 下载、大小/MIME、检查备份、合并/替换取消路径 | 备份前快照、恢复演练、附件权限和回滚 |
 | 管理员 | admin-api-sharing.test.ts、管理员 API | 普通用户隐藏管理入口；管理员危险操作有确认 | 维护模式、全站备份、恢复和删除必须单独授权 |
 | 知识库 | library.test.ts；db、library-service、publish-token-service | `/library` 与 `/library/:id` 检查只读入口、搜索、关系状态、版本、评论、单条/全库导出；隔离 V2 批次验证 CREATED/UPDATED/UNCHANGED | 三篇样本只允许本地隔离账号；不读取生产数据库、不使用生产令牌、不部署 |
+
+### 独立 CalDAV POC 验证入口
+
+按照 [POC 操作说明](../infra/caldav-poc/README.md) 安装独立 Python 环境，然后运行 `python -X utf8 -m unittest discover -s infra/caldav-poc -p test_poc.py -v`。该套件用真实 loopback Radicale 和临时合成数据验证发现、只读/账号隔离、条件写入删除、重启及日志隐私；不包含在 `npm test` 中，不读取正式数据库，也不证明荣耀设备、TLS 或后台提醒成功。真机矩阵与阶段门槛见 [研究记录](CALDAV-HONOR-POC.md)。
 
 ## 3. UI Smoke Test 决策
 

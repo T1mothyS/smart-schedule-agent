@@ -1,0 +1,26 @@
+[Unit]
+Description=Isolated Honor CalDAV compatibility POC
+After=network.target
+
+[Service]
+Type=simple
+User=caldav-poc
+Group=caldav-poc
+WorkingDirectory=/opt/ai-calendar-caldav-poc
+ExecStart=/opt/ai-calendar-caldav-poc/venv/bin/python -X utf8 /opt/ai-calendar-caldav-poc/serve.py --config /etc/ai-calendar-caldav-poc/config --port 5232
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ai-calendar-caldav-poc
+MemoryMax=192M
+CPUQuota=25%
+TasksMax=32
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

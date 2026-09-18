@@ -33,6 +33,8 @@
 
 本机 `AGENTS.local.md`、`DEPLOY.md`、`CONTINUOUS-REQUIREMENTS.md` 保持忽略，不复制到可提交文档。外部 Daily Report V2 与 Knowledge Library 工作树路径由本机配置提供。
 
+- [荣耀 CalDAV 可行性研究与 POC](CALDAV-HONOR-POC.md)：隔离实验、字段缺口和真机门槛；本地协议通过不代表手机或生产同步通过。
+
 ## 历史快照与决策
 
 | 文档 | 分类 | 不能用于 |

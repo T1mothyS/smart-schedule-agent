@@ -108,6 +108,7 @@ flowchart LR
 | 日报采集/生成/校验 | `日报-v2/scripts/`、`日报-v2/schemas/`、`日报-v2/tests/` | V2 只输出结构化内容；`-NoSend` 不发布、不入队、不发信 |
 | 日报媒体与发布 | `日报-v2/scripts/report_media.py`、`日报-v2/scripts/publish_report.py`、主仓库 `server/daily-report*.ts` | Local 先本地校验/上传媒体再 PUT；Cloud 按兼容/严格批次合同处理媒体；正式发布均先写记录，再按来源设置进入网页/邮件 |
 | 生产升级与回滚 | `DEPLOY.md`、`日报-v2/README.md` | 本地构建/验收与生产部署、真实 SMTP、收件箱验收分开授权和记录 |
+| 荣耀 CalDAV 可行性实验 | `docs/CALDAV-HONOR-POC.md`、`infra/caldav-poc/README.md` | 独立合成数据；不读写主数据库；公网部署与真机验收另行完成 |
 | Knowledge Library 首次部署与文档追踪 | `docs/KNOWLEDGE-LIBRARY-FIRST-DEPLOYMENT.md`、独立 Knowledge Library 项目的 `docs/knowledge-library-first-deployment.md` | 本地批次、关系和生命周期先校验；不把令牌写入命令行、报告、日志或 Git |
 | 旧日报问题 | `LEGACY_PROJECT` 只读副本 | 仅用于理解和回滚，不修改旧项目 |
 

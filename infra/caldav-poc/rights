@@ -1,0 +1,35 @@
+# Fixed synthetic principals only. Never use these rules for production users.
+[root]
+user: poc-(writer|reader|phone|outsider)
+collection:
+permissions: R
+
+[own-principal]
+user: poc-(writer|reader|phone|outsider)
+collection: {user}
+permissions: R
+
+[writer-reader-principal]
+user: poc-writer
+collection: poc-reader
+permissions: RW
+
+[writer-phone-principal]
+user: poc-writer
+collection: poc-phone
+permissions: RW
+
+[writer-reader-calendar]
+user: poc-writer
+collection: poc-reader/poc
+permissions: rw
+
+[reader-calendar]
+user: poc-reader
+collection: poc-reader/poc
+permissions: r
+
+[phone-calendar]
+user: poc-phone
+collection: poc-phone/poc
+permissions: rw
