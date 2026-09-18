@@ -1,6 +1,6 @@
 # CalDAV 单向桥接：手动试点合同
 
-- Status: CONTRACT / CONFIGURED-OFF-WRITE / PRODUCTION PILOT，主应用桥接已绑定单个账号的单个日历，预览已启用但写入开关保持关闭；首次真实预览因两个源事件的全天范围不明确而阻断，未向 CalDAV 写入。
+- Status: CONTRACT / CONFIGURED-WRITE-ON-MANUAL / PRODUCTION PILOT，主应用桥接已绑定单个账号的单个日历；写入仅由获授权的手动预览/确认调用触发，没有自动 worker；首个批次已创建 25 条资源。
 - Scope: 一个明确绑定账号、明确选择日历的 AI Calendar → CalDAV 手动投影。
 - Baseline: 基于 `cc8e9c5` / `0.23.0-260918.2200`，2026-09-18 新增桥接；具体提交/版本以 Git 和 package.json 为准。
 - Authority: `server/caldav-projection.ts`、`server/caldav-bridge.ts`、`server/routes/caldav.ts` 与测试。
@@ -70,6 +70,8 @@ API 复用 Bearer JWT 和当前账号检查；只读日报令牌及网页 Cookie
 
 真实本地链路：独立 POC Python 环境执行 `python -X utf8 infra/caldav-poc/bridge_smoke.py`。自动使用临时数据库和随机 CalDAV 凭据，经过真实主应用 CRUD/API → 桥接 → Radicale → reader：6 类创建、修改、删除、重复执行、只读拒绝均通过，原有 9 个合成 seed 保留。此工具强制回环 HTTP，测试中显式替换虚构 HTTPS origin；**不证明公网 TLS、手机或生产部署**。
 
-下一步只做隔离试点：明确测试账号、单个测试日历与目标集合 → 先启用预览检查操作 → 获授权后开启写入并执行小批次 → 用户观察手机新建/修改/删除、只读交互、近未来提醒和重连 → 再完成至少 24h 后台观察。尚不开放真实账号全部日程或自动定时同步。
+后续仍只做受控手动试点：用户观察手机新建/修改/删除、只读交互、近未来提醒和重连 → 再完成至少 24h 后台观察；不启用自动定时同步。当前首个真实批次仅覆盖绑定的单个个人日历，后续批次仍须先预览并明确确认。
 
 2026-09-18 生产配置回执：主应用已配置单一账号、单一默认日历、独立 CalDAV 写入凭据和既有目标集合；`CALDAV_BRIDGE_WRITE_ENABLED=false`、提醒保持关闭。首个经认证预览返回 `200` / `manual-pilot`，操作数为 `0`，包含两个 `AMBIGUOUS_ALL_DAY_RANGE`，没有可用 `planToken`；桥接账本仍未创建，未发生远端写入。修正 POC 凭据文件所有者后，POC 本机和公网只读 `PROPFIND` 均返回 `207`。需先修正这两个源事件的全天日期语义，再重新预览并由用户确认具体批次。
+
+2026-09-18 生产手动桥接回执（两条源日程重新保存后）：用户已将两个历史源记录改为各自日期内的普通定时日程，服务器复核分别为 `2026-08-20 09:00–10:00` 与 `2026-09-07 09:00–10:00`，本轮未再次修改源数据。重新认证预览返回 `200` / `manual-pilot`，25 条 `create`、无 `issue`、无排除项；开启写入后同步返回 `200` / `applied=true`，账本记录 25 条且 `pending=0`、无残留锁。目标集合本机 `PROPFIND` 返回 `207` 并看到 25 个桥接资源，主应用 health `ok`、PM2 `online`。本批次没有源侧更新/删除，也没有自动任务；手机变更呈现、提醒、断网恢复和 24h 后台观察仍未验收。
