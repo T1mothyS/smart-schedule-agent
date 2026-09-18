@@ -17,6 +17,7 @@ data/*.db-*
 data/attachments/
 data/daily-report-media/
 data/backups/
+data/caldav-bridge/
 data/migration-backups/
 data/pre-fix-backups/
 *.log

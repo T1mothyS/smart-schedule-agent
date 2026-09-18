@@ -26,6 +26,7 @@ const rules: RateRule[] = [
   { name: 'work-media-probe', limit: 40, windowMs: 15 * 60_000, matches: req => req.method === 'PUT' && req.path.startsWith('/api/internal/work-media-probe/') },
   { name: 'daily-report-manual-send', limit: 5, windowMs: 60 * 60_000, matches: req => req.method === 'POST' && /^\/api\/daily-reports\/\d{4}-\d{2}-\d{2}\/send$/.test(req.path) },
   { name: 'user-mail-account', limit: 20, windowMs: 60 * 60_000, matches: req => req.path.startsWith('/api/user-mail-account') },
+  { name: 'caldav-manual-bridge', limit: 30, windowMs: 60_000, matches: req => req.path.startsWith('/api/integrations/caldav/') },
   { name: 'oauth-registration', limit: 20, windowMs: 60 * 60_000, matches: req => req.method === 'POST' && req.path === '/oauth/register' },
   { name: 'oauth-token', limit: 60, windowMs: 15 * 60_000, matches: req => req.method === 'POST' && req.path === '/oauth/token' },
   { name: 'oauth-authorization-login', limit: 20, windowMs: 15 * 60_000, matches: req => req.method === 'POST' && req.path === '/oauth/authorize/login' },

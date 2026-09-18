@@ -1,6 +1,6 @@
 # 荣耀 CalDAV 隔离 POC
 
-本目录只运行 Radicale 合成数据实验，不导入主应用、不读取 `data/`、不接入正式账号。研究结论与真机验收统一见 [研究记录](../../docs/CALDAV-HONOR-POC.md)。不要把本工具作为生产同步桥接使用。
+本目录运行 Radicale 合成数据实验，不读取正式 `data/`、不接入正式账号。基础协议测试不导入主应用；新增 `bridge_smoke.py` 仅在临时 DATA_DIR 启动主应用 fixture，验证真实 API 到本地 Radicale。研究结论与真机验收统一见 [研究记录](../../docs/CALDAV-HONOR-POC.md)。不要把本工具作为生产同步桥接使用。
 
 ## 运行与验证
 
@@ -11,6 +11,8 @@ python -m venv infra/caldav-poc/.venv
 $pocPython = 'infra/caldav-poc/.venv/Scripts/python.exe'
 & $pocPython -m pip install --index-url https://pypi.org/simple -r infra/caldav-poc/requirements.txt
 & $pocPython -X utf8 -m unittest discover -s infra/caldav-poc -p test_poc.py -v
+# 主应用桥接冒烟，需要现有 npm 依赖；全程回环合成数据
+& $pocPython -X utf8 infra/caldav-poc/bridge_smoke.py
 ```
 
 测试自动启动 loopback 服务，创建临时目录和随机凭据，完成后停止进程；留下的目录只含合成数据、密码哈希和允许字段日志。为保留失败证据，不自动删除。Windows 中文路径使用 `-X utf8`；不改全局编码。测试用低成本 bcrypt 仅用于临时随机凭据，正式 POC 账号由 `create_users.py` 使用默认成本生成。

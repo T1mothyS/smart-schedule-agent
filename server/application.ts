@@ -5,6 +5,7 @@ import { createAiImportsRouter } from './routes/ai-imports.js';
 import { createAiRouter } from './routes/ai.js';
 
 import { createSchedulesRouter } from './routes/schedules.js';
+import { createCaldavRouter } from './routes/caldav.js';
 import { createRemindersRouter } from './routes/reminders.js';
 import { createBackupsRouter } from './routes/backups.js';
 import { createReportsPublishRouter } from './routes/reports-publish.js';
@@ -129,6 +130,7 @@ app.use(createRemindersRouter({ authenticate }));
 app.use(createAiImportsRouter({ authenticate }));
 
 app.use(createSchedulesRouter({ authenticate }));
+app.use(createCaldavRouter({ authenticate }));
 
 if (isProduction) registerSpaFallback(app, path.resolve(__dirname, '../dist'));
 

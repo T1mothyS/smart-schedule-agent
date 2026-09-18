@@ -19,6 +19,7 @@
 | [UI 规范](UI-GUIDELINES.md) | 布局、主题、交互与响应式要求 | AUTHORITATIVE / LIVING |
 | [Cloud 日报](CHATGPT-WORK-CLOUD.md) | OAuth/MCP、内容、媒体和发布合同；末尾历史区单独标记 | CONTRACT |
 | [知识库](LIBRARY.md) | 只读呈现、发布/生命周期 API 与本地加工规则；批次记录仅为历史 | FEATURE / CONTRACT |
+| [CalDAV 单向桥接](CALDAV-BRIDGE.md) | 默认关闭的手动试点、字段边界、删除与恢复合同 | CONTRACT / LOCAL PILOT |
 | [路线图](ROADMAP.md) | 未来顺序；已完成条目不代替当前验证 | ROADMAP |
 
 ## 操作与验证
@@ -40,6 +41,7 @@
 | 文档 | 分类 | 不能用于 |
 |---|---|---|
 | [2026-09-05 Phase 1 审计](PHASE-1-AUDIT.md) | AUDIT-SNAPSHOT | 直接引用为当前文件规模/风险状态 |
+| [2026-09-18 荣耀 CalDAV 初测](CALDAV-HONOR-POC-TEST-REPORT-20260918.md) | USER-TEST-SNAPSHOT | 推断手机更新删除、实际提醒和后台可靠性已通过 |
 | [Settings V2 验证](SETTINGS-V2-VERIFICATION.md) | VERIFICATION-SNAPSHOT | 当前 HEAD 的浏览器验收 |
 | [Calendar Design QA](../design-qa.md) | VERIFICATION-SNAPSHOT | 推断当前左栏布局或当前已验证 |
 | [Cloud 历史运行](CHATGPT-WORK-CLOUD.md#cloud-run-history) | AUDIT / VERIFICATION-SNAPSHOT | 推断当前 Work 模式、生产版本或收件箱状态 |

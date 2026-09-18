@@ -44,6 +44,8 @@ flowchart TD
 
 主应用的四个数据库文件属于运行态数据，不能从生产机器回填到仓库。`dist/`、`dist-electron/`、`dist-desktop/` 和 `release/` 是构建/打包产物；源码、测试和文档属于提交边界。
 
+CalDAV 试点入口为 `server/routes/caldav.ts`，投影及持久同步状态在 `server/caldav-projection.ts`、`server/caldav-bridge.ts`；独立服务与合成测试在 `infra/caldav-poc/`。默认关闭、手动执行，不增加 worker，不由外部进程读主应用数据库。边界见 [CalDAV 合同](docs/CALDAV-BRIDGE.md)。
+
 ### 1.2 日报 V2 Local 流程
 
 ```mermaid

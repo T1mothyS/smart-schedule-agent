@@ -678,6 +678,8 @@ pm2 restart smart-schedule --update-env
 
 当用户量、附件量或并发明显增长后，再评估迁移到独立 PostgreSQL、对象存储直传和独立任务进程；当前阶段不需要提前增加这些维护成本。
 
+CalDAV 单向桥接目前为默认关闭的手动试点，无自动同步或设置页面；配置与受限能力见 [CalDAV 桥接合同](docs/CALDAV-BRIDGE.md)，手机验证见 [荣耀 POC](docs/CALDAV-HONOR-POC.md)。
+
 ## 16. License
 
 MIT
