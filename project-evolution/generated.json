@@ -1,0 +1,3487 @@
+{
+  "schemaVersion": 1,
+  "metricRules": "source-nonempty-v1",
+  "baseline": "e5e47af3c837507493f65ef03c852a552e536a6a",
+  "stages": [
+    "日历与提醒",
+    "个人效率",
+    "日报与信息",
+    "知识与云端",
+    "设备连接与可靠性"
+  ],
+  "milestones": [
+    {
+      "id": "baseline",
+      "stage": 0,
+      "title": "最早可追溯的应用基线",
+      "summary": "日历、AI 与提醒已在同一个应用中出现。这是现存历史的起点，不代表项目从这一天才开始。",
+      "engineering": "早期 package 版本为 1.0.0；保留原值，不与后续 0.x 版本作大小比较。",
+      "commit": "10da19132f1eecc967ee73b6308e79ea4d55acc5",
+      "evidencePaths": [
+        "server/index.ts",
+        "server/reminder-service.ts",
+        "server/email-service.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders"
+      ],
+      "snapshot": "foundation",
+      "tests": null
+    },
+    {
+      "id": "action-center",
+      "stage": 1,
+      "title": "从看日历到安排今天",
+      "summary": "行动中心把待办、周期事务和完成记录连在一起，并增加备份和 AI 导入。",
+      "engineering": "交付行动中心、提醒、备份与待确认 AI 导入流程。",
+      "commit": "357cc7b59fb788b2114598c87b1ac37322a455f9",
+      "evidencePaths": [
+        "server/index.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup"
+      ],
+      "snapshot": "productivity",
+      "tests": null
+    },
+    {
+      "id": "notifications",
+      "stage": 0,
+      "title": "让提醒按计划送达",
+      "summary": "通知调度成为独立环节，提醒开始有清晰的执行流程。",
+      "engineering": "新增通知调度；代码实现不等于邮件最终到达。",
+      "commit": "de0b66d9e1bd79decb683a75b13c5042c9fba38e",
+      "evidencePaths": [
+        "server/notification-scheduler.ts",
+        "server/notification-service.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications"
+      ],
+      "snapshot": "notifications",
+      "tests": null
+    },
+    {
+      "id": "daily-report",
+      "stage": 2,
+      "title": "每天的信息有了归处",
+      "summary": "个人日报进入应用，可以按日期回看，不再只是一次性的输出。",
+      "engineering": "新增私有日报发布与读取集成。",
+      "commit": "c30f8c68ea0aa1882f1069726013b78b7e9c0a12",
+      "evidencePaths": [
+        "server/daily-report-service.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report"
+      ],
+      "snapshot": "reports",
+      "tests": null
+    },
+    {
+      "id": "notes",
+      "stage": 1,
+      "title": "把临时想法留在身边",
+      "summary": "AI 记事与未完成事项摘要，让随手记录也进入日常工作流。",
+      "engineering": "增加账号级记事存储与积压摘要。",
+      "commit": "abcc1ad95be32070829c959e2fda984851ab73c7",
+      "evidencePaths": [
+        "server/note-item-service.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report",
+        "notes"
+      ],
+      "snapshot": "notes",
+      "tests": null
+    },
+    {
+      "id": "knowledge",
+      "stage": 3,
+      "title": "从零散记事到长期知识",
+      "summary": "知识库让文章和片段有了长期存放与阅读的位置。",
+      "engineering": "建立支持内容管理的 Knowledge Library MVP；下一阶段改为本地发布和网页只读。",
+      "commit": "defec014f8b4ff0d29230aa767513dd4fc3934c7",
+      "evidencePaths": [
+        "server/library-service.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report",
+        "notes",
+        "knowledge"
+      ],
+      "snapshot": "knowledge",
+      "tests": null
+    },
+    {
+      "id": "local-publishing",
+      "stage": 3,
+      "title": "知识整理与网页阅读分工",
+      "summary": "本地整理内容，再发布到应用阅读，知识维护与日常使用有了明确分工。",
+      "engineering": "知识库切换为本地 V2 发布与网页只读呈现。",
+      "commit": "3582ec139f236c7d2570565d3d268ddb9348f7ec",
+      "evidencePaths": [
+        "server/library-service.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report",
+        "notes",
+        "knowledge"
+      ],
+      "snapshot": "publishing",
+      "tests": null
+    },
+    {
+      "id": "cloud",
+      "stage": 3,
+      "title": "接入云端日报工作流",
+      "summary": "日报有了与本地并行的云端路径，应用成为统一接收和阅读入口。",
+      "engineering": "增加 Work Cloud、OAuth 与 MCP 日报链路；外部执行独立于应用。",
+      "commit": "e32325a15b10c4532c182e4fc60caa67daaf4fa2",
+      "evidencePaths": [
+        "server/daily-report-cloud-auth.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report",
+        "notes",
+        "knowledge",
+        "cloud"
+      ],
+      "snapshot": "cloud",
+      "tests": null
+    },
+    {
+      "id": "retrieval",
+      "stage": 3,
+      "title": "AI 可以找到已有知识",
+      "summary": "明确请求知识库内容时，AI 可以查找已保存资料，并保留回答来源。",
+      "engineering": "新增账号隔离的知识检索及来源保存；此后检索触发规则继续收紧。",
+      "commit": "35ff9a5488e15d3c001c23eb5eff49cd60b44c67",
+      "evidencePaths": [
+        "server/library-service.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report",
+        "notes",
+        "knowledge",
+        "cloud"
+      ],
+      "snapshot": "retrieval",
+      "tests": null
+    },
+    {
+      "id": "reliability",
+      "stage": 4,
+      "title": "让保存与恢复更可靠",
+      "summary": "关联操作和备份恢复增加保护，减少中途失败留下不一致数据的风险。",
+      "engineering": "原子文件替换、关联写入回滚、确认回执与恢复协议。",
+      "commit": "57b915bb215c265289bc17bccee35802a8df6adc",
+      "evidencePaths": [
+        "server/persistence.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report",
+        "notes",
+        "knowledge",
+        "cloud"
+      ],
+      "snapshot": "reliability",
+      "tests": null
+    },
+    {
+      "id": "boundaries",
+      "stage": 4,
+      "title": "系统职责逐渐清晰",
+      "summary": "功能增加后，服务、数据与界面逐步拆分，便于继续维护。",
+      "engineering": "领域路由、数据库兼容门面及样式拆分；是职责边界变化，不是新微服务。",
+      "commit": "d83990e8fe89a334cbbe4a2ab4c13b01bf4d3009",
+      "evidencePaths": [
+        "server/ai-history.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report",
+        "notes",
+        "knowledge",
+        "cloud"
+      ],
+      "snapshot": "boundaries",
+      "tests": {
+        "count": 205,
+        "evidence": "docs/PHASE5-DOMAIN-BOUNDARIES.md（该提交内的本地验证记录）"
+      }
+    },
+    {
+      "id": "tools",
+      "stage": 1,
+      "title": "给个人工具一个入口",
+      "summary": "已有网页工具可通过统一菜单打开，沿用应用登录保护。",
+      "engineering": "增加受保护工具目录、清单接口和页面会话门禁。",
+      "commit": "010a2b3415eb8db9c37af7ff92882656e4505bb9",
+      "evidencePaths": [
+        "server/protected-tools.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report",
+        "notes",
+        "knowledge",
+        "cloud",
+        "tools"
+      ],
+      "snapshot": "tools",
+      "tests": null
+    },
+    {
+      "id": "caldav-pilot",
+      "stage": 4,
+      "title": "开始连接设备日历",
+      "summary": "日程可通过受控的单向桥接投影到 CalDAV，先从手动试点开始。",
+      "engineering": "只操作桥接映射内资源；协议成功不能代替真机提醒验收。",
+      "commit": "cc8e9c513951e560066c436a4a90eae8ba71f27e",
+      "evidencePaths": [
+        "server/caldav-bridge.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report",
+        "notes",
+        "knowledge",
+        "cloud",
+        "tools",
+        "caldav"
+      ],
+      "snapshot": "caldav",
+      "tests": null
+    },
+    {
+      "id": "caldav-automation",
+      "stage": 4,
+      "title": "设备同步有了受控自动化",
+      "summary": "同步范围扩展，并加入自动化控制和备份恢复互斥保护。",
+      "engineering": "共享 CalDAV 服务与控制状态；自动同步需显式启用和验收。",
+      "commit": "e1b4e9905b674a99dbfe777b6e606263e1b02d4f",
+      "evidencePaths": [
+        "server/caldav-service.ts"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report",
+        "notes",
+        "knowledge",
+        "cloud",
+        "tools",
+        "caldav"
+      ],
+      "snapshot": "automation",
+      "tests": null
+    },
+    {
+      "id": "current-baseline",
+      "stage": 4,
+      "title": "继续打磨正确性与诊断",
+      "summary": "完善日期校验、邮件依赖和日报媒体诊断，让失败更容易看清。",
+      "engineering": "当前收录基线；结合最新源码核对 CalDAV 全量范围和完成记录策略。",
+      "commit": "e5e47af3c837507493f65ef03c852a552e536a6a",
+      "evidencePaths": [
+        "docs/FORMAT-SECURITY-REPAIR-20260919.md"
+      ],
+      "featureAreas": [
+        "calendar",
+        "ai",
+        "reminders",
+        "todo",
+        "backup",
+        "notifications",
+        "daily-report",
+        "notes",
+        "knowledge",
+        "cloud",
+        "tools",
+        "caldav"
+      ],
+      "snapshot": "current",
+      "tests": {
+        "count": 249,
+        "evidence": "docs/FORMAT-SECURITY-REPAIR-20260919.md（本地 npm test，不含外部项目）"
+      }
+    }
+  ],
+  "snapshots": [
+    {
+      "id": "foundation",
+      "milestone": "baseline",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "Express 处理身份、日历与业务请求。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "日程、提醒和账号等持久化数据。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "notify",
+          "label": "周期提醒",
+          "group": "server",
+          "description": "已有周期提醒领取、邮件投递和结果记录，后续扩展统一通知调度。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "productivity",
+      "milestone": "action-center",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "Express 处理身份、日历与业务请求。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "日程、提醒和账号等持久化数据。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "周期提醒",
+          "group": "server",
+          "description": "已有周期提醒领取、邮件投递和结果记录，后续扩展统一通知调度。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "notifications",
+      "milestone": "notifications",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "Express 处理身份、日历与业务请求。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "日程、提醒和账号等持久化数据。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "reports",
+      "milestone": "daily-report",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "Express 处理身份、日历与业务请求。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "日程、提醒和账号等持久化数据。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "notes",
+      "milestone": "notes",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "Express 处理身份、日历与业务请求。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "日程、提醒和账号等持久化数据。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        },
+        {
+          "id": "notes",
+          "label": "AI 记事",
+          "group": "server",
+          "description": "保存账号内的临时记录与摘要。",
+          "x": 300,
+          "y": 495
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--notes",
+          "source": "api",
+          "target": "notes",
+          "label": ""
+        },
+        {
+          "id": "notes--stores",
+          "source": "notes",
+          "target": "stores",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "knowledge",
+      "milestone": "knowledge",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "Express 处理身份、日历与业务请求。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "日程、提醒和账号等持久化数据。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        },
+        {
+          "id": "notes",
+          "label": "AI 记事",
+          "group": "server",
+          "description": "保存账号内的临时记录与摘要。",
+          "x": 300,
+          "y": 495
+        },
+        {
+          "id": "library",
+          "label": "知识库",
+          "group": "server",
+          "description": "文章与片段的存储、编辑、管理和阅读。",
+          "x": 300,
+          "y": 605
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--notes",
+          "source": "api",
+          "target": "notes",
+          "label": ""
+        },
+        {
+          "id": "notes--stores",
+          "source": "notes",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--library",
+          "source": "api",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "library--stores",
+          "source": "library",
+          "target": "stores",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "publishing",
+      "milestone": "local-publishing",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "Express 处理身份、日历与业务请求。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "日程、提醒和账号等持久化数据。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        },
+        {
+          "id": "notes",
+          "label": "AI 记事",
+          "group": "server",
+          "description": "保存账号内的临时记录与摘要。",
+          "x": 300,
+          "y": 495
+        },
+        {
+          "id": "library",
+          "label": "知识库",
+          "group": "server",
+          "description": "本地整理后发布，网页只读呈现文章与片段，保留评论和导出。",
+          "x": 300,
+          "y": 605
+        },
+        {
+          "id": "authoring",
+          "label": "本地知识整理",
+          "group": "external",
+          "description": "独立本地流程整理并发布知识。",
+          "x": 860,
+          "y": 385
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--notes",
+          "source": "api",
+          "target": "notes",
+          "label": ""
+        },
+        {
+          "id": "notes--stores",
+          "source": "notes",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--library",
+          "source": "api",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "library--stores",
+          "source": "library",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "authoring--library",
+          "source": "authoring",
+          "target": "library",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "cloud",
+      "milestone": "cloud",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "Express 处理身份、日历与业务请求。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "日程、提醒和账号等持久化数据。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        },
+        {
+          "id": "notes",
+          "label": "AI 记事",
+          "group": "server",
+          "description": "保存账号内的临时记录与摘要。",
+          "x": 300,
+          "y": 495
+        },
+        {
+          "id": "library",
+          "label": "知识库",
+          "group": "server",
+          "description": "本地整理后发布，网页只读呈现文章与片段，保留评论和导出。",
+          "x": 300,
+          "y": 605
+        },
+        {
+          "id": "authoring",
+          "label": "本地知识整理",
+          "group": "external",
+          "description": "独立本地流程整理并发布知识。",
+          "x": 860,
+          "y": 385
+        },
+        {
+          "id": "cloud",
+          "label": "Cloud / MCP",
+          "group": "external",
+          "description": "通过 OAuth 与 MCP 接入云端日报流程。",
+          "x": 860,
+          "y": 495
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--notes",
+          "source": "api",
+          "target": "notes",
+          "label": ""
+        },
+        {
+          "id": "notes--stores",
+          "source": "notes",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--library",
+          "source": "api",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "library--stores",
+          "source": "library",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "authoring--library",
+          "source": "authoring",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "cloud--report",
+          "source": "cloud",
+          "target": "report",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "retrieval",
+      "milestone": "retrieval",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "Express 处理身份、日历与业务请求。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "日程、提醒和账号等持久化数据。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        },
+        {
+          "id": "notes",
+          "label": "AI 记事",
+          "group": "server",
+          "description": "保存账号内的临时记录与摘要。",
+          "x": 300,
+          "y": 495
+        },
+        {
+          "id": "library",
+          "label": "知识库",
+          "group": "server",
+          "description": "本地整理后发布，网页只读呈现文章与片段，保留评论和导出。",
+          "x": 300,
+          "y": 605
+        },
+        {
+          "id": "authoring",
+          "label": "本地知识整理",
+          "group": "external",
+          "description": "独立本地流程整理并发布知识。",
+          "x": 860,
+          "y": 385
+        },
+        {
+          "id": "cloud",
+          "label": "Cloud / MCP",
+          "group": "external",
+          "description": "通过 OAuth 与 MCP 接入云端日报流程。",
+          "x": 860,
+          "y": 495
+        },
+        {
+          "id": "retrieval",
+          "label": "知识检索",
+          "group": "server",
+          "description": "在当前账号范围检索并保留来源。",
+          "x": 300,
+          "y": 715
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--notes",
+          "source": "api",
+          "target": "notes",
+          "label": ""
+        },
+        {
+          "id": "notes--stores",
+          "source": "notes",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--library",
+          "source": "api",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "library--stores",
+          "source": "library",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "authoring--library",
+          "source": "authoring",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "cloud--report",
+          "source": "cloud",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--retrieval",
+          "source": "api",
+          "target": "retrieval",
+          "label": ""
+        },
+        {
+          "id": "retrieval--library",
+          "source": "retrieval",
+          "target": "library",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "reliability",
+      "milestone": "reliability",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "Express 处理身份、日历与业务请求。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "多库关联写入、原子替换与中断恢复；数据保持账号隔离。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        },
+        {
+          "id": "notes",
+          "label": "AI 记事",
+          "group": "server",
+          "description": "保存账号内的临时记录与摘要。",
+          "x": 300,
+          "y": 495
+        },
+        {
+          "id": "library",
+          "label": "知识库",
+          "group": "server",
+          "description": "本地整理后发布，网页只读呈现文章与片段，保留评论和导出。",
+          "x": 300,
+          "y": 605
+        },
+        {
+          "id": "authoring",
+          "label": "本地知识整理",
+          "group": "external",
+          "description": "独立本地流程整理并发布知识。",
+          "x": 860,
+          "y": 385
+        },
+        {
+          "id": "cloud",
+          "label": "Cloud / MCP",
+          "group": "external",
+          "description": "通过 OAuth 与 MCP 接入云端日报流程。",
+          "x": 860,
+          "y": 495
+        },
+        {
+          "id": "retrieval",
+          "label": "知识检索",
+          "group": "server",
+          "description": "在当前账号范围检索并保留来源。",
+          "x": 300,
+          "y": 715
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--notes",
+          "source": "api",
+          "target": "notes",
+          "label": ""
+        },
+        {
+          "id": "notes--stores",
+          "source": "notes",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--library",
+          "source": "api",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "library--stores",
+          "source": "library",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "authoring--library",
+          "source": "authoring",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "cloud--report",
+          "source": "cloud",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--retrieval",
+          "source": "api",
+          "target": "retrieval",
+          "label": ""
+        },
+        {
+          "id": "retrieval--library",
+          "source": "retrieval",
+          "target": "library",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "boundaries",
+      "milestone": "boundaries",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "应用工厂、显式运行时及领域路由；仍为单个应用进程。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "多库关联写入、原子替换与中断恢复；数据保持账号隔离。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        },
+        {
+          "id": "notes",
+          "label": "AI 记事",
+          "group": "server",
+          "description": "保存账号内的临时记录与摘要。",
+          "x": 300,
+          "y": 495
+        },
+        {
+          "id": "library",
+          "label": "知识库",
+          "group": "server",
+          "description": "本地整理后发布，网页只读呈现文章与片段，保留评论和导出。",
+          "x": 300,
+          "y": 605
+        },
+        {
+          "id": "authoring",
+          "label": "本地知识整理",
+          "group": "external",
+          "description": "独立本地流程整理并发布知识。",
+          "x": 860,
+          "y": 385
+        },
+        {
+          "id": "cloud",
+          "label": "Cloud / MCP",
+          "group": "external",
+          "description": "通过 OAuth 与 MCP 接入云端日报流程。",
+          "x": 860,
+          "y": 495
+        },
+        {
+          "id": "retrieval",
+          "label": "知识检索",
+          "group": "server",
+          "description": "在当前账号范围检索并保留来源。",
+          "x": 300,
+          "y": 715
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--notes",
+          "source": "api",
+          "target": "notes",
+          "label": ""
+        },
+        {
+          "id": "notes--stores",
+          "source": "notes",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--library",
+          "source": "api",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "library--stores",
+          "source": "library",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "authoring--library",
+          "source": "authoring",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "cloud--report",
+          "source": "cloud",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--retrieval",
+          "source": "api",
+          "target": "retrieval",
+          "label": ""
+        },
+        {
+          "id": "retrieval--library",
+          "source": "retrieval",
+          "target": "library",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "tools",
+      "milestone": "tools",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "应用工厂、显式运行时及领域路由；仍为单个应用进程。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "多库关联写入、原子替换与中断恢复；数据保持账号隔离。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        },
+        {
+          "id": "notes",
+          "label": "AI 记事",
+          "group": "server",
+          "description": "保存账号内的临时记录与摘要。",
+          "x": 300,
+          "y": 495
+        },
+        {
+          "id": "library",
+          "label": "知识库",
+          "group": "server",
+          "description": "本地整理后发布，网页只读呈现文章与片段，保留评论和导出。",
+          "x": 300,
+          "y": 605
+        },
+        {
+          "id": "authoring",
+          "label": "本地知识整理",
+          "group": "external",
+          "description": "独立本地流程整理并发布知识。",
+          "x": 860,
+          "y": 385
+        },
+        {
+          "id": "cloud",
+          "label": "Cloud / MCP",
+          "group": "external",
+          "description": "通过 OAuth 与 MCP 接入云端日报流程。",
+          "x": 860,
+          "y": 495
+        },
+        {
+          "id": "retrieval",
+          "label": "知识检索",
+          "group": "server",
+          "description": "在当前账号范围检索并保留来源。",
+          "x": 300,
+          "y": 715
+        },
+        {
+          "id": "tools",
+          "label": "挂载工具",
+          "group": "client",
+          "description": "同域受保护的独立网页工具。",
+          "x": 25,
+          "y": 165
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--notes",
+          "source": "api",
+          "target": "notes",
+          "label": ""
+        },
+        {
+          "id": "notes--stores",
+          "source": "notes",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--library",
+          "source": "api",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "library--stores",
+          "source": "library",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "authoring--library",
+          "source": "authoring",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "cloud--report",
+          "source": "cloud",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--retrieval",
+          "source": "api",
+          "target": "retrieval",
+          "label": ""
+        },
+        {
+          "id": "retrieval--library",
+          "source": "retrieval",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "web--tools",
+          "source": "web",
+          "target": "tools",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "caldav",
+      "milestone": "caldav-pilot",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "应用工厂、显式运行时及领域路由；仍为单个应用进程。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "多库关联写入、原子替换与中断恢复；数据保持账号隔离。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        },
+        {
+          "id": "notes",
+          "label": "AI 记事",
+          "group": "server",
+          "description": "保存账号内的临时记录与摘要。",
+          "x": 300,
+          "y": 495
+        },
+        {
+          "id": "library",
+          "label": "知识库",
+          "group": "server",
+          "description": "本地整理后发布，网页只读呈现文章与片段，保留评论和导出。",
+          "x": 300,
+          "y": 605
+        },
+        {
+          "id": "authoring",
+          "label": "本地知识整理",
+          "group": "external",
+          "description": "独立本地流程整理并发布知识。",
+          "x": 860,
+          "y": 385
+        },
+        {
+          "id": "cloud",
+          "label": "Cloud / MCP",
+          "group": "external",
+          "description": "通过 OAuth 与 MCP 接入云端日报流程。",
+          "x": 860,
+          "y": 495
+        },
+        {
+          "id": "retrieval",
+          "label": "知识检索",
+          "group": "server",
+          "description": "在当前账号范围检索并保留来源。",
+          "x": 300,
+          "y": 715
+        },
+        {
+          "id": "tools",
+          "label": "挂载工具",
+          "group": "client",
+          "description": "同域受保护的独立网页工具。",
+          "x": 25,
+          "y": 165
+        },
+        {
+          "id": "bridge",
+          "label": "CalDAV 桥接",
+          "group": "server",
+          "description": "受控单向投影，不回写源日历。",
+          "x": 300,
+          "y": 825
+        },
+        {
+          "id": "caldav",
+          "label": "CalDAV / 设备",
+          "group": "external",
+          "description": "独立日历服务和设备客户端；真机行为单独验证。",
+          "x": 860,
+          "y": 605
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--notes",
+          "source": "api",
+          "target": "notes",
+          "label": ""
+        },
+        {
+          "id": "notes--stores",
+          "source": "notes",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--library",
+          "source": "api",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "library--stores",
+          "source": "library",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "authoring--library",
+          "source": "authoring",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "cloud--report",
+          "source": "cloud",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--retrieval",
+          "source": "api",
+          "target": "retrieval",
+          "label": ""
+        },
+        {
+          "id": "retrieval--library",
+          "source": "retrieval",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "web--tools",
+          "source": "web",
+          "target": "tools",
+          "label": ""
+        },
+        {
+          "id": "api--bridge",
+          "source": "api",
+          "target": "bridge",
+          "label": ""
+        },
+        {
+          "id": "bridge--stores",
+          "source": "bridge",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "bridge--caldav",
+          "source": "bridge",
+          "target": "caldav",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "automation",
+      "milestone": "caldav-automation",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "应用工厂、显式运行时及领域路由；仍为单个应用进程。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "多库关联写入、原子替换与中断恢复；数据保持账号隔离。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        },
+        {
+          "id": "notes",
+          "label": "AI 记事",
+          "group": "server",
+          "description": "保存账号内的临时记录与摘要。",
+          "x": 300,
+          "y": 495
+        },
+        {
+          "id": "library",
+          "label": "知识库",
+          "group": "server",
+          "description": "本地整理后发布，网页只读呈现文章与片段，保留评论和导出。",
+          "x": 300,
+          "y": 605
+        },
+        {
+          "id": "authoring",
+          "label": "本地知识整理",
+          "group": "external",
+          "description": "独立本地流程整理并发布知识。",
+          "x": 860,
+          "y": 385
+        },
+        {
+          "id": "cloud",
+          "label": "Cloud / MCP",
+          "group": "external",
+          "description": "通过 OAuth 与 MCP 接入云端日报流程。",
+          "x": 860,
+          "y": 495
+        },
+        {
+          "id": "retrieval",
+          "label": "知识检索",
+          "group": "server",
+          "description": "在当前账号范围检索并保留来源。",
+          "x": 300,
+          "y": 715
+        },
+        {
+          "id": "tools",
+          "label": "挂载工具",
+          "group": "client",
+          "description": "同域受保护的独立网页工具。",
+          "x": 25,
+          "y": 165
+        },
+        {
+          "id": "bridge",
+          "label": "CalDAV 桥接",
+          "group": "server",
+          "description": "共享手动/后台服务、全量范围、控制状态及备份恢复互斥；自动化需显式启用。",
+          "x": 300,
+          "y": 825
+        },
+        {
+          "id": "caldav",
+          "label": "CalDAV / 设备",
+          "group": "external",
+          "description": "独立日历服务和设备客户端；真机行为单独验证。",
+          "x": 860,
+          "y": 605
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--notes",
+          "source": "api",
+          "target": "notes",
+          "label": ""
+        },
+        {
+          "id": "notes--stores",
+          "source": "notes",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--library",
+          "source": "api",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "library--stores",
+          "source": "library",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "authoring--library",
+          "source": "authoring",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "cloud--report",
+          "source": "cloud",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--retrieval",
+          "source": "api",
+          "target": "retrieval",
+          "label": ""
+        },
+        {
+          "id": "retrieval--library",
+          "source": "retrieval",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "web--tools",
+          "source": "web",
+          "target": "tools",
+          "label": ""
+        },
+        {
+          "id": "api--bridge",
+          "source": "api",
+          "target": "bridge",
+          "label": ""
+        },
+        {
+          "id": "bridge--stores",
+          "source": "bridge",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "bridge--caldav",
+          "source": "bridge",
+          "target": "caldav",
+          "label": ""
+        }
+      ]
+    },
+    {
+      "id": "current",
+      "milestone": "current-baseline",
+      "nodes": [
+        {
+          "id": "web",
+          "label": "Web / 桌面入口",
+          "group": "client",
+          "description": "React 页面与 Electron 壳提供访问入口。",
+          "x": 25,
+          "y": 55
+        },
+        {
+          "id": "api",
+          "label": "应用服务",
+          "group": "server",
+          "description": "应用工厂、显式运行时及领域路由；仍为单个应用进程。",
+          "x": 300,
+          "y": 55
+        },
+        {
+          "id": "stores",
+          "label": "业务数据库",
+          "group": "data",
+          "description": "多库关联写入、原子替换与中断恢复；数据保持账号隔离。",
+          "x": 580,
+          "y": 55
+        },
+        {
+          "id": "ai",
+          "label": "AI 服务",
+          "group": "external",
+          "description": "外部模型辅助理解与草稿生成。",
+          "x": 860,
+          "y": 55
+        },
+        {
+          "id": "actions",
+          "label": "行动与备份",
+          "group": "server",
+          "description": "待办、完成和备份等个人效率流程。",
+          "x": 300,
+          "y": 165
+        },
+        {
+          "id": "notify",
+          "label": "通知调度",
+          "group": "server",
+          "description": "扫描、排队并投递提醒。",
+          "x": 300,
+          "y": 275
+        },
+        {
+          "id": "mail",
+          "label": "邮件服务",
+          "group": "external",
+          "description": "外部 SMTP 等邮件边界。",
+          "x": 860,
+          "y": 165
+        },
+        {
+          "id": "report",
+          "label": "日报服务",
+          "group": "server",
+          "description": "接收、保存并呈现个人日报。",
+          "x": 300,
+          "y": 385
+        },
+        {
+          "id": "local-report",
+          "label": "本地日报 V2",
+          "group": "external",
+          "description": "独立项目采集、校验并发布日报。",
+          "x": 860,
+          "y": 275
+        },
+        {
+          "id": "notes",
+          "label": "AI 记事",
+          "group": "server",
+          "description": "保存账号内的临时记录与摘要。",
+          "x": 300,
+          "y": 495
+        },
+        {
+          "id": "library",
+          "label": "知识库",
+          "group": "server",
+          "description": "本地整理后发布，网页只读呈现文章与片段，保留评论和导出。",
+          "x": 300,
+          "y": 605
+        },
+        {
+          "id": "authoring",
+          "label": "本地知识整理",
+          "group": "external",
+          "description": "独立本地流程整理并发布知识。",
+          "x": 860,
+          "y": 385
+        },
+        {
+          "id": "cloud",
+          "label": "Cloud / MCP",
+          "group": "external",
+          "description": "通过 OAuth 与 MCP 接入云端日报流程。",
+          "x": 860,
+          "y": 495
+        },
+        {
+          "id": "retrieval",
+          "label": "知识检索",
+          "group": "server",
+          "description": "在当前账号范围检索并保留来源。",
+          "x": 300,
+          "y": 715
+        },
+        {
+          "id": "tools",
+          "label": "挂载工具",
+          "group": "client",
+          "description": "同域受保护的独立网页工具。",
+          "x": 25,
+          "y": 165
+        },
+        {
+          "id": "bridge",
+          "label": "CalDAV 桥接",
+          "group": "server",
+          "description": "全量投影日程、已排期待办和已存周期；保留完成记录，派生副本归并，自动化受控。",
+          "x": 300,
+          "y": 825
+        },
+        {
+          "id": "caldav",
+          "label": "CalDAV / 设备",
+          "group": "external",
+          "description": "独立日历服务和设备客户端；真机行为单独验证。",
+          "x": 860,
+          "y": 605
+        }
+      ],
+      "edges": [
+        {
+          "id": "web--api",
+          "source": "web",
+          "target": "api",
+          "label": ""
+        },
+        {
+          "id": "api--stores",
+          "source": "api",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--ai",
+          "source": "api",
+          "target": "ai",
+          "label": ""
+        },
+        {
+          "id": "api--actions",
+          "source": "api",
+          "target": "actions",
+          "label": ""
+        },
+        {
+          "id": "actions--stores",
+          "source": "actions",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--notify",
+          "source": "api",
+          "target": "notify",
+          "label": ""
+        },
+        {
+          "id": "notify--mail",
+          "source": "notify",
+          "target": "mail",
+          "label": ""
+        },
+        {
+          "id": "local-report--report",
+          "source": "local-report",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "report--stores",
+          "source": "report",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--report",
+          "source": "api",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--notes",
+          "source": "api",
+          "target": "notes",
+          "label": ""
+        },
+        {
+          "id": "notes--stores",
+          "source": "notes",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "api--library",
+          "source": "api",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "library--stores",
+          "source": "library",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "authoring--library",
+          "source": "authoring",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "cloud--report",
+          "source": "cloud",
+          "target": "report",
+          "label": ""
+        },
+        {
+          "id": "api--retrieval",
+          "source": "api",
+          "target": "retrieval",
+          "label": ""
+        },
+        {
+          "id": "retrieval--library",
+          "source": "retrieval",
+          "target": "library",
+          "label": ""
+        },
+        {
+          "id": "web--tools",
+          "source": "web",
+          "target": "tools",
+          "label": ""
+        },
+        {
+          "id": "api--bridge",
+          "source": "api",
+          "target": "bridge",
+          "label": ""
+        },
+        {
+          "id": "bridge--stores",
+          "source": "bridge",
+          "target": "stores",
+          "label": ""
+        },
+        {
+          "id": "bridge--caldav",
+          "source": "bridge",
+          "target": "caldav",
+          "label": ""
+        }
+      ]
+    }
+  ],
+  "facts": [
+    {
+      "id": "baseline",
+      "commit": "10da19132f1eecc967ee73b6308e79ea4d55acc5",
+      "date": "2026-07-15T20:08:27+08:00",
+      "version": "1.0.0",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 61,
+      "sourceLoc": 13528,
+      "commitsTotal": 1
+    },
+    {
+      "id": "action-center",
+      "commit": "357cc7b59fb788b2114598c87b1ac37322a455f9",
+      "date": "2026-07-15T21:40:07+08:00",
+      "version": "1.0.0",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 71,
+      "sourceLoc": 16654,
+      "commitsTotal": 2
+    },
+    {
+      "id": "notifications",
+      "commit": "de0b66d9e1bd79decb683a75b13c5042c9fba38e",
+      "date": "2026-08-27T19:56:54+08:00",
+      "version": "0.1.0-260827.1902",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 102,
+      "sourceLoc": 20367,
+      "commitsTotal": 38
+    },
+    {
+      "id": "daily-report",
+      "commit": "c30f8c68ea0aa1882f1069726013b78b7e9c0a12",
+      "date": "2026-08-30T17:15:20+08:00",
+      "version": "0.2.0-260827.2216",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 112,
+      "sourceLoc": 22668,
+      "commitsTotal": 42
+    },
+    {
+      "id": "notes",
+      "commit": "abcc1ad95be32070829c959e2fda984851ab73c7",
+      "date": "2026-09-02T22:01:34+08:00",
+      "version": "0.10.0-260902.2153",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 123,
+      "sourceLoc": 26375,
+      "commitsTotal": 53
+    },
+    {
+      "id": "knowledge",
+      "commit": "defec014f8b4ff0d29230aa767513dd4fc3934c7",
+      "date": "2026-09-05T19:16:40+08:00",
+      "version": "0.13.0-260905.1857",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 159,
+      "sourceLoc": 29207,
+      "commitsTotal": 64
+    },
+    {
+      "id": "local-publishing",
+      "commit": "3582ec139f236c7d2570565d3d268ddb9348f7ec",
+      "date": "2026-09-06T14:10:18+08:00",
+      "version": "0.14.0-260906.1358",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 159,
+      "sourceLoc": 28978,
+      "commitsTotal": 65
+    },
+    {
+      "id": "cloud",
+      "commit": "e32325a15b10c4532c182e4fc60caa67daaf4fa2",
+      "date": "2026-09-09T15:37:35+08:00",
+      "version": "0.17.0-260909.1309",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 175,
+      "sourceLoc": 33216,
+      "commitsTotal": 76
+    },
+    {
+      "id": "retrieval",
+      "commit": "35ff9a5488e15d3c001c23eb5eff49cd60b44c67",
+      "date": "2026-09-12T19:13:23+08:00",
+      "version": "0.20.0-260912.1904",
+      "tags": [
+        "V0.20.0-260912.1904"
+      ],
+      "warnings": [],
+      "trackedFiles": 180,
+      "sourceLoc": 35358,
+      "commitsTotal": 87
+    },
+    {
+      "id": "reliability",
+      "commit": "57b915bb215c265289bc17bccee35802a8df6adc",
+      "date": "2026-09-15T19:25:11+08:00",
+      "version": "0.21.2-260915.1915",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 221,
+      "sourceLoc": 39933,
+      "commitsTotal": 113
+    },
+    {
+      "id": "boundaries",
+      "commit": "d83990e8fe89a334cbbe4a2ab4c13b01bf4d3009",
+      "date": "2026-09-16T07:35:15+08:00",
+      "version": "0.21.4-260916.0715",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 291,
+      "sourceLoc": 40863,
+      "commitsTotal": 124
+    },
+    {
+      "id": "tools",
+      "commit": "010a2b3415eb8db9c37af7ff92882656e4505bb9",
+      "date": "2026-09-17T21:12:45+08:00",
+      "version": "0.22.0-260917.2044",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 302,
+      "sourceLoc": 41972,
+      "commitsTotal": 128
+    },
+    {
+      "id": "caldav-pilot",
+      "commit": "cc8e9c513951e560066c436a4a90eae8ba71f27e",
+      "date": "2026-09-18T22:05:03+08:00",
+      "version": "0.23.0-260918.2200",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 327,
+      "sourceLoc": 42466,
+      "commitsTotal": 132
+    },
+    {
+      "id": "caldav-automation",
+      "commit": "e1b4e9905b674a99dbfe777b6e606263e1b02d4f",
+      "date": "2026-09-19T06:34:05+08:00",
+      "version": "0.24.0-260919.0620",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 331,
+      "sourceLoc": 42988,
+      "commitsTotal": 139
+    },
+    {
+      "id": "current-baseline",
+      "commit": "e5e47af3c837507493f65ef03c852a552e536a6a",
+      "date": "2026-09-19T17:32:42+08:00",
+      "version": "0.27.2-260919.1711",
+      "tags": [],
+      "warnings": [],
+      "trackedFiles": 342,
+      "sourceLoc": 43607,
+      "commitsTotal": 145
+    }
+  ]
+}

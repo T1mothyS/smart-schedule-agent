@@ -1,8 +1,10 @@
 # AI Calendar Test Matrix
 
+项目成长：运行 `server/project-evolution.test.ts`、`npm run evolution:history` 和 `scripts/project-evolution-browser-smoke.cjs`。覆盖模型与历史真实性、认证、架构差异、顶部入口、四尺寸明暗主题及深链接；浏览器使用合成 API，真实认证由独立 HTTP 测试覆盖，均不等同生产验收。详情见 [维护说明](../project-evolution/README.md)。
+
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: Tools 挂载应用实现 checkpoint / `0.22.0-260917.2044`（2026-09-17，本地源码核对）。
+- Last verified commit/version: 项目成长与顶部入口 / `0.28.0-260919.2218`（2026-09-19，本地回归；其他领域以各节证据为准）。
 - CalDAV 补充验证：2026-09-18，隔离 POC 与主应用回归；仅覆盖下述独立入口，真机尚未验证。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。

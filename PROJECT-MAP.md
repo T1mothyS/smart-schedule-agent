@@ -101,6 +101,8 @@ flowchart LR
 
 ## 4. 任务路由与源码入口
 
+项目成长展示与维护从 [project-evolution/README.md](project-evolution/README.md) 进入：`/project` 为登录后只读页面，服务端 JSON 为构建外资源，账号共享项目事实，不读取个人日程、邮件或知识内容。Tools 与项目成长均在设置顶部提供快捷入口。
+
 | 任务 | 首先查看 | 不应越过的边界 |
 | --- | --- | --- |
 | 日记/记事板 UI、快捷键、导出 | `src/components/NoteBoard.tsx`、`src/components/AiSchedulePanel.tsx`、`src/utils/note-export.ts` | 不让 LLM 负责布局；导出在前端确定性生成 |

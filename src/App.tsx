@@ -17,6 +17,7 @@ const DailyReportsPage = lazy(() => import('./components/DailyReportsPage').then
 const DailyReportReaderPage = lazy(() => import('./components/DailyReportsPage').then(module => ({ default: module.DailyReportReaderPage })));
 const LibraryPage = lazy(() => import('./components/LibraryPage').then(module => ({ default: module.LibraryPage })));
 const ToolsPage = lazy(() => import('./pages/ToolsPage').then(module => ({ default: module.ToolsPage })));
+const ProjectEvolutionPage = lazy(() => import('./pages/ProjectEvolutionPage').then(module => ({ default: module.ProjectEvolutionPage })));
 
 function App() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -37,7 +38,9 @@ function App() {
       if (settingsDialog) {
         document.title = 'AI Calendar - 设置 / Settings';
       } else {
-        document.title = 'AI Calendar - 首页 / Home';
+        document.title = /^\/project\/?$/.test(location.pathname)
+          ? 'AI Calendar - 项目成长'
+          : /^\/tools\/?$/.test(location.pathname) ? 'AI Calendar - Tools' : 'AI Calendar - 首页 / Home';
       }
     }
   }, [isAuthenticated, isLoading, location.pathname]);
@@ -72,6 +75,7 @@ function App() {
           <Route path="/library" element={<AppContent />} />
           <Route path="/library/:id" element={<AppContent />} />
           <Route path="/tools" element={<AppContent />} />
+          <Route path="/project" element={<AppContent />} />
           <Route path="*" element={<Navigate to="/today" replace />} />
         </>
       )}
@@ -88,8 +92,9 @@ function AppContent() {
   const location = useLocation();
   const navigate = useNavigate();
   const isToolsPage = location.pathname === '/tools' || location.pathname === '/tools/';
+  const isProjectPage = location.pathname === '/project' || location.pathname === '/project/';
   const isLibraryReader = /^\/library\/[^/]+\/?$/.test(location.pathname);
-  const activeSection: 'today' | 'schedule' | 'assistant' | 'reminders' | 'reports' | 'library' | null = isToolsPage ? null : location.pathname.startsWith('/reports') ? 'reports' : location.pathname.startsWith('/library') ? 'library' : location.pathname === '/schedule' ? 'schedule' : location.pathname === '/assistant' ? 'assistant' : location.pathname === '/reminders' ? 'reminders' : 'today';
+  const activeSection: 'today' | 'schedule' | 'assistant' | 'reminders' | 'reports' | 'library' | null = isToolsPage || isProjectPage ? null : location.pathname.startsWith('/reports') ? 'reports' : location.pathname.startsWith('/library') ? 'library' : location.pathname === '/schedule' ? 'schedule' : location.pathname === '/assistant' ? 'assistant' : location.pathname === '/reminders' ? 'reminders' : 'today';
   const changeSection = (section: 'today' | 'schedule' | 'assistant' | 'reminders' | 'reports' | 'library') => navigate(section === 'schedule' ? '/schedule' : section === 'assistant' ? '/assistant' : section === 'reminders' ? '/reminders' : section === 'reports' ? '/reports' : section === 'library' ? '/library' : '/today');
 
   // 设置弹窗打开/关闭时更新 Tab 标题
@@ -99,9 +104,9 @@ function AppContent() {
       : showAdmin
       ? 'AI Calendar - 管理面板 / Admin'
       : activeSection === null
-      ? 'AI Calendar - Tools'
+      ? isProjectPage ? 'AI Calendar - 项目成长' : 'AI Calendar - Tools'
       : 'AI Calendar - 首页 / Home';
-  }, [activeSection, showSettings, showAdmin]);
+  }, [activeSection, showSettings, showAdmin, isProjectPage]);
 
   return (
     <>
@@ -116,8 +121,8 @@ function AppContent() {
         user={user}
         onLogout={logout}
       >
-        <FeatureBoundary key={activeSection === 'library' ? location.pathname : activeSection ?? 'tools'} navigation={isLibraryReader ? <Link className="feature-reader-back" to="/library">← 返回</Link> : undefined}>
-        {activeSection === null ? <ToolsPage /> : activeSection === 'today' ? <ActionCenterPage /> : activeSection === 'schedule' ? (
+        <FeatureBoundary key={activeSection === 'library' ? location.pathname : activeSection ?? (isProjectPage ? 'project' : 'tools')} navigation={isLibraryReader ? <Link className="feature-reader-back" to="/library">← 返回</Link> : undefined}>
+        {isProjectPage ? <ProjectEvolutionPage /> : activeSection === null ? <ToolsPage /> : activeSection === 'today' ? <ActionCenterPage /> : activeSection === 'schedule' ? (
           <SchedulePage user={user} />
         ) : activeSection === 'assistant' ? <AiAssistantPage /> : activeSection === 'reminders' ? (
           <ReminderPage />
@@ -130,6 +135,7 @@ function AppContent() {
         onClose={() => setShowSettings(false)}
         onOpenAdmin={() => { setShowSettings(false); setShowAdmin(true); }}
         onOpenTools={() => { setShowSettings(false); navigate('/tools'); }}
+        onOpenProject={() => { setShowSettings(false); navigate('/project'); }}
       /></FeatureBoundary>}
 
       {/* 管理员弹层 */}

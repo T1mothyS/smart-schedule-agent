@@ -15,6 +15,8 @@
 
 ## 路径 A：普通预构建升级
 
+项目成长另需服务端资源 `project-evolution/generated.json`；发布清单和暂存检查必须包含它，不得放入匿名静态目录。校验见 [项目成长说明](../project-evolution/README.md)。
+
 ### 准备条件
 
 - 已明确本次代码部署授权；GitHub push、tag、Release、真实登录验收、Cloud 任务、邮件发送和收件箱验收分别授权，不因代码部署自动获得授权。

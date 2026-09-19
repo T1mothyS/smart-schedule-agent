@@ -34,6 +34,17 @@
   border-bottom: 1px solid var(--td-component-stroke);
 }
 .settings-dialog-toolbar > div { flex: 1; min-width: 0; }
+.settings-dialog-toolbar > div:first-child { flex: 0 1 auto; }
+.settings-header-links { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; }
+.settings-header-links button { min-height: 44px; padding: 8px 14px; border: 1px solid var(--td-component-stroke); border-radius: 7px; font-size: 12px; cursor: pointer; }
+.settings-header-links button:hover { color: var(--td-brand-color); background: var(--td-brand-color-light); }
+.settings-header-links button:focus-visible { outline: 2px solid var(--td-brand-color); outline-offset: 2px; }
+.settings-header-links button:disabled { opacity: .5; cursor: default; }
+@media (max-width: 640px) {
+  .settings-dialog-toolbar { flex-wrap: wrap; }
+  .settings-dialog-toolbar > div:first-child { flex: 1; }
+  .settings-header-links { order: 4; flex-basis: 100%; }
+}
 .settings-dialog-toolbar h1 { margin: 0; font-size: 21px; font-weight: 650; line-height: 1.35; }
 .settings-dialog-toolbar p { margin: 4px 0 0; color: var(--td-text-color-secondary); font-size: 12px; }
 .settings-dialog-version { max-width: 40%; color: var(--td-text-color-secondary); font-size: 11px; overflow-wrap: anywhere; }

@@ -1,6 +1,6 @@
 {
   "name": "smart-schedule-agent",
-  "version": "0.27.2-260919.1711",
+  "version": "0.28.0-260919.2218",
   "description": "跨平台智能日程表 Agent 应用",
   "author": "Smart Schedule Team",
   "license": "MIT",
@@ -16,7 +16,7 @@
     "dev:electron": "npm run electron:dev",
     "dev:electron:client": "vite",
     "build": "npm run build:client && npm run build:electron",
-    "build:client": "vite build",
+    "build:client": "npm run evolution:check && vite build",
     "build:electron:code": "tsc -p tsconfig.electron.json",
     "build:electron": "npm run build:electron:code && node scripts/prepare-electron-config.mjs",
     "preview": "vite preview",
@@ -27,7 +27,10 @@
     "electron": "electron .",
     "electron:dev": "npm run build:electron:code && concurrently -k \"npm run dev:server\" \"npm run dev:electron:client\" \"npm run electron:dev:start\"",
     "electron:dev:start": "wait-on http://localhost:5173 && electron .",
-    "electron:build": "npm run build && electron-builder --projectDir dist-desktop --config ../electron-builder.yml"
+    "electron:build": "npm run build && electron-builder --projectDir dist-desktop --config ../electron-builder.yml",
+    "evolution:generate": "tsx scripts/generate-project-evolution.ts --generate",
+    "evolution:check": "tsx scripts/generate-project-evolution.ts",
+    "evolution:history": "tsx scripts/generate-project-evolution.ts --history"
   },
   "dependencies": {
     "@tencent-ai/agent-sdk": "^0.3.43",

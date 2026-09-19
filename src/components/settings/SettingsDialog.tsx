@@ -5,7 +5,7 @@ import { APP_CONFIG } from '../../config';
 import { SettingsPage } from './SettingsPage';
 import './settings.css';
 
-export function SettingsDialog({ onClose, onOpenAdmin, onOpenTools, restoreFocusTo }: { onClose: () => void; onOpenAdmin: () => void; onOpenTools?: () => void; restoreFocusTo?: HTMLElement | null }) {
+export function SettingsDialog({ onClose, onOpenAdmin, onOpenTools, onOpenProject, restoreFocusTo }: { onClose: () => void; onOpenAdmin: () => void; onOpenTools?: () => void; onOpenProject?: () => void; restoreFocusTo?: HTMLElement | null }) {
   const triggerRef = useRef(restoreFocusTo ?? document.activeElement as HTMLElement | null);
   const frameRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -52,6 +52,10 @@ export function SettingsDialog({ onClose, onOpenAdmin, onOpenTools, restoreFocus
       <div className="settings-dialog-frame" role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title" ref={frameRef}>
         <div className="settings-dialog-toolbar">
           <div><h1 id="settings-dialog-title">设置</h1><p>账户、提醒与数据管理</p></div>
+          <nav className="settings-header-links" aria-label="项目与工具">
+            <button type="button" onClick={onOpenProject} disabled={!onOpenProject}>项目成长</button>
+            <button type="button" onClick={onOpenTools} disabled={!onOpenTools}>Tools 工具中心</button>
+          </nav>
           <span className="settings-dialog-version">V{APP_CONFIG.version}</span>
           <button type="button" className="settings-dialog-close" ref={closeRef} onClick={onClose} aria-label="关闭设置">
             <X size={20} aria-hidden="true" />

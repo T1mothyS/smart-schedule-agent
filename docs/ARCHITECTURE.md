@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: Tools 挂载应用实现 checkpoint / `0.22.0-260917.2044`（2026-09-17，本地源码；其他领域以各节证据为准）。
+- Last verified commit/version: 项目成长入口与只读数据接口 / `0.28.0-260919.2218`（2026-09-19，本地源码；其他领域以各节证据为准）。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
 - Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
@@ -22,6 +22,8 @@ React/Vite 与 Electron 壳都使用同一套前端页面。Electron 主进程�
 
 ## 2. 前端
 
+项目成长 `/project` 从设置顶部打开，页面及样式按路由懒加载。只读 `GET /api/project-evolution` 使用现有 Bearer 认证，读取服务端校验后的 `project-evolution/generated.json`；有效账号共享项目事实，不读取业务数据库，不在运行时调用 Git 或 AI。合同见 [项目成长维护说明](../project-evolution/README.md)。
+
 入口和主要页面：
 
 | 入口 | 职责 |
@@ -40,7 +42,7 @@ React/Vite 与 Electron 壳都使用同一套前端页面。Electron 主进程�
 | src/pages/ToolsPage.tsx | 登录后的挂载应用菜单；不加入产品顶部导航 |
 | src/components/settings/ | Settings V2 的 Dialog、Layout、Section、Row 和领域设置 |
 
-当前登录后页面路由是 /today、/schedule、/assistant、/reminders、/reports、/reports/:date、/library、/library/:id 和 /tools；/import 重定向到 /assistant?tool=email-import；未登录时使用 /login。设置通过产品壳按钮打开 SettingsDialog，没有独立 /settings 路由；Tools 只从设置中的“挂载工具”进入，不加入产品顶部导航。
+当前登录后页面路由是 /today、/schedule、/assistant、/reminders、/reports、/reports/:date、/library、/library/:id、/tools 和 /project；/import 重定向到 /assistant?tool=email-import；未登录时使用 /login。设置通过产品壳按钮打开 SettingsDialog，没有独立 /settings 路由；Tools 可从设置顶部快捷入口或“挂载工具”分区进入，不加入产品顶部导航。
 
 ### 前端加载边界（Phase 2，0.21.1-260915.1408）
 

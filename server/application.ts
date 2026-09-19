@@ -48,6 +48,7 @@ import { addLog } from './log-service.js';
 import { createDailyReportCloudMcpRouter } from './daily-report-cloud-mcp.js';
 import { createDailyReportCloudOAuthRouter } from './daily-report-cloud-auth.js';
 import { createToolsApiRouter } from './protected-tools.js';
+import { createProjectEvolutionRouter } from './project-evolution.js';
 
 // 数据库实例（等待初始化后赋值）
 let db: typeof dbModule;
@@ -92,6 +93,7 @@ app.use(createAiRouter({ authenticate }));
 app.use(createAccountsRouter({ authenticate, signUserToken, setPageSessionCookie, setPageSessionFromBearer, clearPageSessionCookie }));
 
 app.use(createToolsApiRouter({ authenticate, root: path.resolve(__dirname, '../protected-tools') }));
+app.use(createProjectEvolutionRouter({ authenticate, file: path.resolve(__dirname, '../project-evolution/generated.json') }));
 
 app.use(createAdminRouter({ authenticate, requireAdmin }));
 
