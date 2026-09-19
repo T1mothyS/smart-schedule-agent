@@ -16,12 +16,12 @@ export function createCaldavController(bridge: ReturnType<typeof createCaldavBri
     const control = state();
     control.lastSuccess = new Date(now()).toISOString(); control.lastError = undefined; control.failures = 0; control.nextAttempt = undefined;
     if (result.complete) control.confirmedScope = bridge.scopeVersion;
-    control.summary = { counts: result.counts, exclusions: result.exclusions, issues: result.issues, complete: result.complete };
+    control.summary = { counts: result.counts, exclusions: result.exclusions, breakdown: result.breakdown, issues: result.issues, complete: result.complete };
     if (!result.complete) control.lastError = 'INCOMPLETE_PROJECTION';
     save(control); return result;
   }
   return {
-    status: () => ({ ...state(), scopeVersion: bridge.scopeVersion, writeEnabled: canWrite(), automationAvailable: canAutomate(), busy: bridge.busy || bridgeActive() }),
+    status: () => ({ ...state(), scopeVersion: bridge.scopeVersion, includeCompleted: bridge.includeCompleted, writeEnabled: canWrite(), automationAvailable: canAutomate(), busy: bridge.busy || bridgeActive() }),
     preview: () => bridge.preview(), sync,
     automation(enabled: boolean, scopeVersion?: string, phoneVerified?: boolean) {
       const control = state();

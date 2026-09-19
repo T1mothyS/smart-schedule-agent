@@ -43,3 +43,17 @@ test('disabled source account stops background projection instead of appearing e
   try { await assert.rejects(getCaldavService().service.preview(), /SOURCE_ACCOUNT_UNAVAILABLE/); }
   finally { db.updateUserDisabled('bridge-owner', 0); }
 });
+
+
+test('all saved reminder cycles are read without mutations, including completed history', async () => {
+  const reminders = await import('./reminder-store.js');
+  const task = reminders.createReminderTask({ userId: 'bridge-owner', type: 'generic', name: 'Synthetic history', config: { templateKey: 'custom', rule: { frequency: 'monthly', anchorDate: '2026-09-25', dayOfMonth: 25, interval: 1, advancePolicy: 'calendar' }, reminderOffsets: [], reminderTime: '12:00', priority: 'medium', actionGuide: '' } });
+  reminders.completeReminderCycle(task.id, 'bridge-owner', task.currentCycle!.id, '2026-09-19');
+  reminders.updateReminderTask(task.id, 'bridge-owner', { enabled: false });
+  const before = reminders.exportReminderDb(); const schedulesBefore = schedules.exportScheduleDb();
+  const rows = reminders.readReminderProjectionSources('bridge-owner').filter(row => row.task.id === task.id);
+  assert.equal(rows.length, 2); assert.equal(rows.filter(row => row.current).length, 1);
+  assert(rows.some(row => row.cycle?.status === 'completed' && !row.current));
+  assert(rows.every(row => !row.task.enabled)); assert.deepEqual(reminders.readReminderProjectionSources('other'), []);
+  assert.deepEqual(reminders.exportReminderDb(), before); assert.deepEqual(schedules.exportScheduleDb(), schedulesBefore);
+});

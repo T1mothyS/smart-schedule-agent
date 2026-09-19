@@ -135,11 +135,12 @@ test('all scope projects scheduled todos, hidden/new calendars and authoritative
   assert.match(cycle.ical!, /DTSTART;VALUE=DATE:20260920/); assert.doesNotMatch(cycle.ical!, /RRULE/);
   const todoKey = projectEvent(f.source.schedules[1], config).key;
   f.source.schedules[1].title = '更新'; await apply(bridge); assert(f.remote.has(todoKey));
-  f.source.schedules[1].is_completed = true; f.source.cycles[0].task.enabled = false; await apply(bridge); assert.equal(f.remote.size, 1);
+  f.source.schedules[1].is_completed = true; f.source.cycles[0].task.enabled = false; await apply(bridge); assert.equal(f.remote.size, 2);
   f.source.schedules[1].is_completed = false; f.source.cycles[0].task.enabled = true;
-  f.source.cycles[0].cycle!.id = 'next'; f.source.cycles[0].cycle!.dueDate = '2026-10-20';
+  f.source.cycles[0].current = false;
+  f.source.cycles.push({ ...f.source.cycles[0], current: true, cycle: { ...f.source.cycles[0].cycle!, id: 'next', dueDate: '2026-10-20' } });
   f.source.calendars.push('new'); f.source.schedules.push(event({ id: 'new-event', calendar_id: 'new' }));
-  await apply(bridge); assert.equal(f.remote.size, 4); assert(f.remote.has(todoKey));
+  await apply(bridge); assert.equal(f.remote.size, 5); assert(f.remote.has(todoKey));
 });
 
 test('all scope keeps overdue unfinished events eligible', async () => {
@@ -176,4 +177,56 @@ test('missing cycle snapshot blocks access and bulk deletions are flagged', asyn
   await assert.rejects(bridge.preview(), /SOURCE_SNAPSHOT_INCOMPLETE/); assert.equal(f.calls.length, 0);
   f.source.cycles = []; f.source.schedules = Array.from({ length: 10 }, (_, i) => event({ id: String(i) }));
   await apply(bridge); f.source.schedules = []; assert.equal((await bridge.preview()).requiresDeleteConfirmation, true);
+});
+
+
+test('completed events and todos retain UID, suppress alarms and reopen in place', async () => {
+  const f = fixture(); f.source.cycles = [];
+  f.source.schedules = [event({ reminders: ['10'] }), event({ id: 'todo', type: 'todo', reminders: ['10'], is_repeated: true, repeat_rule: 'weekly' })];
+  const bridge = createCaldavBridge({ ...config, scope: 'all', includeCompleted: true, alarms: true }, f.file, () => f.source, f.transport);
+  await apply(bridge); const keys = [...f.remote.keys()];
+  f.source.schedules.forEach(row => row.is_completed = true);
+  const plan = await bridge.preview(); assert(plan.operations.every(op => op.action === 'update')); assert.equal(plan.breakdown?.completed, 2);
+  await bridge.sync(plan.planToken); assert.deepEqual([...f.remote.keys()], keys);
+  for (const remote of f.remote.values()) { assert.match(remote.ical!, /SUMMARY:【已完成】/); assert.doesNotMatch(remote.ical!, /VALARM|STATUS:COMPLETED/); }
+  f.source.schedules.forEach(row => row.is_completed = false); await apply(bridge);
+  assert.deepEqual([...f.remote.keys()], keys);
+  for (const remote of f.remote.values()) { assert.doesNotMatch(remote.ical!, /已完成/); assert.match(remote.ical!, /VALARM/); }
+  const compatibility = createCaldavBridge({ ...config, scope: 'all' }, f.file, () => f.source, f.transport);
+  assert.notEqual(bridge.scopeVersion, compatibility.scopeVersion);
+  await assert.rejects(compatibility.sync(plan.planToken), /PREVIEW_CHANGED/);
+});
+
+function cycleSource(id: string, status: 'pending' | 'completed' | 'cancelled' = 'pending', current = true, enabled = true): NonNullable<SourceSnapshot['cycles']>[number] {
+  return { task: { id: 'task', userId: 'owner', type: 'sim', name: 'Synthetic cycle', enabled, timezone: 'Asia/Shanghai', config: {} as any, createdAt: '2026-09-18T00:00:00Z', updatedAt: '2026-09-18T00:00:00Z' },
+    cycle: { id, taskId: 'task', cycleKey: id, periodStart: '2026-09-01', dueDate: '2026-09-20', status, completedAt: status === 'completed' ? '2026-09-19T00:00:00Z' : null, completedNote: null, createdAt: '2026-09-18T00:00:00Z', updatedAt: '2026-09-18T00:00:00Z' }, current };
+}
+
+test('cycle history, cancelled and disabled instances are mapped once and survive progression', async () => {
+  const f = fixture(); f.source.schedules = [event({ id: 'reminder-cycle:old' }), event({ id: 'reminder-cycle:current' })];
+  f.source.cycles = [cycleSource('old', 'completed', false, false), cycleSource('current', 'cancelled', true, false)];
+  const bridge = createCaldavBridge({ ...config, scope: 'all', includeCompleted: true, alarms: true }, f.file, () => f.source, f.transport);
+  const before = JSON.stringify(f.source); const plan = await bridge.preview();
+  assert.equal(plan.exclusions?.derived_cycle, undefined); assert.equal(plan.breakdown?.merged_copy, 2);
+  assert.equal(plan.breakdown?.historical_cycle, 1); assert.equal(plan.breakdown?.disabled_cycle, 2); assert.equal(plan.breakdown?.cancelled_cycle, 1);
+  assert.deepEqual(plan.sourceMappings?.map(m => m.derivedSourceIds), [['reminder-cycle:old'], ['reminder-cycle:current']]);
+  await bridge.sync(plan.planToken); assert.equal(JSON.stringify(f.source), before); const keys = [...f.remote.keys()];
+  for (const value of f.remote.values()) { assert.match(value.ical!, /已停用/); assert.doesNotMatch(value.ical!, /VALARM|RRULE/); }
+  assert([...f.remote.values()].some(v => v.ical!.includes('已取消')));
+  f.source.cycles[1].current = false; f.source.cycles.push(cycleSource('next'));
+  await apply(bridge); assert.equal(f.remote.size, 3); keys.forEach(k => assert(f.remote.has(k)));
+  assert((await bridge.preview()).operations.every(op => op.action === 'unchanged'));
+  f.source.cycles = []; f.calls.length = 0;
+  await assert.rejects(bridge.preview(), /ORPHANED_CYCLE_COPY/); assert.deepEqual(f.calls, []); assert.equal(f.remote.size, 3);
+  f.source.cycles = [cycleSource('old')]; f.source.cycles[0].task.userId = 'other';
+  await assert.rejects(bridge.preview(), /SOURCE_SNAPSHOT_INCOMPLETE/); assert.deepEqual(f.calls, []);
+});
+
+test('500 candidates allowed, 501 blocked without truncation or remote access', async () => {
+  const f = fixture(); f.source.cycles = [];
+  f.source.schedules = Array.from({ length: 500 }, (_, i) => event({ id: String(i), is_completed: true }));
+  const bridge = createCaldavBridge({ ...config, scope: 'all', includeCompleted: true }, f.file, () => f.source, f.transport);
+  assert.equal((await bridge.preview()).operations.length, 500);
+  f.source.schedules.push(event({ id: '501' })); f.calls.length = 0;
+  await assert.rejects(bridge.preview(), /PILOT_LIMIT_EXCEEDED/); assert.deepEqual(f.calls, []);
 });

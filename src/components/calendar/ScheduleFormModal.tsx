@@ -302,7 +302,7 @@ export function ScheduleFormModal({
   const [form, setForm] = useState({
     type: (editingSchedule?.type || 'event') as 'event' | 'todo',
     title: editingSchedule?.title || '',
-    date: editingSchedule
+    date: editingSchedule?.is_unscheduled ? '' : editingSchedule
       ? editingSchedule.start_time.split('T')[0]
       : toDateKey(defaultDate),
     isUnscheduled: editingSchedule?.is_unscheduled === true,

@@ -58,7 +58,7 @@ export function projectEvent(event: Schedule, options: ProjectionOptions): Proje
     `LAST-MODIFIED:${utc(instant(event.updated_at, 'UTC'))}`, `SUMMARY:${escapeText(event.title)}`];
   if (event.all_day) {
     // Existing UI defines a single local date with no end; do not guess legacy spans.
-    if (!/^\d{4}-\d{2}-\d{2}(?:T00:00:00)?$/.test(event.start_time) || event.end_time) throw new CaldavError('AMBIGUOUS_ALL_DAY_RANGE');
+    if (!/^\d{4}-\d{2}-\d{2}(?:T00:00(?::00(?:\.000)?)?)?$/.test(event.start_time) || event.end_time) throw new CaldavError('AMBIGUOUS_ALL_DAY_RANGE');
     const day = validDate(event.start_time.slice(0, 10));
     const end = new Date(day + 'T00:00:00Z'); end.setUTCDate(end.getUTCDate() + 1);
     lines.push(`DTSTART;VALUE=DATE:${day.replace(/-/g, '')}`, `DTEND;VALUE=DATE:${end.toISOString().slice(0, 10).replace(/-/g, '')}`);

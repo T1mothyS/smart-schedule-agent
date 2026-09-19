@@ -19,7 +19,7 @@
 | [UI 规范](UI-GUIDELINES.md) | 布局、主题、交互与响应式要求 | AUTHORITATIVE / LIVING |
 | [Cloud 日报](CHATGPT-WORK-CLOUD.md) | OAuth/MCP、内容、媒体和发布合同；末尾历史区单独标记 | CONTRACT |
 | [知识库](LIBRARY.md) | 只读呈现、发布/生命周期 API 与本地加工规则；批次记录仅为历史 | FEATURE / CONTRACT |
-| [CalDAV 单向桥接](CALDAV-BRIDGE.md) | 全量范围、设置页、受控自动化、删除与恢复合同 | CONTRACT / LOCAL VERIFIED |
+| [CalDAV 单向桥接](CALDAV-BRIDGE.md) | 全量范围、完成与周期历史、来源归并、受控自动化及恢复合同 | CONTRACT / LOCAL VERIFIED |
 | [路线图](ROADMAP.md) | 未来顺序；已完成条目不代替当前验证 | ROADMAP |
 
 ## 操作与验证

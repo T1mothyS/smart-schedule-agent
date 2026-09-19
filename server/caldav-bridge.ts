@@ -10,7 +10,8 @@ export interface BridgeConfig {
   username: string; password: string; timezone: string; alarms: boolean; writeEnabled: boolean; includeCompleted: boolean;
   scope?: 'selected' | 'all';
 }
-export interface SourceSnapshot { complete: true; calendars: string[]; schedules: Schedule[]; cycles?: Array<{ task: ReminderTask; cycle: ReminderCycle | null }> }
+export interface SourceSnapshot { complete: true; calendars: string[]; schedules: Schedule[]; cycles?: Array<{ task: ReminderTask; cycle: ReminderCycle | null; current?: boolean }> }
+export interface SourceMapping { sourceId: string; cycleId: string; taskId: string; derivedSourceIds: string[]; current: boolean; status: string; enabled: boolean; included: boolean }
 interface Entry { hash: string; etag: string | null; sourceId: string; pending?: boolean; previousHash?: string }
 interface Ledger { version: 1 | 2; binding: string; entries: Record<string, Entry> }
 type Action = 'create' | 'update' | 'delete' | 'unchanged' | 'recover' | 'held';
@@ -19,6 +20,7 @@ export interface BridgePlan {
   planToken: string; operations: Array<{ key: string; sourceId: string; action: Action }>;
   issues: Array<{ sourceId: string; code: string }>; excluded: number;
   counts?: Record<string, number>; exclusions?: Record<string, number>; scopeVersion?: string;
+  breakdown?: Record<string, number>; sourceMappings?: SourceMapping[];
   migrationRequired?: boolean; requiresDeleteConfirmation?: boolean; complete?: boolean;
 }
 export interface DavTransport {
@@ -94,7 +96,7 @@ export function createDavTransport(config: BridgeConfig, fetcher: typeof fetch =
 export function createCaldavBridge(config: BridgeConfig, stateFile: string, readSource: () => SourceSnapshot, transport = createDavTransport(config)) {
   const legacyBinding = digest(JSON.stringify([config.userId, config.calendarIds, config.collectionUrl]));
   const binding = digest(JSON.stringify([config.userId, config.collectionUrl]));
-  const scopeVersion = digest(JSON.stringify([binding, config.scope || 'selected', config.scope === 'all' ? [] : config.calendarIds, config.includeCompleted, config.timezone, config.alarms, 'projection-v2']));
+  const scopeVersion = digest(JSON.stringify([binding, config.scope || 'selected', config.scope === 'all' ? [] : config.calendarIds, config.includeCompleted, config.timezone, config.alarms, 'projection-v3-history']));
   let busy = false;
   function readLedger(): Ledger {
     if (!fs.existsSync(stateFile)) return { version: 2, binding, entries: {} };
@@ -118,38 +120,55 @@ export function createCaldavBridge(config: BridgeConfig, stateFile: string, read
       || (config.scope === 'all' && !Array.isArray(source.cycles))) throw new CaldavError('SOURCE_SNAPSHOT_INCOMPLETE');
     const desired = new Map<string, ProjectedEvent>(); const issues: BridgePlan['issues'] = []; let excluded = 0;
     const held = new Set<string>(); const counts = { event: 0, todo: 0, cycle: 0 };
+    const breakdown = { completed: 0, pending: 0, current_cycle: 0, historical_cycle: 0, disabled_cycle: 0, cancelled_cycle: 0, merged_copy: 0 };
+    const sourceMappings: SourceMapping[] = [];
+    const cycleSources = new Map<string, SourceMapping>();
     const exclusions: Record<string, number> = {};
     const exclude = (reason: string) => { excluded++; exclusions[reason] = (exclusions[reason] || 0) + 1; };
     const ids = new Set<string>();
     const rows = [...source.schedules];
-    if (config.scope === 'all') for (const { task, cycle } of source.cycles!) {
+    if (config.scope === 'all') for (const { task, cycle, current } of source.cycles!) {
       if (task.userId !== config.userId || (cycle && cycle.taskId !== task.id)) throw new CaldavError('SOURCE_SNAPSHOT_INCOMPLETE');
-      if (!task.enabled) { exclude('disabled_cycle'); continue; }
-      if (!cycle) throw new CaldavError('SOURCE_SNAPSHOT_INCOMPLETE');
-      if (!['pending', 'expired'].includes(cycle.status)) { exclude('completed_cycle'); continue; }
-      rows.push({ id: `caldav-cycle:${cycle.id}`, user_id: task.userId, calendar_id: '@cycles', type: 'event', title: `周期事务：${task.name}`,
-        start_time: cycle.dueDate, all_day: true, is_completed: false, is_repeated: false, reminders: [],
-        description: '当前周期到期日；请在 AI Calendar 周期事务中登记完成。', category: 'other', priority: 'medium', is_high_risk: false,
+      if (!cycle) { if (task.enabled) throw new CaldavError('SOURCE_SNAPSHOT_INCOMPLETE'); continue; }
+      if (cycleSources.has(cycle.id) || !['pending', 'expired', 'completed', 'cancelled'].includes(cycle.status)) throw new CaldavError('SOURCE_SNAPSHOT_INCOMPLETE');
+      const mapping = { sourceId: `caldav-cycle:${cycle.id}`, cycleId: cycle.id, taskId: task.id, derivedSourceIds: [] as string[], current: current !== false, status: cycle.status, enabled: task.enabled, included: config.includeCompleted || cycle.status !== 'completed' };
+      cycleSources.set(cycle.id, mapping); sourceMappings.push(mapping);
+      if (!config.includeCompleted && cycle.status === 'completed') { exclude('completed_cycle'); continue; }
+      breakdown[current === false ? 'historical_cycle' : 'current_cycle']++;
+      if (!task.enabled) breakdown.disabled_cycle++;
+      if (cycle.status === 'cancelled') breakdown.cancelled_cycle++;
+      const state = [!task.enabled ? '已停用' : '', cycle.status === 'cancelled' ? '已取消' : ''].filter(Boolean);
+      rows.push({ id: mapping.sourceId, user_id: task.userId, calendar_id: '@cycles', type: 'event', title: `${state.map(s => `【${s}】`).join('')}周期事务：${task.name}`,
+        start_time: cycle.dueDate, all_day: true, is_completed: cycle.status === 'completed', is_repeated: false, reminders: [],
+        description: `${current === false ? '历史' : '当前'}周期到期日；使用当前事务名称。${state.join('；')}。请在 AI Calendar 周期事务中登记完成。`, category: 'other', priority: 'medium', is_high_risk: false,
         created_at: cycle.createdAt, updated_at: [cycle.updatedAt, task.updatedAt].sort().at(-1)! });
     }
     for (const row of rows) {
       if (ids.has(row.id)) throw new CaldavError('DUPLICATE_SOURCE_ID'); ids.add(row.id);
       const isCycle = row.id.startsWith('caldav-cycle:') && row.calendar_id === '@cycles';
-      if (row.id.startsWith('reminder-cycle:')) { exclude('derived_cycle'); continue; }
+      if (row.id.startsWith('reminder-cycle:')) {
+        if (config.scope !== 'all') { exclude('derived_cycle'); continue; }
+        const mapping = cycleSources.get(row.id.slice('reminder-cycle:'.length));
+        if (!mapping) throw new CaldavError('ORPHANED_CYCLE_COPY');
+        mapping.derivedSourceIds.push(row.id); breakdown.merged_copy++; continue;
+      }
       if (!isCycle && !selected.includes(row.calendar_id)) { exclude('outside_scope'); continue; }
       if (row.is_unscheduled) { exclude('unscheduled'); continue; }
       if (!config.includeCompleted && row.is_completed) { exclude('completed'); continue; }
       if (row.type !== 'event' && (row.type !== 'todo' || config.scope !== 'all')) { exclude('unsupported_type'); continue; }
       counts[isCycle ? 'cycle' : row.type === 'todo' ? 'todo' : 'event']++;
+      breakdown[row.is_completed ? 'completed' : 'pending']++;
       try {
-        const alarms = config.alarms && !row.all_day && row.reminders.length === 1 && /^\d{1,5}$/.test(row.reminders[0]) && +row.reminders[0] <= 10080;
-        const projected = projectEvent(row.type === 'todo' ? { ...row, title: `待办：${row.title}` } : row, { ...config, alarms }); desired.set(projected.key, projected);
-        if (!alarms && row.reminders.length) issues.push({ sourceId: row.id, code: 'ALARMS_DISABLED' });
+        const alarms = !row.is_completed && config.alarms && !row.all_day && row.reminders.length === 1 && /^\d{1,5}$/.test(row.reminders[0]) && +row.reminders[0] <= 10080;
+        const title = `${row.is_completed ? '【已完成】' : ''}${row.type === 'todo' ? '待办：' : ''}${row.title}`;
+        const description = [row.is_completed ? `状态：已完成${row.is_repeated ? '（系列级状态，不代表单次完成历史）' : ''}。` : '', row.description].filter(Boolean).join('\n');
+        const projected = projectEvent({ ...row, title, description }, { ...config, alarms }); desired.set(projected.key, projected);
+        if (!alarms && row.reminders.length && !row.is_completed) issues.push({ sourceId: row.id, code: 'ALARMS_DISABLED' });
       } catch (error) { held.add(row.id); issues.push({ sourceId: row.id, code: error instanceof CaldavError ? error.code : 'INVALID_SOURCE_EVENT' }); }
     }
     if (desired.size > 500 || Object.values(counts).reduce((sum, count) => sum + count, 0) > 500) throw new CaldavError('PILOT_LIMIT_EXCEEDED');
-    const signature = digest(JSON.stringify({ desired: [...desired].sort(), issues, excluded, calendars: [...source.calendars].sort() }));
-    return { desired, issues, excluded, signature, held, counts, exclusions };
+    const signature = digest(JSON.stringify({ desired: [...desired].sort(), issues, excluded, sourceMappings, breakdown, calendars: [...source.calendars].sort() }));
+    return { desired, issues, excluded, signature, held, counts, exclusions, breakdown, sourceMappings };
   }
   async function prepare() {
     const source = snapshot(); const ledger = readLedger(); const operations: Operation[] = [];
@@ -176,7 +195,7 @@ export function createCaldavBridge(config: BridgeConfig, stateFile: string, read
     const planToken = digest(JSON.stringify([scopeVersion, source.signature, ledger, operations]));
     const deletions = operations.filter(op => op.action === 'delete').length; const owned = Object.keys(ledger.entries).length;
     const publicPlan: BridgePlan = { planToken, operations: operations.map(({ key, sourceId, action }) => ({ key, sourceId, action })), issues: source.issues, excluded: source.excluded,
-      counts: source.counts, exclusions: source.exclusions, scopeVersion, migrationRequired: ledger.version === 1,
+      counts: source.counts, exclusions: source.exclusions, breakdown: source.breakdown, sourceMappings: source.sourceMappings, scopeVersion, migrationRequired: ledger.version === 1,
       requiresDeleteConfirmation: (deletions >= 10 && deletions >= owned * 0.2) || (owned >= 5 && deletions === owned),
       complete: !source.issues.some(issue => issue.code !== 'ALARMS_DISABLED') };
     return { source, ledger, operations, publicPlan, migrationBackup };
@@ -226,5 +245,5 @@ export function createCaldavBridge(config: BridgeConfig, stateFile: string, read
       } finally { busy = false; }
     }
   }
-  return { preview: () => run(), sync: (token: string) => run(token), scopeVersion, get busy() { return busy; } };
+  return { preview: () => run(), sync: (token: string) => run(token), scopeVersion, includeCompleted: config.includeCompleted, get busy() { return busy; } };
 }

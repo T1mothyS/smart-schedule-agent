@@ -65,7 +65,7 @@ export function UnscheduledTodoDrawer({ onClose, onChanged }: { onClose: () => v
     <header><div><h2 id="unscheduled-title">无固定期限待办</h2><p>没有执行期限；完成后仍可在这里查看和管理。</p></div>
       <button className="secondary-button" disabled={busy} onClick={onClose}>关闭</button></header>
     <div className="unscheduled-filters">
-      <label>状态<select value={filter} onChange={e => setFilter(e.target.value)}>
+      <label>状态<select aria-label="状态" value={filter} onChange={e => setFilter(e.target.value)}>
         <option value="all">全部（{rows.length}）</option><option value="pending">未完成（{rows.length - completed}）</option><option value="completed">已完成（{completed}）</option>
       </select></label>
       <label>搜索<input value={query} onChange={e => setQuery(e.target.value)} placeholder="标题、描述或备注" /></label>

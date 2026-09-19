@@ -820,12 +820,12 @@ export function getDueReminders(now = new Date()): DueReminder[] {
   return result;
 }
 
-// Mirrors the current-cycle selection without ensureCurrentCycle or delivery creation.
-export function readReminderProjectionSources(userId: string): Array<{ task: ReminderTask; cycle: ReminderCycle | null }> {
-  return queryAll<any>('SELECT * FROM reminder_tasks WHERE user_id = ? ORDER BY id', [userId]).map(row => {
+// All saved cycles, with the same latest-cycle ordering; never creates cycles or deliveries.
+export function readReminderProjectionSources(userId: string): Array<{ task: ReminderTask; cycle: ReminderCycle | null; current: boolean }> {
+  return queryAll<any>('SELECT * FROM reminder_tasks WHERE user_id = ? ORDER BY id', [userId]).flatMap<{ task: ReminderTask; cycle: ReminderCycle | null; current: boolean }>(row => {
     const task = rowToTask(row);
-    const cycle = queryOne<any>('SELECT * FROM reminder_cycles WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1', [task.id]);
-    return { task, cycle: cycle ? rowToCycle(cycle) : null };
+    const cycles = queryAll<any>('SELECT * FROM reminder_cycles WHERE task_id = ? ORDER BY created_at DESC, rowid DESC', [task.id]);
+    return cycles.length ? cycles.map((cycle, index) => ({ task, cycle: rowToCycle(cycle), current: index === 0 })) : [{ task, cycle: null, current: true }];
   });
 }
 

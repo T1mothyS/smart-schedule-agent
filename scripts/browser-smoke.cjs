@@ -16,7 +16,7 @@ const entry = (id) => {
 };
 const seen = new Set(), errors = [], checks = [];
 let caldavEnabled = false, caldavFailure = false, caldavConfirmed = false;
-const caldavPlan = { planToken: 'a'.repeat(64), scopeVersion: 'b'.repeat(64), complete: false, counts: { event: 3, todo: 4, cycle: 2 }, exclusions: { completed: 24, unscheduled: 2 }, issues: [{ sourceId: 'synthetic-long-source-'.repeat(9), code: 'AMBIGUOUS_ALL_DAY_RANGE' }], operations: [{ sourceId: 'synthetic', action: 'create' }, { sourceId: 'synthetic-old', action: 'delete' }] };
+const caldavPlan = { breakdown: { completed: 3, pending: 6, current_cycle: 1, historical_cycle: 1, disabled_cycle: 1, cancelled_cycle: 0, merged_copy: 1 }, sourceMappings: [{ sourceId: 'caldav-cycle:synthetic-history', taskId: 'synthetic-task', cycleId: 'synthetic-history', derivedSourceIds: ['reminder-cycle:synthetic-history'], current: false, status: 'completed', enabled: false, included: true }], planToken: 'a'.repeat(64), scopeVersion: 'b'.repeat(64), complete: false, counts: { event: 3, todo: 4, cycle: 2 }, exclusions: { unscheduled: 2 }, issues: [{ sourceId: 'synthetic-long-source-'.repeat(9), code: 'AMBIGUOUS_ALL_DAY_RANGE' }], operations: [{ sourceId: 'synthetic', action: 'create' }, { sourceId: 'synthetic-old', action: 'delete' }] };
 const emptyApis = new Set(['/api/action-center', '/api/notifications', '/api/schedules', '/api/cycle-reminders', '/api/ai-schedule/history', '/api/note-items', '/api/daily-reports', '/api/check-login', '/api/user-api-key', '/api/notification-preferences', '/api/integrations/daily-report-token', '/api/daily-report/cloud-context', '/api/daily-report/delivery-policy', '/api/integrations/library-token', '/api/user-mail-account', '/api/admin/users']);
 const server = http.createServer((req, res) => { let file = path.join(root, 'dist', new URL(req.url, 'http://local').pathname); if (!file.startsWith(path.join(root, 'dist') + path.sep)) {
     res.writeHead(403);
@@ -46,7 +46,7 @@ const server = http.createServer((req, res) => { let file = path.join(root, 'dis
                 else if (p.endsWith('/sync')) { caldavConfirmed = true; body = { ...caldavPlan, complete: true, applied: true, issues: [] }; }
                 else {
                     if (p.endsWith('/automation')) caldavEnabled = route.request().postDataJSON().enabled;
-                    body = { mode: 'full-one-way', enabled: caldavEnabled, writeEnabled: true, automationAvailable: true, busy: false, scopeVersion: caldavPlan.scopeVersion, confirmedScope: caldavConfirmed ? caldavPlan.scopeVersion : undefined, lastSuccess: '2026-09-19T01:00:00Z' };
+                    body = { includeCompleted: true, mode: 'full-one-way', enabled: caldavEnabled, writeEnabled: true, automationAvailable: true, busy: false, scopeVersion: caldavPlan.scopeVersion, confirmedScope: caldavConfirmed ? caldavPlan.scopeVersion : undefined, lastSuccess: '2026-09-19T01:00:00Z' };
                 }
             }
             else if (p === '/api/auth/me')
@@ -107,6 +107,8 @@ const server = http.createServer((req, res) => { let file = path.join(root, 'dis
             await caldav.getByRole('button', { name: '预览变更', exact: true }).click();
             await caldav.getByText('存在待处理项，尚未完成全量', { exact: true }).waitFor();
             await caldav.locator('summary').filter({ hasText: '提示或待处理项' }).click();
+            await caldav.locator('summary').filter({ hasText: '周期来源映射' }).click();
+            await caldav.getByText(/历史 · 已完成 · 已停用/).waitFor();
             checks.push({ width, caldav: true, overflow: await caldav.evaluate(el => el.scrollWidth > el.clientWidth + 1) });
             await page.screenshot({ path: path.join(out, `caldav-${width}-light.png`) });
             if (width === 390) {

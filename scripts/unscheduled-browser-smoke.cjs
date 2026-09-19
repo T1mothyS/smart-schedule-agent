@@ -54,7 +54,12 @@ const server = http.createServer((req, res) => {
       await drawer.getByLabel('搜索', { exact: true }).fill('不存在'); await drawer.getByText('没有符合条件的待办').waitFor();
       await drawer.getByLabel('搜索', { exact: true }).fill('');
       await drawer.getByRole('button', { name: '编辑', exact: true }).last().click();
+      await drawer.locator('input[type=checkbox]').first().uncheck();
+      await drawer.getByText('选择日期', { exact: true }).waitFor();
       await drawer.getByRole('button', { name: '取消', exact: true }).click();
+      await drawer.getByLabel('状态', { exact: true }).selectOption('completed');
+      assert.equal(await drawer.locator('article').count(), 1);
+      await drawer.getByLabel('状态', { exact: true }).selectOption('all');
       await page.keyboard.press('Escape'); await drawer.waitFor({ state: 'detached' }); assert(await trigger.evaluate(el => el === document.activeElement));
       fail = true; await trigger.click(); await page.getByRole('alert').waitFor();
       await page.screenshot({ path: path.join(out, `${width}-error.png`) });

@@ -73,7 +73,7 @@ node scripts/browser-smoke.cjs '<包含 dist 的隔离源码目录>'
 
 ## CalDAV 全量单向桥接
 
-`caldav-bridge.test.ts`、`caldav-api.test.ts`、`caldav-control.test.ts` 随 npm test 覆盖全量/周期纯读、迁移备份、异常保留、授权/退避/批量删除、恢复及备份排他；core 的系统恢复覆盖账本与暂停状态。`infra/caldav-poc/bridge_smoke.py` 验证9个来源的真实 API/Radicale CRUD、只读权限、源库不变并保留原有9个seed。browser-smoke 覆盖四视口浅暗主题、长文本、操作/错误和启用门槛；这些不能替代荣耀手机提醒/后台/修改删除验收。具体边界见 [CalDAV 合同](CALDAV-BRIDGE.md)。
+`caldav-bridge.test.ts`、`caldav-api.test.ts`、`caldav-control.test.ts` 随 npm test 覆盖全量/全部周期纯读、完成/恢复同UID且无提醒、历史保留、副本归并/孤立阻断、500/501容量、迁移备份、异常保留、授权/退避/批量删除、恢复及备份排他；core 的系统恢复覆盖账本与暂停状态。`infra/caldav-poc/bridge_smoke.py` 验证累计10个对象的真实 API/Radicale CRUD、完成/恢复与历史停用保留、只读权限、源库不变并保留原有9个seed。browser-smoke 覆盖四视口浅暗主题、长文本、操作/错误和启用门槛；这些不能替代荣耀手机提醒/后台/修改删除验收。具体边界见 [CalDAV 合同](CALDAV-BRIDGE.md)。
 
 ## Phase 3 故障与恢复
 

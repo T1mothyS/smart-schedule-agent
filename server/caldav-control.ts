@@ -8,7 +8,7 @@ export const caldavRoot = () => path.join(process.env.DATA_DIR || path.resolve(p
 export interface CaldavControl {
   version: 1; enabled: boolean; confirmedScope?: string; verifiedScope?: string;
   lastSuccess?: string; lastError?: string; failures: number; nextAttempt?: number;
-  summary?: { counts?: Record<string, number>; exclusions?: Record<string, number>; issues: Array<{ sourceId: string; code: string }>; complete?: boolean };
+  summary?: { counts?: Record<string, number>; exclusions?: Record<string, number>; breakdown?: Record<string, number>; issues: Array<{ sourceId: string; code: string }>; complete?: boolean };
 }
 export function readControl(root = caldavRoot()): CaldavControl {
   const file = path.join(root, 'control.json');

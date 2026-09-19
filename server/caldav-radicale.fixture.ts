@@ -10,7 +10,7 @@ assert(credentials['poc-writer'] && credentials['poc-reader']);
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aical-caldav-smoke-'));
 Object.assign(process.env, { DATA_DIR: root, NODE_ENV: 'test', APP_ENV: 'development', BACKGROUND_JOBS_ENABLED: 'false',
   CALDAV_BRIDGE_ENABLED: 'true', CALDAV_BRIDGE_WRITE_ENABLED: 'true', CALDAV_BRIDGE_USER_ID: 'smoke-owner',
-  CALDAV_BRIDGE_SCOPE: 'all',
+  CALDAV_BRIDGE_SCOPE: 'all', CALDAV_BRIDGE_INCLUDE_COMPLETED: 'true',
   CALDAV_BRIDGE_CALENDAR_IDS: 'smoke-owner:personal', CALDAV_BRIDGE_COLLECTION_URL: 'https://caldav.fixture.invalid/poc-reader/poc/',
   CALDAV_BRIDGE_USERNAME: 'poc-writer', CALDAV_BRIDGE_PASSWORD: credentials['poc-writer'], CALDAV_BRIDGE_ALARMS_ENABLED: 'true', CALDAV_BRIDGE_TIMEZONE: 'Asia/Shanghai' });
 const nativeFetch = globalThis.fetch;
@@ -24,7 +24,7 @@ const db = await import('./db.js'); const store = await import('./schedule-store
 const user = db.createUser({ id: 'smoke-owner', email: 'smoke@example.invalid', password_hash: 'synthetic', role: 'user', disabled: 0, created_at: now, updated_at: now });
 store.getAllCalendars(user.id);
 const reminders = await import('./reminder-store.js');
-const cycleTask = reminders.createReminderTask({ userId: user.id, type: 'generic', name: '合成到期项目', config: { templateKey: 'custom', rule: { frequency: 'once', anchorDate: '2026-09-25', advancePolicy: 'calendar' }, reminderOffsets: [], reminderTime: '12:00', priority: 'medium', actionGuide: '' } });
+const cycleTask = reminders.createReminderTask({ userId: user.id, type: 'generic', name: '合成到期项目', config: { templateKey: 'custom', rule: { frequency: 'monthly', anchorDate: '2026-09-25', dayOfMonth: 25, interval: 1, advancePolicy: 'calendar' }, reminderOffsets: [], reminderTime: '12:00', priority: 'medium', actionGuide: '' } });
 const token = api.signUserToken(user);
 const server = api.app.listen(0, '127.0.0.1'); await new Promise<void>(resolve => server.once('listening', resolve));
 const base = `http://127.0.0.1:${(server.address() as any).port}`;
@@ -60,8 +60,20 @@ try {
   assert.equal((await reader(key, 'DELETE')).status, 403);
   await call('/api/schedules/' + ids[0], { title: 'Bridge Changed' }, 'PATCH'); await sync();
   assert.match(await (await reader(key)).text(), /SUMMARY:Bridge Changed/);
+  await call('/api/schedules/' + ids[0] + '/toggle', {}); await sync();
+  assert.match(await (await reader(key)).text(), /SUMMARY:【已完成】Bridge Changed/);
+  await call('/api/schedules/' + ids[0] + '/toggle', {}); await sync();
+  assert.match(await (await reader(key)).text(), /SUMMARY:Bridge Changed/);
+  reminders.completeReminderCycle(cycleTask.id, user.id, cycleTask.currentCycle!.id, '2026-09-19');
+  const history = await sync(); assert.equal(history.counts.cycle, 2); assert.equal(history.breakdown.historical_cycle, 1);
+  const oldCycleKey = history.operations.find((o: any) => o.sourceId === 'caldav-cycle:' + cycleTask.currentCycle!.id).key;
+  assert.match(await (await reader(oldCycleKey)).text(), /已完成/);
+  reminders.updateReminderTask(cycleTask.id, user.id, { enabled: false }); await sync();
+  assert.match(await (await reader(oldCycleKey)).text(), /已停用/);
+  const beforeFinal = store.exportScheduleDb(), cyclesBeforeFinal = reminders.exportReminderDb();
+  await sync(); assert.deepEqual(store.exportScheduleDb(), beforeFinal); assert.deepEqual(reminders.exportReminderDb(), cyclesBeforeFinal);
   for (const id of ids) await call('/api/schedules/' + id, {}, 'DELETE');
-  reminders.updateReminderTask(cycleTask.id, user.id, { enabled: false });
+  reminders.deleteReminderTask(cycleTask.id, user.id);
   await sync(); assert.equal((await reader(key)).status, 404);
-  console.log('SMOKE_RESULT:' + JSON.stringify({ status: 'PASS', created: 9, updated: 1, deleted: 9, readonly: 'PASS', idempotency: 'PASS', pureSource: 'PASS', production: 'NOT_TESTED' }));
+  console.log('SMOKE_RESULT:' + JSON.stringify({ status: 'PASS', created: 10, updated: 'including completion, reopen and disabled history', deleted: 10, readonly: 'PASS', idempotency: 'PASS', pureSource: 'PASS', production: 'NOT_TESTED' }));
 } finally { globalThis.fetch = nativeFetch; await new Promise<void>(resolve => server.close(() => resolve())); }

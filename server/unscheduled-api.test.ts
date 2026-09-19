@@ -29,6 +29,7 @@ test('unscheduled pure read includes completion history, isolates accounts, and 
     assert.equal((await request('', 'POST', { ...input, is_unscheduled: false, all_day: true })).status, 400);
     const singleDay = await request('', 'POST', { ...input, is_unscheduled: false, all_day: true, start_time: '2026-09-20T00:00:00' });
     assert.equal(singleDay.status, 200); assert.equal((await singleDay.json()).schedule.end_time, undefined);
+    assert.equal((await request('/' + created.schedule.id, 'PATCH', { is_unscheduled: false })).status, 400);
     assert.equal((await request('/' + created.schedule.id, 'PATCH', { is_unscheduled: false, start_time: '2026-09-20T09:00:00' })).status, 200);
     assert.deepEqual((await (await request('/unscheduled')).json()).schedules, []);
   } finally { await new Promise<void>(r => server.close(() => r())); }
