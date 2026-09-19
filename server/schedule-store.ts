@@ -414,7 +414,7 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
   if (existing.is_unscheduled && !merged.is_unscheduled && (!updates.start_time || Number.isNaN(Date.parse(updates.start_time)))) {
     throw new Error('移入日历前请明确选择执行日期');
   }
-  if (['type', 'all_day', 'is_unscheduled', 'start_time'].some(key => Object.prototype.hasOwnProperty.call(updates, key))) validateScheduleTime(merged);
+  if (['type', 'all_day', 'is_unscheduled', 'start_time', 'end_time'].some(key => Object.prototype.hasOwnProperty.call(updates, key))) validateScheduleTime(merged);
   const isUnscheduled = merged.is_unscheduled === true;
   const startTimeValue = merged.start_time || now;
   let calendarId = existing.calendar_id;

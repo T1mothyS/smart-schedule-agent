@@ -4,7 +4,8 @@ import * as activityStore from './activity-store.js';
 import { enqueueUserEmailNotificationDetailed } from './notification-service.js';
 import { renderMarkdown } from './markdown-renderer.js';
 import { addLog } from './log-service.js';
-import { dailyReportMediaPath, localizeDailyDigestImages, type DailyReportMediaOptions } from './daily-report-media-service.js';
+import { dailyReportMediaPath, localizeDailyDigestImages, summarizeDailyReportMedia, type DailyReportMediaOptions } from './daily-report-media-service.js';
+import { buildMediaReceipt, type DailyReportMediaReceipt } from './daily-report-media-receipt.js';
 import { parseDailyDigestMarkdown, selectDailyDigestFeaturedStory } from './daily-digest-template.js';
 import { getDailyReportDeliveryPolicy } from './daily-report-delivery-policy.js';
 
@@ -18,6 +19,7 @@ export type DailyReportPublishEmailStatus = 'QUEUED' | 'DISABLED' | 'ALREADY_QUE
 export type DailyReportViewDeliveryStatus = 'RECEIVED' | 'CANDIDATE';
 
 export interface DailyReportView {
+  mediaReceipt: DailyReportMediaReceipt | null;
   id: string;
   date: string;
   headline: string | null;
@@ -160,6 +162,7 @@ function reportPresentation(markdown: string): { headline: string | null; heroIm
 export function toDailyReportView(record: activityStore.DailyReportRecord, includeContent = true): DailyReportView {
   const presentation = reportPresentation(record.markdown);
   return {
+    mediaReceipt: record.mediaReceipt,
     id: record.id,
     date: record.reportDate,
     headline: presentation.headline,
@@ -214,23 +217,39 @@ export function getDailyReportViewsForDate(userId: string, reportDate: string): 
   return { report: preferred ? toDailyReportView(preferred) : null, reports };
 }
 
+interface MediaAuditInput { candidateImageCount: number; failureCodes: string[]; noImageReason?: unknown }
+
+/** Read-only: scoped to this account/source, with same-day replacement and preceding dates. */
+export function previewDailyReportMedia(userId: string, reportDate: string, source: activityStore.DailyReportSource, markdown: string, audit: MediaAuditInput): DailyReportMediaReceipt {
+  const previous = activityStore.getLatestDailyReportCandidate(userId, reportDate, source);
+  const history = activityStore.listDailyReportCandidates(userId, 100).filter(row => row.source === source && row.reportDate < reportDate).sort((a, b) => b.reportDate.localeCompare(a.reportDate));
+  let precedingNoImageReports = 0;
+  for (const row of history) {
+    if (summarizeDailyReportMedia(row.markdown).imageCount) break;
+    precedingNoImageReports++;
+  }
+  return buildMediaReceipt({ ...audit, imageCount: summarizeDailyReportMedia(markdown).imageCount, previousImageCount: previous ? summarizeDailyReportMedia(previous.markdown).imageCount : 0, precedingNoImageReports });
+}
+
 export async function publishDailyReport(
   userId: string,
   reportDate: string,
   markdown: string,
-  mediaOptions: DailyReportMediaOptions & { source?: activityStore.DailyReportSource } = {},
+  mediaOptions: DailyReportMediaOptions & { source?: activityStore.DailyReportSource; mediaAudit?: MediaAuditInput } = {},
 ): Promise<PublishDailyReportResult> {
   validateDailyReportInput(reportDate, markdown);
-  const { source: sourceOverride, ...localizationOptions } = mediaOptions;
+  const { source: sourceOverride, mediaAudit, ...localizationOptions } = mediaOptions;
   const source = sourceOverride || 'local';
   if (source !== 'local' && source !== 'cloud') throw new Error('日报来源不受支持');
-  const localizedMarkdown = await localizeDailyDigestImages(markdown, localizationOptions);
+  const failureCodes: string[] = [];
+  const localizedMarkdown = await localizeDailyDigestImages(markdown, { ...localizationOptions, onFailure: failure => { failureCodes.push(failure.code); localizationOptions.onFailure?.(failure); } });
   validateDailyReportInput(reportDate, localizedMarkdown);
   const contentHash = hashDailyReport(localizedMarkdown);
   const selectedSources = getDailyReportDeliveryPolicy(userId).sources;
   const shouldReceive = selectedSources.includes(source);
   const existingExact = activityStore.getDailyReportCandidate(userId, reportDate, source, contentHash);
   const existingLatest = activityStore.getLatestDailyReportCandidate(userId, reportDate, source);
+  const mediaReceipt = previewDailyReportMedia(userId, reportDate, source, localizedMarkdown, mediaAudit || { candidateImageCount: summarizeDailyReportMedia(markdown).imageCount, failureCodes });
   let record: activityStore.DailyReportRecord;
   let reportStatus: DailyReportPublishStatus;
   let promoted = false;
@@ -252,6 +271,7 @@ export async function publishDailyReport(
       deliveryStatus: shouldReceive ? 'received' : 'candidate',
       markdown: localizedMarkdown,
       contentHash,
+      mediaReceipt,
     });
     reportStatus = existingLatest ? 'UPDATED' : 'CREATED';
   }

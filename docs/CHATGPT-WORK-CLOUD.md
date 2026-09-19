@@ -2,13 +2,13 @@
 
 - Status: CONTRACT（末尾为历史快照）
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: `8854a38` / `0.21.0-260915.0924`（2026-09-15，源码核对）。
+- Last verified commit/version: `0.27.2-260919.1711`（2026-09-19，媒体诊断/模板增量及隔离回归；历史链路证据仍按原日期）。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
 - Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
 - Do not use for: 推断当前生产部署、Work 配置或邮件收件箱状态。
 
-本文档前半部分描述当前源码中的 OAuth/MCP、来源隔离、内容与媒体合同；末尾单独保存历史运行快照。源码核对基线为 `8854a38` / `0.21.0-260915.0924`（2026-09-15），不证明当前生产版本或 Work 任务配置。历史中既有 Shadow，也有单次受控正式发布，它们不能互相替代，也不能证明定时任务已切换。
+本文档前半部分描述当前源码中的 OAuth/MCP、来源隔离、内容与媒体合同；末尾单独保存历史运行快照。当前增量验证见[格式与安全修复快照](FORMAT-SECURITY-REPAIR-20260919.md)，不证明生产版本或 Work 任务配置。历史中既有 Shadow，也有单次受控正式发布，它们不能互相替代，也不能证明定时任务已切换。
 
 这里的“云端”指 ChatGPT Work 的后台任务运行环境；它不能直接读取本机 `日报-v2` worktree 或本地令牌。本地 Skill/插件文件不是 Work 资源安装证明。运行模式须核对实际任务中保存的提示、显式 `dry_run` 参数、版本和频率，不能从此文档推断。
 
@@ -98,7 +98,7 @@ V2 本地 Context 仍是当前本地链路的编辑源。一次性迁移时：
 
 ## 发布语义
 
-Work 必须先生成 `daily-digest.v1` JSON，再调用已经随 Work Skill 提供的等价确定性渲染器（当前 V2 分支的 `scripts/cloud_digest.py` 是待打包源材料）生成 Markdown。不能让 Work 任务引用本地路径，也不能把“模型直接写 Markdown”当作渲染器替代。
+Work 优先生成 `daily-digest.v1` JSON 并使用实际可用的确定性渲染器生成 Markdown。仅有 MCP 和云端网络时，完整定时模板允许生成 Markdown，再由服务端结构及完整性校验；不得宣称执行了不可用的渲染器，也不能让 Work 引用本机路径。模板与服务端合同用跨项目测试核对。
 
 严格媒体批次路径先调用 `daily_report.media_prepare_start`，再将每个新闻条目的 `assetKey` 和 1–5 个候选 URL 交给 `daily_report.media_prepare`。默认 Cloud 兼容路径不要求预先创建批次，而是在 `daily_report.publish` 内逐图尝试媒体托管。服务器执行：
 
@@ -116,6 +116,12 @@ dry-run 返回 `VALIDATED_NOT_PUBLISHED` 才能进行同正文正式发布。兼
 `dry_run=true` 不保存日报、不入队，但兼容路径的媒体处理可能写入托管文件。MCP 参数 `dry_run` 默认是 `false`，Shadow 必须显式传 `true`；先 dry-run、再同正文正式发布是调用流程要求，当前服务端没有强制前置成功回执的状态机。
 
 ## Markdown 合同与解析诊断
+
+从本地 `0.27.2` 起，发布可接收可选 `noImageReason`：`no_reliable_source`（已检索但无可靠图）、`search_unavailable`（检索不可用）、`not_reported`（兼容缺省）。生成要求为每次主动检索、目标 1–3 张相关新闻图或图表，不以填空位代替检索。旧服务端没有此参数时，任务仅在最终摘要说明原因。
+
+兼容路径回执增加 `mediaReceipt` 和 `warnings`。统计包括候选/成功图片数、媒体失败数、去重失败代码、无图原因、同日上一版图片数和最近连续无图篇数。连续统计限最近 100 条最新日期/来源候选，属于有界诊断。`NO_IMAGES`、`NO_IMAGE_REASON_MISSING`、`REPEATED_NO_IMAGES`、`REPLACES_ILLUSTRATED_REPORT` 是提示，不降低正文或严格媒体闸门，也不自动复用旧图、重发或重试。
+
+新正文版本与统计在同一次写入中保存；未变正文重试沿用原版本统计。dry-run 的统计不保存日报或队列；旧日报统计为 null，不回填历史。读取详情显示无图原因和连续提示。导出/恢复保留该可选统计，直接改写正文的旧内部接口清空过期统计。仅保存有界代码和计数，不保存图片外链或调用者自由文本。
 
 `daily_report.read_inputs` 返回 `markdownContract`；版本及字段以 `server/daily-digest-contract.ts` 为准。调用端应使用完整合成模板和字段约束，不能只写“使用 daily-digest.v1”。解析失败返回 `INVALID_DIGEST_FORMAT`、`validationIssues` 和合同版本，发生于媒体处理、日报入库和邮件入队之前。输入完整性仍单独检查 Calendar、Mail、市场与观察名单等要求。排障步骤见 [Cloud 排障手册](CLOUD-DIGEST-RECOVERY.md)。
 

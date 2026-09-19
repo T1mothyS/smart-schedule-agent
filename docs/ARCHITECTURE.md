@@ -12,6 +12,8 @@
 
 事项的通俗分类、字段解释及历史占位时间边界见 [日历数据人话版](CALENDAR-DATA-GUIDE.md)；该说明不改变现有数据模型。
 
+2026-09-19 本地 0.27.2 增量：活动库 `daily_reports.media_receipt_json` 是可空的媒体诊断扩展列，初始化幂等添加；旧记录保持空值，无正文重写。该字段随原子数据库写回及导出/恢复保存，旧程序可忽略额外列。字段合同见 [Cloud 日报](CHATGPT-WORK-CLOUD.md#markdown-合同与解析诊断)。
+
 ## 1. 运行时边界
 
 浏览器或 Electron renderer 进入 React/Vite 前端。前端通过同源的 /api 请求访问 Express 服务；开发环境由 Vite 代理到 Node 服务，生产环境由 HTTPS/Nginx 转发到 Node 服务。

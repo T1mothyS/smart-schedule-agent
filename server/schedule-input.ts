@@ -1,4 +1,5 @@
 import * as scheduleStore from './schedule-store.js';
+import { validateScheduleTime } from './schedule-time.js';
 
 export const SCHEDULE_CATEGORIES = new Set(['travel', 'work', 'social', 'life', 'health', 'other']);
 
@@ -66,15 +67,7 @@ export function normaliseScheduleApiFields(
   if (!existing || has('is_high_risk')) updates.is_high_risk = body.is_high_risk === true;
 
   const merged = { ...(existing || {}), ...updates } as Partial<scheduleStore.Schedule>;
-  if (!merged.is_unscheduled) {
-    if (!merged.start_time || merged.start_time.length > 64 || Number.isNaN(Date.parse(merged.start_time))) {
-      throw new Error('开始时间不正确');
-    }
-    if (merged.end_time && Number.isNaN(Date.parse(merged.end_time))) throw new Error('结束时间不正确');
-    if (merged.end_time && Date.parse(merged.end_time) < Date.parse(merged.start_time)) {
-      throw new Error('结束时间不能早于开始时间');
-    }
-  }
+  if (!existing || ['type', 'all_day', 'is_unscheduled', 'start_time', 'end_time'].some(has)) validateScheduleTime(merged);
   return updates;
 }
 

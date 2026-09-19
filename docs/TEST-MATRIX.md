@@ -11,6 +11,8 @@
 
 本矩阵区分自动化、浏览器手工和生产验收。单元测试通过不等于浏览器 UI 正常；浏览器页面正常也不等于生产部署、SMTP 接受或收件箱最终到达。
 
+2026-09-19 增量验证：`schedule-time.test.ts` 和 `unscheduled-api.test.ts` 覆盖共同日期约束/旧数据兼容；`dependency-security.test.ts` 覆盖升级后的邮件解析及依赖输入；`daily-report.test.ts`、Cloud API 测试覆盖媒体计数、版本、账号及恢复。具体数字、浏览器尺寸与未验证范围见[本次修复快照](FORMAT-SECURITY-REPAIR-20260919.md)。
+
 ## 1. 通用命令
 
 | 层级 | 入口 | 证明什么 |

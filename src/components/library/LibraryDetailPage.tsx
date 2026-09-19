@@ -200,7 +200,8 @@ export function LibraryDetailPage({ id }: { id: string }) {
     const updateActiveHeading = () => {
       const rootRect = scrollRoot.getBoundingClientRect();
       const tocOffset = getLibraryTocOffset(scrollRoot, tocRef.current);
-      const threshold = rootRect.top + tocOffset + 4;
+      // scrollTop rounds fractional CSS pixels; keep the landed heading active.
+      const threshold = rootRect.top + tocOffset + 5;
       let currentId = tocItems[0].id;
       for (const item of tocItems) {
         const heading = findLibraryHeading(markdownRef.current, item.id);

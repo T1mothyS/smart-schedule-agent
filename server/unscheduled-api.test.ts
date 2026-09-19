@@ -31,14 +31,23 @@ test('unscheduled pure read includes completion history, isolates accounts, and 
     assert.equal(singleDay.status, 200); assert.equal((await singleDay.json()).schedule.end_time, undefined);
     assert.equal((await request('/' + created.schedule.id, 'PATCH', { is_unscheduled: false })).status, 400);
     assert.equal((await request('/' + created.schedule.id, 'PATCH', { is_unscheduled: false, start_time: '2026-09-20T09:00:00' })).status, 200);
+    assert.equal((await request('', 'POST', { title: 'bad date', type: 'event', start_time: '2026-02-30T09:00:00' })).status, 400);
+    const meeting = await (await request('', 'POST', { title: 'meeting', type: 'event', start_time: '2026-09-20T14:00:00' })).json();
+    assert.equal((await request('/' + meeting.schedule.id, 'PATCH', { end_time: '2026-09-20T13:00:00' })).status, 400);
+    assert.equal((await request('/' + meeting.schedule.id, 'PATCH', { end_time: '2026-09-20T15:00:00' })).status, 200);
     assert.deepEqual((await (await request('/unscheduled')).json()).schedules, []);
   } finally { await new Promise<void>(r => server.close(() => r())); }
 });
 
-test('shared write validation rejects ambiguous AI/batch input; legacy restore remains readable', () => {
+test('shared write validation rejects ambiguous AI/batch input; legacy restore remains readable', async () => {
   const row = { id: 'legacy', user_id: 'owner', calendar_id: 'owner:personal', type: 'todo' as const, title: 'Legacy synthetic', start_time: '2026-09-20T09:00:00', all_day: true, is_completed: false, is_repeated: false, reminders: [], is_high_risk: false, category: 'other', priority: 'medium' as const };
   assert.throws(() => store.createSchedulesBatch([row]), /全天/);
   store.restoreUserScheduleData('owner', { schedules: [{ ...row, created_at: now, updated_at: now }], calendars: [], categories: [] }, 'merge');
   assert.equal(store.getSchedule('legacy')?.all_day, true);
+  const metadata = (await import('./schedule-input.js')).normaliseScheduleApiFields;
+  assert.equal(store.updateSchedule('legacy', metadata({ title: 'Renamed legacy' }, 'owner', store.getSchedule('legacy')!))?.title, 'Renamed legacy');
   assert.equal(store.updateSchedule('legacy', { all_day: false })?.start_time, row.start_time);
+  const invalidBatch = [{ ...row, id: 'batch-good', all_day: false }, { ...row, id: 'batch-bad', all_day: false, start_time: '2026-02-30T09:00:00' }];
+  assert.throws(() => store.createSchedulesBatch(invalidBatch), /日期/);
+  assert.equal(store.getSchedule('batch-good'), null);
 });

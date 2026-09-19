@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Check, FileText, Mail, MoreHorizontal, RefreshCw } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useTheme } from '../hooks/useTheme';
 
 type EmailStatus = 'DISABLED' | 'QUEUED' | 'SENT' | 'FAILED';
 type DailyReportSource = 'local' | 'cloud';
 type DeliveryStatus = 'RECEIVED' | 'CANDIDATE';
 
 interface DailyReportSummary {
+  mediaReceipt?: { imageCount: number; candidateImageCount: number; mediaFailureCount: number; noImageReason: string | null; consecutiveNoImageReports: number; warnings: string[] } | null;
   id: string;
   date: string;
   headline: string | null;
@@ -324,6 +326,8 @@ export function DailyReportsPage() {
 }
 
 export function DailyReportReaderPage() {
+  // This route bypasses AppContent; restore the saved theme on direct opens too.
+  useTheme();
   const { authHeaders } = useAuth();
   const navigate = useNavigate();
   const { date } = useParams<{ date: string }>();
@@ -524,6 +528,11 @@ export function DailyReportReaderPage() {
         </div>
       ) : report ? (
         <div className={`daily-report-reader-content ${isNewsletter ? 'is-newsletter' : 'is-legacy'}`}>
+          {report.mediaReceipt?.warnings.includes('NO_IMAGES') && <div className="daily-report-notice media" role="status">
+            本篇暂无配图。{report.mediaReceipt.mediaFailureCount > 0 ? '图片获取或校验未全部成功。' : report.mediaReceipt.noImageReason === 'no_reliable_source' ? '已检索，但没有找到可靠且相关的图片。' : report.mediaReceipt.noImageReason === 'search_unavailable' ? '本次图片检索不可用。' : '生成端尚未说明未配图的原因。'}
+            {report.mediaReceipt.warnings.includes('REPEATED_NO_IMAGES') && `最近连续 ${report.mediaReceipt.consecutiveNoImageReports} 篇同来源日报无图，需要检查选图步骤。`}
+            {report.mediaReceipt.warnings.includes('REPLACES_ILLUSTRATED_REPORT') && '同日上一版曾有配图，本版没有沿用旧图。'}
+          </div>}
           {report.deliveryStatus === 'CANDIDATE' && <div className="daily-report-notice candidate" role="status">这份 {sourceLabel[report.source]} 日报已经正式写入生产服务器，但按当前设置暂不进入正式网页和邮件。勾选该来源并保存后，下一次正式发布起才会接收。</div>}
           <div className="daily-report-markdown daily-report-reader-markdown" dangerouslySetInnerHTML={{ __html: report.html }} />
         </div>

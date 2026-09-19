@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import { parseMediaReceipt, type DailyReportMediaReceipt } from './daily-report-media-receipt.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +18,7 @@ export type DailyReportSource = 'local' | 'cloud';
 export type DailyReportDeliveryStatus = 'received' | 'candidate';
 
 export interface DailyReportRecord {
+  mediaReceipt: DailyReportMediaReceipt | null;
   id: string;
   userId: string;
   reportDate: string;
@@ -196,6 +198,7 @@ function rowToNotification(row: any): NotificationDelivery {
 
 function rowToDailyReport(row: any): DailyReportRecord {
   return {
+    mediaReceipt: parseMediaReceipt(row.media_receipt_json),
     id: row.id,
     userId: row.user_id,
     reportDate: row.report_date,
@@ -383,6 +386,9 @@ export async function initActivityDb(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_ai_imports_user ON ai_imports(user_id, created_at);
   `);
   migrateDailyReportsTable();
+  if (!queryAll<{ name: string }>('PRAGMA table_info(daily_reports)').some(column => column.name === 'media_receipt_json')) {
+    db.run('ALTER TABLE daily_reports ADD COLUMN media_receipt_json TEXT');
+  }
   db.run('CREATE INDEX IF NOT EXISTS idx_daily_reports_user_date_source ON daily_reports(user_id, report_date DESC, source, updated_at DESC)');
   db.run(`INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('version', '3')`);
   db.run(`UPDATE notification_deliveries SET status = 'failed', next_retry_at = ? WHERE status = 'sending'`, [nowIso()]);
@@ -704,6 +710,7 @@ export function searchDailyReports(userId: string, query: string, limit = 100): 
 }
 
 export function createDailyReport(input: {
+  mediaReceipt?: DailyReportMediaReceipt;
   userId: string;
   reportDate: string;
   source?: DailyReportSource;
@@ -716,9 +723,9 @@ export function createDailyReport(input: {
   const id = uuidv4();
   run(
     `INSERT INTO daily_reports
-      (id, user_id, report_date, source, delivery_status, markdown, content_hash, published_at, updated_at, email_notification_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-    [id, input.userId, input.reportDate, input.source || 'local', input.deliveryStatus || 'received', input.markdown, input.contentHash, now, now],
+      (id, user_id, report_date, source, delivery_status, markdown, content_hash, published_at, updated_at, email_notification_id, media_receipt_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)`,
+    [id, input.userId, input.reportDate, input.source || 'local', input.deliveryStatus || 'received', input.markdown, input.contentHash, now, now, input.mediaReceipt ? JSON.stringify(parseMediaReceipt(input.mediaReceipt)) : null],
   );
   return getDailyReportById(id, input.userId)!;
 }
@@ -734,7 +741,7 @@ export function promoteDailyReportCandidate(id: string, userId: string, updatedA
 
 export function updateDailyReport(id: string, userId: string, markdown: string, contentHash: string, updatedAt = nowIso()): DailyReportRecord | null {
   const changed = run(
-    'UPDATE daily_reports SET markdown = ?, content_hash = ?, updated_at = ?, email_notification_id = NULL WHERE id = ? AND user_id = ?',
+    'UPDATE daily_reports SET markdown = ?, content_hash = ?, updated_at = ?, email_notification_id = NULL, media_receipt_json = NULL WHERE id = ? AND user_id = ?',
     [markdown, contentHash, updatedAt, id, userId],
   );
   if (!changed) return null;
@@ -983,10 +990,10 @@ export function restoreUserActivity(
     ) ? row.email_notification_id : null;
     db.run(
       `INSERT INTO daily_reports
-        (id, user_id, report_date, source, delivery_status, markdown, content_hash, published_at, updated_at, email_notification_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, user_id, report_date, source, delivery_status, markdown, content_hash, published_at, updated_at, email_notification_id, media_receipt_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [row.id, userId, row.report_date, source, deliveryStatus, row.markdown, contentHash, row.published_at || nowIso(),
-        row.updated_at || nowIso(), notificationId],
+        row.updated_at || nowIso(), notificationId, JSON.stringify(parseMediaReceipt(row.media_receipt_json))],
     );
     dailyReports++;
   }

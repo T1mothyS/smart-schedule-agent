@@ -1,6 +1,7 @@
 import express from 'express';
 import * as db from './db.js';
-import { publishDailyReport } from './daily-report-service.js';
+import { previewDailyReportMedia, publishDailyReport } from './daily-report-service.js';
+import { NO_IMAGE_REASONS } from './daily-report-media-receipt.js';
 import {
   authenticateDailyReportCloudAccessToken,
   DAILY_REPORT_CLOUD_MCP_PROTOCOL_VERSION,
@@ -156,6 +157,7 @@ const toolDefinitions: McpTool[] = [
         date: { type: 'string', description: 'YYYY-MM-DD' },
         markdown: { type: 'string', description: '严格遵循 read_inputs 返回的 markdownContract（精确标题、字段顺序和长度），不能只添加 daily-digest.v1 标记' },
         dry_run: { type: 'boolean', default: false },
+        noImageReason: { type: 'string', enum: [...NO_IMAGE_REASONS], description: '无图原因：no_reliable_source 已检索但无可靠图，search_unavailable 检索不可用；省略会提示原因未报告。' },
         mediaBatchId: { type: 'string', description: '可选：media_prepare_start 返回的媒体批次 ID；提供后启用严格媒体批次路径' },
         runId: { type: 'string', description: '严格媒体批次路径绑定的 runId' },
         requiredAssetKeys: {
@@ -555,6 +557,8 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
       mediaFailureCount: mediaFailures.length,
       mediaFailures: summarizeMediaFailures(mediaFailures),
     };
+    const mediaAudit = { candidateImageCount: candidateMedia.imageCount, failureCodes: mediaFailures.map(failure => failure.code), noImageReason: args.noImageReason };
+    const durableReceipt = previewDailyReportMedia(auth.userId, date, 'cloud', localizedMarkdown, mediaAudit);
     if (args.dry_run === true) {
       return {
         status: 'VALIDATED_NOT_PUBLISHED',
@@ -566,9 +570,11 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
         featuredHeadline: validated.quality.featured.headline,
         featuredImageUrl: validated.quality.featured.imageUrl,
         ...mediaReceipt,
+        mediaReceipt: durableReceipt,
+        warnings: durableReceipt.warnings,
       };
     }
-    const result = await publishDailyReport(auth.userId, date, localizedMarkdown, { requireHostedMedia: true, source: 'cloud' });
+    const result = await publishDailyReport(auth.userId, date, localizedMarkdown, { requireHostedMedia: true, source: 'cloud', mediaAudit });
     return {
       status: 'PUBLISHED',
       date,
@@ -583,6 +589,8 @@ async function callTool(auth: OAuthBearerContext, name: string, rawArguments: un
       featuredHeadline: validated.quality.featured.headline,
       featuredImageUrl: validated.quality.featured.imageUrl,
       ...mediaReceipt,
+      mediaReceipt: result.report.mediaReceipt,
+      warnings: durableReceipt.warnings,
       report: {
         headline: result.report.headline,
         excerpt: result.report.excerpt,

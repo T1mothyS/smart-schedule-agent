@@ -395,7 +395,7 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     });
     assert.equal(inputsCall.status, 200);
     const inputsBody = await inputsCall.json() as any;
-    assert.equal(inputsBody.result.structuredContent.markdownContract.contractVersion, '2026-09-14.2');
+    assert.equal(inputsBody.result.structuredContent.markdownContract.contractVersion, '2026-09-19.1');
     assert.match(inputsBody.result.structuredContent.markdownContract.markdownTemplate, /#### What happened \/ 发生了什么/);
     assert.deepEqual(inputsBody.result.structuredContent.requirements, {
       unreadMailCount: 0,
@@ -559,6 +559,8 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     assert.equal(allMediaFailedBody.result.structuredContent.mediaCount, 0);
     assert.equal(allMediaFailedBody.result.structuredContent.imageCount, 0);
     assert.equal(allMediaFailedBody.result.structuredContent.mediaFailureCount, 5);
+    assert.ok(allMediaFailedBody.result.structuredContent.warnings.includes('NO_IMAGES'));
+    assert.equal(allMediaFailedBody.result.structuredContent.mediaReceipt.mediaFailureCount, 5);
     assert.deepEqual(
       [...new Set(allMediaFailedBody.result.structuredContent.mediaFailures.map((failure: any) => failure.code))],
       ['SSRF_BLOCKED'],
@@ -623,6 +625,7 @@ test('ChatGPT Work Cloud OAuth、MCP 与 Context 账号隔离链路可用', asyn
     assert.equal(storedCloud.source, 'cloud');
     assert.equal(storedCloud.deliveryStatus, 'candidate');
     assert.equal(storedCloud.contentHash, publishedBody.result.structuredContent.contentHash);
+    assert.equal(storedCloud.mediaReceipt?.imageCount, 5);
     assert.ok(cloudStore.listDailyReportCloudHistory(userId, 30).some(item => item.source === 'cloud' && item.deliveryStatus === 'CANDIDATE'));
     assert.equal(activity.listNotifications(userId).length, notificationsBeforeDryRun);
 

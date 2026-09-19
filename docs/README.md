@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 当前规范、操作手册、历史证据与工程验证入口。
-- Last verified commit/version: `0.27.1-260919.1533`（2026-09-19，索引与本轮文档；各领域验证时点见对应文档，不代表生产版本）。
+- Last verified commit/version: `0.27.2-260919.1711`（2026-09-19，索引与本轮文档；各领域验证时点见对应文档，不代表生产版本）。
 - Authority: 源码、自动测试与实际构建优先；仍有效的 AGENTS 硬约束其次。
 - Update trigger: 新增/移动文档，修改 API、数据归属、媒体或验收规则。
 - Supersedes: 无；现有文档路径保留。
@@ -43,6 +43,7 @@
 |---|---|---|
 | [2026-09-05 Phase 1 审计](PHASE-1-AUDIT.md) | AUDIT-SNAPSHOT | 直接引用为当前文件规模/风险状态 |
 | [2026-09-19 收口增量审计](CLOSEOUT-AUDIT-20260919.md) | AUDIT-SNAPSHOT | 推断依赖告警已修复、生产已部署或完整安全认证 |
+| [2026-09-19 格式与安全修复](FORMAT-SECURITY-REPAIR-20260919.md) | VERIFICATION-SNAPSHOT | 推断生产已部署、真实邮件已验收或绝对无 bug |
 | [2026-09-18 荣耀 CalDAV 初测](CALDAV-HONOR-POC-TEST-REPORT-20260918.md) | USER-TEST-SNAPSHOT | 推断手机更新删除、实际提醒和后台可靠性已通过 |
 | [Settings V2 验证](SETTINGS-V2-VERIFICATION.md) | VERIFICATION-SNAPSHOT | 当前 HEAD 的浏览器验收 |
 | [Calendar Design QA](../design-qa.md) | VERIFICATION-SNAPSHOT | 推断当前左栏布局或当前已验证 |

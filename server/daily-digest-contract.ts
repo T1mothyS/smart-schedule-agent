@@ -1,7 +1,7 @@
 // Static synthetic example shared with the V2 scheduled prompt; no user data.
 export const DAILY_DIGEST_MARKDOWN_CONTRACT = {
   schemaVersion: 'daily-digest.v1',
-  contractVersion: '2026-09-14.2',
+  contractVersion: '2026-09-19.1',
   instructions: [
     'Replace all example content, dates and URLs. Preserve exact headings, full-width colons and field order. Do not wrap the Markdown in a code fence.',
     'The first two lines must be # Daily Digest and <!-- daily-digest.v1 --> with no blank line between them.',
@@ -12,6 +12,7 @@ export const DAILY_DIGEST_MARKDOWN_CONTRACT = {
     'Mail Tasks: 0–20 items, title 4–100, source 0–60, due 0–40, detail 8–220. Worth Your Time: 0–3, title 4–100, source 0–60, valid HTTP(S) link, note 4–90.',
     'Mail Briefing, Mail Tasks and Worth Your Time may have no items when the inputs permit; keep their headings. Follow requirements for actual input coverage, ordinary news counts, sources and categories.',
     'Source logos may be omitted; if supplied they must already be hosted. Images may be empty or HTTP(S) URLs or hosted paths. Never invent news, dates, links or images to satisfy the example.',
+    'Attempt at least one relevant image search per run, targeting 1–3 verified news images or charts. Zero images remain allowed; report noImageReason when supported and surface repeated-zero/image-loss warnings. Never reuse unrelated historical images.',
     'On INVALID_DIGEST_FORMAT, fix validationIssues paths and repeat dry-run with the full corrected document. A failed validation does not publish or enqueue mail.',
   ],
   markdownTemplate: [

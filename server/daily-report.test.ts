@@ -366,3 +366,31 @@ test('日报包含在活动导出、删除和恢复链路中', () => {
   assert.equal(restored.dailyReports, 2);
   assert.equal(activity.listDailyReports(userId).length, 1);
 });
+
+test('media receipts persist per version, warn on image loss, isolate owners, and survive restore', async () => {
+  const owner = 'media-receipt-owner';
+  const date = '2026-09-20';
+  const withImage = structuredPreviewMarkdown().replaceAll('2026-09-08', date);
+  const noImage = withImage.replaceAll(`图片：${hostedPreviewImage}`, '图片：');
+  activity.createDailyReport({ userId: owner, reportDate: date, source: 'cloud', markdown: withImage, contentHash: reports.hashDailyReport(withImage) });
+  activity.createDailyReport({ userId: owner, reportDate: '2026-09-19', source: 'cloud', markdown: '# Previous no image', contentHash: 'previous' });
+  const audit = { candidateImageCount: 0, failureCodes: [], noImageReason: 'no_reliable_source' };
+  const before = activity.exportActivityDb();
+  const preview = reports.previewDailyReportMedia(owner, date, 'cloud', noImage, audit);
+  assert.deepEqual(activity.exportActivityDb(), before);
+  assert.equal(preview.consecutiveNoImageReports, 2);
+  assert.ok(preview.warnings.includes('REPLACES_ILLUSTRATED_REPORT'));
+  assert.ok(preview.warnings.includes('REPEATED_NO_IMAGES'));
+  assert.equal(reports.previewDailyReportMedia('different-owner', date, 'cloud', noImage, audit).previousImageCount, 0);
+  const result = await reports.publishDailyReport(owner, date, noImage, { source: 'cloud', requireHostedMedia: true, mediaAudit: audit });
+  assert.deepEqual(result.report.mediaReceipt, preview);
+  const replay = await reports.publishDailyReport(owner, date, noImage, { source: 'cloud', requireHostedMedia: true, mediaAudit: audit });
+  assert.equal(replay.reportStatus, 'UNCHANGED');
+  assert.deepEqual(replay.report.mediaReceipt, preview);
+  assert.equal(activity.listAllDailyReports(owner).length, 3);
+  const exported = activity.exportUserActivity(owner);
+  activity.restoreUserActivity('restored-owner', { dailyReports: (exported.dailyReports as any[]).map(row => ({ ...row, id: 'restored-' + row.id })) }, 'merge');
+  assert.deepEqual(activity.getLatestDailyReportCandidate('restored-owner', date, 'cloud')?.mediaReceipt, preview);
+  assert.equal(activity.updateDailyReport(result.report.id, owner, noImage + '\n', 'edited')?.mediaReceipt, null);
+  assert.throws(() => reports.previewDailyReportMedia(owner, date, 'cloud', noImage, { ...audit, noImageReason: 'arbitrary details' }), /noImageReason/);
+});
