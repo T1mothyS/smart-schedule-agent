@@ -14,6 +14,7 @@ const productNavItems: Array<{ section: Section; label: string; icon?: string; I
 ];
 
 interface AppShellProps {
+  mobileReader?: boolean;
   activeSection: Section | null;
   onSectionChange: (section: Section) => void;
   theme: string;
@@ -26,6 +27,7 @@ interface AppShellProps {
 }
 
 export function AppShell({
+  mobileReader = false,
   activeSection,
   onSectionChange,
   theme,
@@ -37,7 +39,7 @@ export function AppShell({
   children,
 }: AppShellProps) {
   return (
-    <div className="app-shell">
+    <div className={`app-shell${mobileReader ? ' app-shell-mobile-reader' : ''}`}>
       <header className="reminder-topbar app-topbar">
         <div className="brand-lockup">
           <div className="brand-mark"><BellRing size={18} /></div>

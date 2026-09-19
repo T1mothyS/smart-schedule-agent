@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuth } from '../hooks/useAuth';
 import { ScheduleFormModal } from './calendar/ScheduleFormModal';
 import type { Schedule } from './calendar/schedule-types';
@@ -20,6 +21,15 @@ export function UnscheduledTodoDrawer({ onClose, onChanged }: { onClose: () => v
   const [history, setHistory] = useState<Completion[]>([]);
   const [historyError, setHistoryError] = useState('');
   const [historyLoading, setHistoryLoading] = useState(false);
+  const dismissEditor = () => {
+    if (busy) return;
+    if (window.confirm('放弃本次未保存的编辑？')) setEditing(null);
+  };
+  const dismiss = () => {
+    if (busy) return;
+    if (editing) { dismissEditor(); return; }
+    onClose();
+  };
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
@@ -60,10 +70,15 @@ export function UnscheduledTodoDrawer({ onClose, onChanged }: { onClose: () => v
   const visible = rows.filter(row => (filter === 'all' || row.is_completed === (filter === 'completed'))
     && [row.title, row.description, row.notes].some(text => (text || '').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())))
     .sort((a, b) => b.updated_at.localeCompare(a.updated_at) || a.id.localeCompare(b.id));
-  return <dialog ref={dialog} className="unscheduled-drawer" aria-labelledby="unscheduled-title"
-    onCancel={event => { event.preventDefault(); if (busy) return; if (editing) setEditing(null); else onClose(); }}>
+  return createPortal(<dialog ref={dialog} className="unscheduled-drawer" aria-labelledby="unscheduled-title"
+    onCancel={event => { event.preventDefault(); dismiss(); }}
+    onClick={event => {
+      if (event.target !== event.currentTarget) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) dismiss();
+    }}>
     <header><div><h2 id="unscheduled-title">无固定期限待办</h2><p>没有执行期限；完成后仍可在这里查看和管理。</p></div>
-      <button className="secondary-button" disabled={busy} onClick={onClose}>关闭</button></header>
+      <button className="secondary-button" disabled={busy} onClick={dismiss}>关闭</button></header>
     <div className="unscheduled-filters">
       <label>状态<select aria-label="状态" value={filter} onChange={e => setFilter(e.target.value)}>
         <option value="all">全部（{rows.length}）</option><option value="pending">未完成（{rows.length - completed}）</option><option value="completed">已完成（{completed}）</option>
@@ -89,7 +104,7 @@ export function UnscheduledTodoDrawer({ onClose, onChanged }: { onClose: () => v
     </div>
     {editing && <div className="unscheduled-editor" aria-busy={busy}>
       {error && <p className="unscheduled-edit-error" role="alert">{error}</p>}
-      <ScheduleFormModal editingSchedule={editing} defaultDate={new Date()} onClose={() => { if (!busy) setEditing(null); }} onSave={body => void mutate(editing.id, 'PUT', body)} />
+      <ScheduleFormModal editingSchedule={editing} defaultDate={new Date()} onClose={dismissEditor} onSave={body => void mutate(editing.id, 'PUT', body)} />
     </div>}
-  </dialog>;
+  </dialog>, document.body);
 }

@@ -36,8 +36,16 @@ const server = http.createServer((req, res) => {
       });
       const page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
       await page.goto(base + '/today');
-      const trigger = page.getByRole('button', { name: '无固定期限待办 · 查看全部' });
+      const trigger = page.getByRole('button', { name: '查看全部挂起待办' });
       await trigger.click(); const drawer = page.getByRole('dialog');
+      await drawer.getByText('已完成合成待办', { exact: true }).waitFor();
+      const bounds = await drawer.boundingBox();
+      assert(Math.abs(bounds.x + bounds.width / 2 - width / 2) < 2, 'dialog horizontally centered');
+      assert(Math.abs(bounds.y + bounds.height / 2 - height / 2) < 2, 'dialog vertically centered');
+      await page.mouse.click(3, height / 2);
+      await drawer.waitFor({ state: 'detached' });
+      assert(await trigger.evaluate(el => el === document.activeElement));
+      await trigger.click();
       await drawer.getByText('已完成合成待办', { exact: true }).waitFor();
       await drawer.getByRole('button', { name: '设为未完成', exact: true }).click();
       await page.waitForFunction(() => document.querySelector('option[value="pending"]')?.textContent === '未完成（2）');
@@ -46,7 +54,7 @@ const server = http.createServer((req, res) => {
       await drawer.getByRole('button', { name: '详情', exact: true }).last().click();
       await drawer.getByText('2020-01-01：合成记录', { exact: true }).waitFor();
       for (const theme of ['light', 'dark']) {
-        await page.evaluate(theme => document.documentElement.setAttribute('theme-mode', theme), theme);
+        await page.evaluate(theme => document.documentElement.classList.toggle('dark', theme === 'dark'), theme);
         assert.equal(await drawer.evaluate(el => el.scrollWidth > el.clientWidth + 1), false);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
         await page.screenshot({ path: path.join(out, `${width}-${theme}.png`) });
@@ -56,6 +64,7 @@ const server = http.createServer((req, res) => {
       await drawer.getByRole('button', { name: '编辑', exact: true }).last().click();
       await drawer.locator('input[type=checkbox]').first().uncheck();
       await drawer.getByText('选择日期', { exact: true }).waitFor();
+      page.once('dialog', dialog => dialog.accept());
       await drawer.getByRole('button', { name: '取消', exact: true }).click();
       await drawer.getByLabel('状态', { exact: true }).selectOption('completed');
       assert.equal(await drawer.locator('article').count(), 1);

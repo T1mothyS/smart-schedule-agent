@@ -1,6 +1,6 @@
 import { BookOpen, Download, RefreshCw, Search, SlidersHorizontal } from 'lucide-react';
 import { lazy, useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { FeatureBoundary } from './FeatureBoundary';
 import { DEFAULT_LIBRARY_SORT, downloadResponse, formatTime, isLibrarySort, kindLabels, LibraryEntry, LibraryKind, LibrarySort, LibraryType, readError, sortLabels, statusLabels, typeLabels } from './library/library-shared';
@@ -172,5 +172,5 @@ function LibraryCard({ entry, onOpen }: { entry: LibraryEntry; onOpen: () => voi
 }
 export function LibraryPage() {
   const { id } = useParams<{ id: string }>();
-  return id ? <FeatureBoundary key={id}><LibraryDetailPage id={id} /></FeatureBoundary> : <LibraryHomePage />;
+  return id ? <FeatureBoundary key={id} navigation={<Link className="feature-reader-back" to="/library">← 返回</Link>}><LibraryDetailPage id={id} /></FeatureBoundary> : <LibraryHomePage />;
 }

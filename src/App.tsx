@@ -1,6 +1,6 @@
 import { CalendarDays } from 'lucide-react';
 import { lazy, useEffect, useRef, useState } from 'react';
-import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { ActionCenterPage } from './components/ActionCenterPage';
 import { AppShell } from './components/AppShell';
 import { FeatureBoundary } from './components/FeatureBoundary';
@@ -88,6 +88,7 @@ function AppContent() {
   const location = useLocation();
   const navigate = useNavigate();
   const isToolsPage = location.pathname === '/tools' || location.pathname === '/tools/';
+  const isLibraryReader = /^\/library\/[^/]+\/?$/.test(location.pathname);
   const activeSection: 'today' | 'schedule' | 'assistant' | 'reminders' | 'reports' | 'library' | null = isToolsPage ? null : location.pathname.startsWith('/reports') ? 'reports' : location.pathname.startsWith('/library') ? 'library' : location.pathname === '/schedule' ? 'schedule' : location.pathname === '/assistant' ? 'assistant' : location.pathname === '/reminders' ? 'reminders' : 'today';
   const changeSection = (section: 'today' | 'schedule' | 'assistant' | 'reminders' | 'reports' | 'library') => navigate(section === 'schedule' ? '/schedule' : section === 'assistant' ? '/assistant' : section === 'reminders' ? '/reminders' : section === 'reports' ? '/reports' : section === 'library' ? '/library' : '/today');
 
@@ -105,6 +106,7 @@ function AppContent() {
   return (
     <>
       <AppShell
+        mobileReader={isLibraryReader}
         activeSection={activeSection}
         onSectionChange={changeSection}
         theme={theme}
@@ -114,7 +116,7 @@ function AppContent() {
         user={user}
         onLogout={logout}
       >
-        <FeatureBoundary key={activeSection ?? 'tools'}>
+        <FeatureBoundary key={activeSection === 'library' ? location.pathname : activeSection ?? 'tools'} navigation={isLibraryReader ? <Link className="feature-reader-back" to="/library">← 返回</Link> : undefined}>
         {activeSection === null ? <ToolsPage /> : activeSection === 'today' ? <ActionCenterPage /> : activeSection === 'schedule' ? (
           <SchedulePage user={user} />
         ) : activeSection === 'assistant' ? <AiAssistantPage /> : activeSection === 'reminders' ? (

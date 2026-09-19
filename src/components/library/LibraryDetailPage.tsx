@@ -227,7 +227,9 @@ export function LibraryDetailPage({ id }: { id: string }) {
   }, [tocItems]);
 
   useEffect(() => {
-    const toc = tocRef.current;
+    const toc = window.matchMedia('(max-width: 640px)').matches
+      ? tocRef.current?.querySelector<HTMLElement>('.library-toc-list')
+      : tocRef.current;
     if (!toc || !activeTocId) return;
     const target = Array.from(toc.querySelectorAll<HTMLElement>('[data-toc-id]'))
       .find(item => item.dataset.tocId === activeTocId);
@@ -240,7 +242,7 @@ export function LibraryDetailPage({ id }: { id: string }) {
     const needsVerticalScroll = verticalOverflow && (targetRect.top < tocRect.top || targetRect.bottom > tocRect.bottom);
     if (!needsHorizontalScroll && !needsVerticalScroll) return;
     const nextLeft = needsHorizontalScroll
-      ? Math.min(toc.scrollWidth - toc.clientWidth, Math.max(0, toc.scrollLeft + targetRect.left - tocRect.left - (toc.clientWidth - targetRect.width) / 2))
+      ? Math.min(toc.scrollWidth - toc.clientWidth, Math.max(0, toc.scrollLeft + targetRect.left - tocRect.left - Math.max(0, (toc.clientWidth - targetRect.width) / 2)))
       : toc.scrollLeft;
     const nextTop = needsVerticalScroll
       ? Math.min(toc.scrollHeight - toc.clientHeight, Math.max(0, toc.scrollTop + targetRect.top - tocRect.top - (toc.clientHeight - targetRect.height) / 2))
@@ -316,8 +318,10 @@ export function LibraryDetailPage({ id }: { id: string }) {
     if (destination !== current) navigate(destination);
   };
 
-  if (loading) return <div className="library-page"><div className="library-state"><RefreshCw size={24} className="spin" /><span>正在加载知识详情…</span></div></div>;
-  if (error && !detail) return <div className="library-page"><div className="library-state" role="alert"><BookOpen size={30} /><strong>知识详情暂时无法加载</strong><span>{error}</span><button type="button" className="library-secondary-button" onClick={() => void load()}>重试</button></div></div>;
+  const readerBack = <button type="button" className="library-back-button library-reader-back" onClick={() => navigate('/library')}><ArrowLeft size={20} aria-hidden="true" />返回</button>;
+  const readerStateNav = <nav className="library-reader-state-nav" aria-label="阅读导航">{readerBack}</nav>;
+  if (loading) return <div className="library-page library-detail-page">{readerStateNav}<div className="library-state"><RefreshCw size={24} className="spin" /><span>正在加载知识详情…</span></div></div>;
+  if (error && !detail) return <div className="library-page library-detail-page">{readerStateNav}<div className="library-state" role="alert"><BookOpen size={30} /><strong>知识详情暂时无法加载</strong><span>{error}</span><button type="button" className="library-secondary-button" onClick={() => void load()}>重试</button></div></div>;
   if (!detail) return null;
   const entry = detail.entry;
   const title = entry.title || entry.summary || '未命名知识碎片';
@@ -340,10 +344,11 @@ export function LibraryDetailPage({ id }: { id: string }) {
         <div className="library-detail-meta"><span>更新于 {formatTime(entry.updatedAt)}</span><span>来源：{entry.sourceType}</span>{entry.tags.map(tag => <span className="library-tag" key={tag}>#{tag}</span>)}</div>
       </header>
       <div className="library-detail-layout">
-        {tocItems.length > 0 && (
-          <nav ref={tocRef} className="library-toc" aria-label="文章章节导航">
+          <nav ref={tocRef} className={`library-toc${tocItems.length ? '' : ' library-toc-empty'}`} aria-label="文章章节导航">
+            {readerBack}
             <div className="library-toc-heading"><span className="library-eyebrow">CONTENTS</span><strong>章节导航</strong></div>
             <div className="library-toc-list">
+              {!tocItems.length && <span className="library-toc-placeholder">本文暂无章节</span>}
               {tocItems.map(item => (
                 <button
                   key={item.id}
@@ -358,7 +363,6 @@ export function LibraryDetailPage({ id }: { id: string }) {
               ))}
             </div>
           </nav>
-        )}
         <article className="library-document">
           <div ref={markdownRef} className="chat-markdown library-markdown" onClick={handleMarkdownClick} dangerouslySetInnerHTML={{ __html: entry.html || '' }} />
         </article>

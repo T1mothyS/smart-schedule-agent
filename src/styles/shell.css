@@ -107,6 +107,9 @@
 .suspended-todo-title { min-width: 0; display: flex; align-items: center; gap: 11px; }
 .suspended-todo-title h2 { margin: 0 0 3px; color: var(--td-text-color-primary); font-size: 17px; }
 .suspended-todo-title span { color: var(--td-text-color-secondary); font-size: 12px; }
+.suspended-todo-title-row { display: flex; align-items: center; gap: 4px; }
+.suspended-todo-title-row h2 { margin-bottom: 0; }
+.suspended-todo-view-all { flex: 0 0 44px; width: 44px; height: 44px; min-height: 44px; color: var(--td-brand-color); }
 .suspended-todo-icon { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 11px; color: #2563eb; background: rgba(37, 99, 235, .12); }
 .suspended-todo-head > strong { display: grid; place-items: center; min-width: 28px; height: 28px; padding: 0 7px; border-radius: 9px; color: #2563eb; background: rgba(37, 99, 235, .1); }
 .suspended-todo-row { background: rgba(37, 99, 235, .025); }
@@ -330,4 +333,10 @@
     border-bottom: 1px solid rgba(148, 163, 184, .2) !important;
   }
   .schedule-workspace-body > .flex-1 { min-height: 420px; }
+}
+.feature-status-navigation:empty { display: none; }
+.feature-reader-back { display: inline-flex; align-items: center; min-height: 44px; padding: 12px; color: var(--td-text-color-primary); }
+@media (max-width: 640px) {
+  .app-shell-mobile-reader > .app-topbar { display: none; }
+  .feature-reader-back { min-height: 104px; }
 }

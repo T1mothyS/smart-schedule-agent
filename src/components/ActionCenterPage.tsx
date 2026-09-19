@@ -1,4 +1,4 @@
-import { CalendarClock, CheckCircle2, ChevronDown, Edit3, Mail, MoreVertical, Paperclip, RefreshCw, Trash2, X } from 'lucide-react';
+import { ArrowUpRight, CalendarClock, CheckCircle2, ChevronDown, Edit3, Mail, MoreVertical, Paperclip, RefreshCw, Trash2, X } from 'lucide-react';
 import { KeyboardEvent, type ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
@@ -299,8 +299,9 @@ function ActionList({ title, hint, items, tone, menuScope, headerControl, onComp
   </section>;
 }
 
-function SuspendedTodoSection({ items, onComplete, onEdit, onMenuAction, openMenuId, setOpenMenuId, completingId }: {
+function SuspendedTodoSection({ items, onViewAll, onComplete, onEdit, onMenuAction, openMenuId, setOpenMenuId, completingId }: {
   items: ActionItem[];
+  onViewAll: () => void;
   onComplete: (item: ActionItem) => void;
   onEdit: (item: ActionItem) => void;
   onMenuAction: (item: ActionItem, action: ActionMenuAction) => void;
@@ -312,7 +313,7 @@ function SuspendedTodoSection({ items, onComplete, onEdit, onMenuAction, openMen
     <div className="suspended-todo-head">
       <div className="suspended-todo-title">
         <div className="suspended-todo-icon"><CalendarClock size={19} /></div>
-        <div><h2>挂起待办</h2><span>没有具体执行日期，完成前会一直保留在这里</span></div>
+        <div><div className="suspended-todo-title-row"><h2>挂起待办</h2><button type="button" className="icon-button suspended-todo-view-all" title="查看全部" aria-label="查看全部挂起待办" onClick={onViewAll}><ArrowUpRight size={18} aria-hidden="true" /></button></div><span>没有具体执行日期，完成前会一直保留在这里</span></div>
       </div>
       <strong>{items.length}</strong>
     </div>
@@ -682,11 +683,10 @@ export function ActionCenterPage() {
     </header>
 
     {sendNotice && <div className={'action-inline-notice ' + sendNotice.tone}>{sendNotice.text}</div>}
-    <button className="secondary-button" onClick={() => setShowUnscheduled(true)}>无固定期限待办 · 查看全部</button>
     {showUnscheduled && <UnscheduledTodoDrawer onClose={() => setShowUnscheduled(false)} onChanged={() => void loadActions(false)} />}
 
     {loading ? <div className="empty-panel"><div className="loading-dot" />正在整理今天的行动</div> : <>
-      <SuspendedTodoSection items={data.unscheduled} onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />
+      <SuspendedTodoSection items={data.unscheduled} onViewAll={() => setShowUnscheduled(true)} onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />
       <ActionList title="今天" hint="" items={data.today} tone="normal" menuScope="today" onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />
       <ActionList title="明天" hint="" items={data.tomorrow} tone="normal" menuScope="tomorrow" onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />
       <ActionList title="即将到期" hint="" items={data.upcoming} tone="warning" menuScope="upcoming" headerControl={<select aria-label="即将到期筛选范围" value={days} onChange={event => setDays(Number(event.target.value))}><option value={3}>未来 3 天</option><option value={7}>未来 7 天</option><option value={14}>未来 14 天</option></select>} onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />

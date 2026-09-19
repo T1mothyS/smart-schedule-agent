@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 当前规范、操作手册、历史证据与工程验证入口。
-- Last verified commit/version: `8854a38` / `0.21.0-260915.0924`（2026-09-15，源码基线；不代表生产版本）。
+- Last verified commit/version: `0.27.1-260919.1533`（2026-09-19，索引与本轮文档；各领域验证时点见对应文档，不代表生产版本）。
 - Authority: 源码、自动测试与实际构建优先；仍有效的 AGENTS 硬约束其次。
 - Update trigger: 新增/移动文档，修改 API、数据归属、媒体或验收规则。
 - Supersedes: 无；现有文档路径保留。
@@ -15,6 +15,7 @@
 | [AGENTS](../AGENTS.md) | Agent 安全、授权、协作和验证规则 | AUTHORITATIVE |
 | [项目地图](../PROJECT-MAP.md) | 领域/跨项目边界与任务路由 | LIVING |
 | [架构](ARCHITECTURE.md) | 当前运行时、数据所有权和实现边界 | LIVING |
+| [日历数据人话版](CALENDAR-DATA-GUIDE.md) | 事项种类、填写字段、例子及兼容包袱 | LIVING |
 | [测试矩阵](TEST-MATRIX.md) | 自动化、浏览器、生产各自能证明什么 | LIVING |
 | [UI 规范](UI-GUIDELINES.md) | 布局、主题、交互与响应式要求 | AUTHORITATIVE / LIVING |
 | [Cloud 日报](CHATGPT-WORK-CLOUD.md) | OAuth/MCP、内容、媒体和发布合同；末尾历史区单独标记 | CONTRACT |
@@ -41,6 +42,7 @@
 | 文档 | 分类 | 不能用于 |
 |---|---|---|
 | [2026-09-05 Phase 1 审计](PHASE-1-AUDIT.md) | AUDIT-SNAPSHOT | 直接引用为当前文件规模/风险状态 |
+| [2026-09-19 收口增量审计](CLOSEOUT-AUDIT-20260919.md) | AUDIT-SNAPSHOT | 推断依赖告警已修复、生产已部署或完整安全认证 |
 | [2026-09-18 荣耀 CalDAV 初测](CALDAV-HONOR-POC-TEST-REPORT-20260918.md) | USER-TEST-SNAPSHOT | 推断手机更新删除、实际提醒和后台可靠性已通过 |
 | [Settings V2 验证](SETTINGS-V2-VERIFICATION.md) | VERIFICATION-SNAPSHOT | 当前 HEAD 的浏览器验收 |
 | [Calendar Design QA](../design-qa.md) | VERIFICATION-SNAPSHOT | 推断当前左栏布局或当前已验证 |
