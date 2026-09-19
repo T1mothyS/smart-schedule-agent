@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: `375469e` + Phase 5 CSS/验证收尾 / `0.21.4-260916.0715`（2026-09-16，本地源码；其他领域以各节证据为准）。
+- Last verified commit/version: AI 记事板合并按钮 / `0.29.0-260920.0727`（2026-09-20，本地源码与专项测试；其他领域以各节证据为准）。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
 - Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
@@ -80,7 +80,7 @@ flowchart LR
 | `/mcp` 的 `daily_report.publish` | Work Cloud | Shadow 校验或正式发布 Cloud 日报 | OAuth scope；服务端固定 `source=cloud`；`dry_run=true` 只返回 `VALIDATED_NOT_PUBLISHED`，`false` 返回 `PUBLISHED` 并写入生产记录 |
 | `/api/daily-report/delivery-policy` | 登录用户 | 读取/保存本地与 Cloud 来源接收设置 | 只影响下一次正式发布后的网页和邮件接收；不暂停任务，不删除候选或历史 |
 | `/api/daily-reports`、`/reports/:date` | 登录用户 | 查看正式日报、候选对照和来源日期详情 | 登录态、当前账号隔离；正式列表与候选视图分开；同日 Local/Cloud 可切换对照 |
-| `/api/note-items` | 登录用户 | AI 记事 CRUD、颜色、完成/恢复和导出所需数据 | JWT 身份与 `user_id` 所有权；颜色只允许预设枚举 |
+| `/api/note-items` | 登录用户 | AI 记事 CRUD、颜色、完成/恢复、两步合并和导出所需数据 | JWT 身份与 `user_id` 所有权；颜色只允许预设枚举；合并原子追加正文并将来源移入废纸篓 |
 | `/api/library`、`/library` | 登录用户 | Fragment/Article 列表、搜索、阅读、评论和导出 | 当前账号隔离；正文、类型、标签和关系只读；Markdown 由服务端安全渲染 |
 | `/api/integrations/library` 及生命周期子路径 | 本地 Markdown 迁移脚本 | 使用独立 Knowledge Publish Token 执行 `publish/retire/restore/purge` | 只保存 token 哈希；`sourceId + user_id` 定位文章；不拥有登录、读取列表、评论、日程或记事权限 |
 | `/api/ai-chat` | 登录用户 | 普通问答、天气和待确认计划 | 普通对话可生成计划，但计划写入仍需用户确认；只有明确提到“知识库”或 `Knowledge Library` 才检索知识库；旧专用 `create_todo` 参数拒绝 |
@@ -105,7 +105,7 @@ flowchart LR
 
 | 任务 | 首先查看 | 不应越过的边界 |
 | --- | --- | --- |
-| 日记/记事板 UI、快捷键、导出 | `src/components/NoteBoard.tsx`、`src/components/AiSchedulePanel.tsx`、`src/utils/note-export.ts` | 不让 LLM 负责布局；导出在前端确定性生成 |
+| 日记/记事板 UI、快捷键、导出 | `src/components/NoteBoard.tsx`、`src/components/AiSchedulePanel.tsx`、`src/utils/note-export.ts` | 不让 LLM 负责布局；导出在前端确定性生成；合并不复用导出复选框 |
 | 记事数据、迁移、备份恢复 | `server/note-item-service.ts`、`server/database/`（兼容入口 `db.ts`）、`server/backup-service.ts` | 保留旧 `linked_schedule_ids` 兼容字段；不跨账号读取 |
 | 知识库、Markdown 迁移 | `server/library-service.ts`、`server/library-markdown.ts`、独立 Knowledge Library 项目的 `scripts/process-migration-folder.ps1`、`docs/knowledge-library-operations.md` | 普通处理校验通过后默认 `publish`；`retire/restore/purge` 必须显式选择；本地关系和正文清理后再通过令牌写入；不直接修改运行中的数据库 |
 | AI 计划确认 | `server/routes/ai.ts`、`server/ai-plan.ts`、`server/operation-service.ts` | 先生成待确认草稿；确认结果与正式写入一起持久化；禁止旧专用入口自动完成来源记事 |

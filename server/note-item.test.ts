@@ -186,3 +186,138 @@ test('记事进入加密备份和可读导出，旧备份缺少颜色或记事�
   db.clearUserData(user.id);
   assert.deepEqual(noteItems.listNoteItems(user.id), []);
 });
+
+test('记事合并按目标在前追加来源，并以事务移入废纸篓', async () => {
+  const mergeUser = db.createUser({
+    id: 'note-merge-user',
+    email: 'note-merge-user@example.com',
+    password_hash: 'not-a-real-password',
+    role: 'user',
+    disabled: 0,
+    created_at: now,
+    updated_at: now,
+  });
+  const mergeOtherUser = db.createUser({
+    id: 'note-merge-other-user',
+    email: 'note-merge-other-user@example.com',
+    password_hash: 'not-a-real-password',
+    role: 'user',
+    disabled: 0,
+    created_at: now,
+    updated_at: now,
+  });
+  const mergeToken = api.signUserToken(mergeUser);
+  const mergeOtherToken = api.signUserToken(mergeOtherUser);
+  const server = http.createServer(api.app);
+  const port = await listen(server);
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const request = (pathname: string, token: string, init: RequestInit = {}) => fetch(baseUrl + pathname, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...(init.headers || {}) },
+  });
+
+  try {
+    const [source] = noteItems.createNoteItems(mergeUser.id, ['来源第一行\n来源第二行'], 'rose');
+    const [target] = noteItems.createNoteItems(mergeUser.id, ['目标正文'], 'blue');
+    const mergedResponse = await request(`/api/note-items/${source.id}/merge`, mergeToken, {
+      method: 'POST',
+      body: JSON.stringify({ targetId: target.id }),
+    });
+    assert.equal(mergedResponse.status, 200);
+    const merged = await mergedResponse.json();
+    assert.equal(merged.target.id, target.id);
+    assert.equal(merged.target.content, '目标正文\n来源第一行\n来源第二行');
+    assert.equal(merged.target.completed, false);
+    assert.equal(merged.target.color, 'blue');
+    assert.equal(merged.source.id, source.id);
+    assert.equal(merged.source.completed, true);
+    assert.equal(merged.source.content, source.content);
+    assert.equal(merged.source.color, 'rose');
+
+    const [trashSource] = noteItems.createNoteItems(mergeUser.id, ['废纸篓来源'], 'green');
+    await request(`/api/note-items/${trashSource.id}`, mergeToken, {
+      method: 'PATCH',
+      body: JSON.stringify({ completed: true }),
+    });
+    const [activeTarget] = noteItems.createNoteItems(mergeUser.id, ['进行中目标'], 'neutral');
+    const trashToActive = await request(`/api/note-items/${trashSource.id}/merge`, mergeToken, {
+      method: 'POST',
+      body: JSON.stringify({ targetId: activeTarget.id }),
+    });
+    assert.equal(trashToActive.status, 200);
+    const trashToActiveResult = await trashToActive.json();
+    assert.equal(trashToActiveResult.target.content, '进行中目标\n废纸篓来源');
+    assert.equal(trashToActiveResult.target.completed, false);
+    assert.equal(trashToActiveResult.source.completed, true);
+
+    const [activeSource] = noteItems.createNoteItems(mergeUser.id, ['进行中来源'], 'purple');
+    const [trashTarget] = noteItems.createNoteItems(mergeUser.id, ['废纸篓目标'], 'amber');
+    await request(`/api/note-items/${trashTarget.id}`, mergeToken, {
+      method: 'PATCH',
+      body: JSON.stringify({ completed: true }),
+    });
+    const activeToTrash = await request(`/api/note-items/${activeSource.id}/merge`, mergeToken, {
+      method: 'POST',
+      body: JSON.stringify({ targetId: trashTarget.id }),
+    });
+    assert.equal(activeToTrash.status, 200);
+    const activeToTrashResult = await activeToTrash.json();
+    assert.equal(activeToTrashResult.target.content, '废纸篓目标\n进行中来源');
+    assert.equal(activeToTrashResult.target.completed, true);
+    assert.equal(activeToTrashResult.target.color, 'amber');
+    assert.equal(activeToTrashResult.source.completed, true);
+
+    const [sameNote] = noteItems.createNoteItems(mergeUser.id, ['不能合并自己']);
+    const sameResponse = await request(`/api/note-items/${sameNote.id}/merge`, mergeToken, {
+      method: 'POST',
+      body: JSON.stringify({ targetId: sameNote.id }),
+    });
+    assert.equal(sameResponse.status, 400);
+    assert.match(String((await sameResponse.json()).error), /不能相同/);
+    assert.equal(noteItems.getNoteItem(mergeUser.id, sameNote.id)?.content, '不能合并自己');
+
+    const missingTargetResponse = await request(`/api/note-items/${sameNote.id}/merge`, mergeToken, {
+      method: 'POST',
+      body: JSON.stringify({ targetId: 'missing-target' }),
+    });
+    assert.equal(missingTargetResponse.status, 404);
+    const missingSourceResponse = await request('/api/note-items/missing-source/merge', mergeToken, {
+      method: 'POST',
+      body: JSON.stringify({ targetId: sameNote.id }),
+    });
+    assert.equal(missingSourceResponse.status, 404);
+
+    const [longSource] = noteItems.createNoteItems(mergeUser.id, ['s'.repeat(1_001)]);
+    const [longTarget] = noteItems.createNoteItems(mergeUser.id, ['t'.repeat(999)]);
+    const tooLongResponse = await request(`/api/note-items/${longSource.id}/merge`, mergeToken, {
+      method: 'POST',
+      body: JSON.stringify({ targetId: longTarget.id }),
+    });
+    assert.equal(tooLongResponse.status, 400);
+    assert.match(String((await tooLongResponse.json()).error), /2,000/);
+    const unchangedLongSource = noteItems.getNoteItem(mergeUser.id, longSource.id);
+    const unchangedLongTarget = noteItems.getNoteItem(mergeUser.id, longTarget.id);
+    assert.equal(unchangedLongSource?.content, 's'.repeat(1_001));
+    assert.equal(unchangedLongSource?.completed, false);
+    assert.equal(unchangedLongTarget?.content, 't'.repeat(999));
+    assert.equal(unchangedLongTarget?.completed, false);
+
+    const [foreignTarget] = noteItems.createNoteItems(mergeOtherUser.id, ['其他账号目标']);
+    const crossAccountResponse = await request(`/api/note-items/${sameNote.id}/merge`, mergeToken, {
+      method: 'POST',
+      body: JSON.stringify({ targetId: foreignTarget.id }),
+    });
+    assert.equal(crossAccountResponse.status, 404);
+    const [foreignSource] = noteItems.createNoteItems(mergeOtherUser.id, ['其他账号来源']);
+    const foreignSourceResponse = await request(`/api/note-items/${foreignSource.id}/merge`, mergeToken, {
+      method: 'POST',
+      body: JSON.stringify({ targetId: sameNote.id }),
+    });
+    assert.equal(foreignSourceResponse.status, 404);
+    assert.equal((await request('/api/note-items', mergeOtherToken)).status, 200);
+  } finally {
+    db.clearUserData(mergeUser.id);
+    db.clearUserData(mergeOtherUser.id);
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});

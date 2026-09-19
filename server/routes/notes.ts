@@ -39,6 +39,21 @@ export function createNotesRouter({ authenticate }: { authenticate: RequestHandl
     }
   });
 
+  app.post('/api/note-items/:id/merge', authenticate, (req, res) => {
+    try {
+      const userId = (req as any).user.userId;
+      const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+      const unknownFields = Object.keys(body).filter(key => key !== 'targetId');
+      if (unknownFields.length) return res.status(400).json({ error: '合并记事只需要 targetId' });
+      if (typeof body.targetId !== 'string' || !body.targetId.trim()) return res.status(400).json({ error: '目标记事不正确' });
+      const merged = noteItemService.mergeNoteItems(userId, req.params.id, body.targetId.trim());
+      if (!merged) return res.status(404).json({ error: '来源或目标记事不存在或无权访问' });
+      res.json(merged);
+    } catch (error: any) {
+      res.status(400).json({ error: error?.message || '合并记事失败' });
+    }
+  });
+
   app.delete('/api/note-items/:id', authenticate, (req, res) => {
     try {
       const userId = (req as any).user.userId;

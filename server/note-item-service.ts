@@ -28,6 +28,11 @@ export interface NoteItem {
   updatedAt: string;
 }
 
+export interface MergedNoteItems {
+  source: NoteItem;
+  target: NoteItem;
+}
+
 export function isNoteColor(value: unknown): value is NoteColor {
   return typeof value === 'string' && (NOTE_COLORS as readonly string[]).includes(value);
 }
@@ -126,6 +131,26 @@ export function updateNoteItem(userId: string, id: string, updates: { content?: 
   if (!Object.keys(patch).length) return toNoteItem(existing);
   const updated = db.updateNoteItem(id, userId, patch);
   return updated ? toNoteItem(updated) : undefined;
+}
+
+export function mergeNoteItems(userId: string, sourceId: string, targetId: string): MergedNoteItems | undefined {
+  if (sourceId === targetId) throw new Error('来源记事和目标记事不能相同');
+  const source = db.getNoteItem(sourceId, userId);
+  const target = db.getNoteItem(targetId, userId);
+  if (!source || !target) return undefined;
+
+  const mergedContent = `${target.content}\n${source.content}`;
+  if (mergedContent.length > NOTE_CONTENT_MAX_LENGTH) {
+    throw new Error(`合并后的记事不能超过 ${NOTE_CONTENT_MAX_LENGTH.toLocaleString('en-US')} 个字符`);
+  }
+
+  const completedAt = new Date().toISOString();
+  const merged = db.mergeNoteItems(sourceId, userId, targetId, mergedContent, completedAt);
+  if (!merged) return undefined;
+  return {
+    source: toNoteItem(merged.source),
+    target: toNoteItem(merged.target),
+  };
 }
 
 export function deleteNoteItem(userId: string, id: string): boolean {

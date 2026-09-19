@@ -4,7 +4,7 @@
 
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: 项目成长与顶部入口 / `0.28.0-260919.2218`（2026-09-19，本地回归；其他领域以各节证据为准）。
+- Last verified commit/version: AI 记事板合并按钮 / `0.29.0-260920.0727`（2026-09-20，本地专项回归；其他领域以各节证据为准）。
 - CalDAV 补充验证：2026-09-18，隔离 POC 与主应用回归；仅覆盖下述独立入口，真机尚未验证。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
@@ -37,7 +37,7 @@
 | 通知与邮件 | notification-service.test.ts、notification-preferences-client.test.ts、email-service.test.ts、user-mail-api.test.ts | 设置渠道、免打扰、失败/重试和错误状态 | SMTP accepted 与收件箱到达分开验证 |
 | 日报 | daily-report*.test.ts、daily-digest-template.test.ts、daily-email-template.test.ts | /reports 列表、/reports/:date 阅读、媒体、版本更新和显式重发 | 发布接口、媒体托管、队列、SMTP 和收件箱逐层核对 |
 | AI 计划和导入 | ai-intent.test.ts、ai-json.test.ts、ai-plan.test.ts、codebuddy-config.test.ts | /assistant 和 /import 生成草稿、确认前不写入、错误降级 | 真实 AI 另行授权；验证账号 Key 和服务限流 |
-| AI 记事 | note-item.test.ts、note-export.test.ts、note-color-migration.test.ts | NoteBoard 创建/编辑/完成/恢复/删除、TXT/CSV、窄屏抽屉 | 生产数据备份、恢复和账号隔离；不把记事当待办 |
+| AI 记事 | note-item.test.ts、note-export.test.ts、note-color-migration.test.ts | NoteBoard 创建/编辑/完成/恢复、两步合并、跨分区目标、超长错误、TXT/CSV、窄屏抽屉 | 生产数据备份、恢复和账号隔离；不把记事当待办 |
 | 设置 | Settings V2 浏览器证据、notification-preferences-client.test.ts、user-mail-api.test.ts | 390×844、430×932、768×1024、1440×900；浅色/暗色、长文本、保存/取消/删除/撤销 | 真实设置读取/保存需授权；不把 synthetic API 证据写成生产验收 |
 | Tools 挂载应用 | protected-tools.test.ts、scripts/tools-browser-smoke.cjs、ToolsPage、`GET /api/tools` | Settings → 挂载工具 → Tools；四视口、浅色/暗色、卡片链接、键盘焦点、无横向溢出；三个 HTML 应用真实打开效果 | 真实登录 Cookie、工具页面、Plotly/支付宝 iframe 降级和浏览器本地数据需单独授权验收 |
 | 附件、导出和备份 | export-service.test.ts、core.test.ts、attachment 相关实现 | 下载、大小/MIME、检查备份、合并/替换取消路径 | 备份前快照、恢复演练、附件权限和回滚 |

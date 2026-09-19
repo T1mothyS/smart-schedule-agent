@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronUp, CircleX, Copy, Forward, ListPlus, Pencil, RotateCcw, StickyNote, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, CircleX, Copy, Forward, GitMerge, ListPlus, Pencil, RotateCcw, StickyNote, X } from 'lucide-react';
 import { formatNotesAsCsv, formatNotesAsText, noteExportFilename } from '../utils/note-export';
 import { NOTE_COLORS, NOTE_COLOR_LABELS, NOTE_COLOR_STYLES, normaliseNoteColor, type NoteColor } from '../utils/note-colors';
 
@@ -26,7 +26,7 @@ interface NoteBoardProps {
   onToggleCompleted: (note: NoteItem) => Promise<void>;
   onEdit: (note: NoteItem, content: string) => Promise<void>;
   onColorChange: (note: NoteItem, color: NoteColor) => Promise<void>;
-  onDelete: (note: NoteItem) => Promise<void>;
+  onMerge: (source: NoteItem, target: NoteItem) => Promise<void>;
   onSendToAi: (note: NoteItem) => void;
 }
 
@@ -93,6 +93,9 @@ function NoteRow({
   saving,
   colorPickerOpen,
   copyFeedback,
+  mergeSourceSelected,
+  mergeSourceExists,
+  mergeBusy,
   onToggleSelected,
   onStartEdit,
   onEditValueChange,
@@ -100,7 +103,7 @@ function NoteRow({
   onCancelEdit,
   onChangeColor,
   onToggleCompleted,
-  onDelete,
+  onMerge,
   onCopy,
   onSendToAi,
   onToggleColorPicker,
@@ -114,6 +117,9 @@ function NoteRow({
   saving: boolean;
   colorPickerOpen: boolean;
   copyFeedback: CopyFeedback;
+  mergeSourceSelected: boolean;
+  mergeSourceExists: boolean;
+  mergeBusy: boolean;
   onToggleSelected: () => void;
   onStartEdit: () => void;
   onEditValueChange: (value: string) => void;
@@ -121,17 +127,22 @@ function NoteRow({
   onCancelEdit: () => void;
   onChangeColor: (color: NoteColor) => void;
   onToggleCompleted: () => void;
-  onDelete: () => void;
+  onMerge: () => void;
   onCopy: () => void;
   onSendToAi: () => void;
   onToggleColorPicker: () => void;
 }) {
   const color = normaliseNoteColor(note.color);
   const colorStyle = NOTE_COLOR_STYLES[color];
-  const disabled = aiBusy || saving;
+  const disabled = aiBusy || saving || mergeBusy;
+  const mergeTitle = mergeSourceSelected
+    ? '取消合并来源'
+    : mergeSourceExists
+      ? '合并到此记事'
+      : '选择为合并来源';
   return (
     <article
-      className={`note-board-row${note.completed ? ' is-completed' : ''}${colorPickerOpen ? ' is-color-picker-open' : ''}`}
+      className={`note-board-row${note.completed ? ' is-completed' : ''}${colorPickerOpen ? ' is-color-picker-open' : ''}${mergeSourceSelected ? ' is-merge-source' : ''}`}
       style={{ backgroundColor: colorStyle.surface, borderColor: colorStyle.border }}
     >
       <div className="note-board-row-toolbar">
@@ -161,7 +172,17 @@ function NoteRow({
         <button type="button" className="note-board-action" onClick={onToggleCompleted} disabled={disabled} title={note.completed ? '恢复到进行中' : '移入废纸篓'} aria-label={note.completed ? `恢复记事：${note.content}` : `完成记事并移入废纸篓：${note.content}`}>
           {note.completed ? <RotateCcw size={15} /> : <Forward size={15} />}
         </button>
-        <button type="button" className="note-board-action is-danger" onClick={onDelete} disabled={disabled} title="永久删除记事" aria-label={`永久删除记事：${note.content}`}><Trash2 size={15} /></button>
+        <button
+          type="button"
+          className={`note-board-action${mergeSourceSelected ? ' is-merge-source' : ''}`}
+          onClick={onMerge}
+          disabled={disabled}
+          title={mergeTitle}
+          aria-label={`${mergeTitle}：${note.content}`}
+          aria-pressed={mergeSourceSelected}
+        >
+          <GitMerge size={15} />
+        </button>
       </div>
 
       <div className="note-board-row-content">
@@ -214,7 +235,7 @@ export function NoteBoard({
   onToggleCompleted,
   onEdit,
   onColorChange,
-  onDelete,
+  onMerge,
   onSendToAi,
 }: NoteBoardProps) {
   const [completedOpen, setCompletedOpen] = useState(false);
@@ -222,6 +243,8 @@ export function NoteBoard({
   const [editValue, setEditValue] = useState('');
   const [savingId, setSavingId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [mergeSourceId, setMergeSourceId] = useState<string | null>(null);
+  const [mergeBusy, setMergeBusy] = useState(false);
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<{ id: string; kind: CopyFeedback }>({ id: '', kind: null });
   const drawerRef = useRef<HTMLElement>(null);
@@ -240,7 +263,12 @@ export function NoteBoard({
   useEffect(() => {
     setSelectedIds(new Set());
     setColorPickerId(null);
+    setMergeSourceId(previous => previous && notes.some(note => note.id === previous) ? previous : null);
   }, [notes]);
+
+  useEffect(() => {
+    if (!drawerOpen) setMergeSourceId(null);
+  }, [drawerOpen]);
 
   useEffect(() => () => {
     if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
@@ -362,17 +390,37 @@ export function NoteBoard({
     }
   };
 
-  const permanentlyDelete = async (note: NoteItem) => {
-    if (!window.confirm(`永久删除这条记事？\n\n${note.content}`)) return;
+  const mergeNote = async (note: NoteItem) => {
+    if (mergeBusy) return;
+    if (!mergeSourceId) {
+      setMergeSourceId(note.id);
+      setEditingId(null);
+      setColorPickerId(null);
+      return;
+    }
+    if (mergeSourceId === note.id) {
+      setMergeSourceId(null);
+      return;
+    }
+    const source = notes.find(item => item.id === mergeSourceId);
+    if (!source) {
+      setMergeSourceId(null);
+      return;
+    }
+    setMergeBusy(true);
     try {
-      await onDelete(note);
+      await onMerge(source, note);
+      setMergeSourceId(null);
       setSelectedIds(previous => {
         const next = new Set(previous);
+        next.delete(source.id);
         next.delete(note.id);
         return next;
       });
     } catch {
-      // 父组件已显示错误。
+      // 父组件已显示错误；保留来源选择，便于换目标重试。
+    } finally {
+      setMergeBusy(false);
     }
   };
 
@@ -388,6 +436,9 @@ export function NoteBoard({
       saving={savingId === note.id}
       colorPickerOpen={colorPickerId === note.id}
       copyFeedback={copyFeedback.id === note.id ? copyFeedback.kind : null}
+      mergeSourceSelected={mergeSourceId === note.id}
+      mergeSourceExists={mergeSourceId !== null}
+      mergeBusy={mergeBusy}
       onToggleSelected={() => toggleSelected(note.id)}
       onStartEdit={() => startEdit(note)}
       onEditValueChange={setEditValue}
@@ -395,7 +446,7 @@ export function NoteBoard({
       onCancelEdit={cancelEdit}
       onChangeColor={color => { void changeColor(note, color); }}
       onToggleCompleted={() => { void completeOrRestore(note); }}
-      onDelete={() => { void permanentlyDelete(note); }}
+      onMerge={() => { void mergeNote(note); }}
       onCopy={() => { void copyNote(note); }}
       onSendToAi={() => onSendToAi(note)}
       onToggleColorPicker={() => setColorPickerId(current => current === note.id ? null : note.id)}
@@ -429,6 +480,7 @@ export function NoteBoard({
       </div>
       <div className="note-board-body">
         {error && <div className="note-board-error" role="alert">{error}</div>}
+        {mergeSourceId && <div className="note-board-merge-hint" role="status">已选择来源记事，请点击另一张卡片的合并按钮；再次点击来源按钮可取消。复选框仍用于导出。</div>}
         {loading ? <div className="note-board-empty">正在加载记事…</div> : <>
           <section className="note-board-section">
             <div className="note-board-section-head">

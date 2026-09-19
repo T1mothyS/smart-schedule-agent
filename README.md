@@ -384,7 +384,7 @@ cp .env.example .env
 | `src/components/settings/` | Settings V2：Dialog/Layout/Section/Row 统一响应式布局；账户、AI、通知、日报、QQ 邮箱、数据和管理领域组件 |
 | `src/components/AiImportPage.tsx` | 自然语言/截图智能导入、草稿校对与确认 |
 | `src/components/AiSchedulePanel.tsx` | 普通问答、天气查询、待确认日程建议和记事模式的 AI 助手 |
-| `src/components/NoteBoard.tsx` | AI 记事板：桌面侧栏、窄屏抽屉和条目操作 |
+| `src/components/NoteBoard.tsx` | AI 记事板：桌面侧栏、窄屏抽屉、条目操作和两步合并 |
 | `src/utils/note-colors.ts` | 记事预设颜色枚举、标签和主题样式 |
 | `src/utils/note-export.ts` | 当前分区记事的 TXT/CSV 确定性导出 |
 | `src/components/AdminModal.tsx` | 管理员用户管理弹窗 |
@@ -419,7 +419,7 @@ cp .env.example .env
 | `server/daily-email-template.ts` | 每日摘要邮件的天气、进度、分类与完整日程模板 |
 | `server/weather-service.ts` | Open-Meteo 地点搜索、天气读取、缓存、超时和天气代码转换 |
 | `server/export-service.ts` | 当前账号的可读 JSON/CSV 数据导出与表格公式注入防护 |
-| `server/note-item-service.ts` | 账号隔离的 AI 记事 CRUD、批量校验和预设颜色校验 |
+| `server/note-item-service.ts` | 账号隔离的 AI 记事 CRUD、事务合并、批量校验和预设颜色校验 |
 | `server/library-service.ts` | 知识库条目校验、搜索、版本、评论、关系、发布幂等、生命周期和导出 |
 | `server/library-markdown.ts` | 知识库 Markdown 的保守安全渲染和危险链接处理 |
 | `server/library-publish-token-service.ts` | 独立知识库发布令牌的哈希保存、轮换、撤销和鉴权 |
@@ -554,7 +554,7 @@ npm run build
 
 - `/api/auth/*`：验证码、注册、登录和当前用户。
 - `/api/action-center`：今日行动中心聚合。
-- `/api/note-items`：当前账号的 AI 记事条目 CRUD；批量 POST 会按非空行创建条目。
+- `/api/note-items`：当前账号的 AI 记事条目 CRUD；批量 POST 会按非空行创建条目；`POST /api/note-items/:sourceId/merge` 将来源正文追加到目标正文并把来源移入废纸篓，合并受单条 2,000 字符限制。
 - `/api/schedules`、`/api/calendars`、`/api/categories`：日历数据。
 - `/api/cycle-reminders`：周期事务、模板、完成和测试邮件。
 - `/api/notification-preferences`、`/api/notifications`：提醒偏好与发送记录。

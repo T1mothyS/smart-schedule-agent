@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: 项目成长入口与只读数据接口 / `0.28.0-260919.2218`（2026-09-19，本地源码；其他领域以各节证据为准）。
+- Last verified commit/version: AI 记事板合并按钮 / `0.29.0-260920.0727`（2026-09-20，本地源码与专项测试；其他领域以各节证据为准）。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
 - Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
@@ -36,7 +36,7 @@ React/Vite 与 Electron 壳都使用同一套前端页面。Electron 主进程�
 | src/components/ScheduleView.tsx、CalendarView.tsx、ScheduleSidebar.tsx | 日历、日程和分类 |
 | src/components/ReminderPage.tsx | 周期事务、完成和提醒历史 |
 | src/components/AiSchedulePanel.tsx、AiImportPage.tsx | 普通 AI、天气和待确认导入 |
-| src/components/NoteBoard.tsx | AI 记事的 CRUD、颜色、完成和导出 |
+| src/components/NoteBoard.tsx | AI 记事的 CRUD、颜色、完成、事务合并和导出 |
 | src/components/DailyReportsPage.tsx | 日报列表、独立阅读页和显式重发 |
 | src/components/LibraryPage.tsx、library/LibraryDetailPage.tsx | 知识库列表与异步阅读、评论、版本 |
 | src/pages/ToolsPage.tsx | 登录后的挂载应用菜单；不加入产品顶部导航 |
@@ -98,7 +98,7 @@ server/db.ts 保留兼容导出；server/database/connection.ts 拥有连接与�
 | 日程与分类 | ScheduleView、CalendarView | schedule-store、日历 API | 日期、时区、冲突和分类逻辑可测试 |
 | 周期事务与通知 | ReminderPage、ActionCenterPage | reminder-store、notification-service、scheduler | 月末兜底、逾期完成、免打扰和失败重试 |
 | AI | AiSchedulePanel、AiImportPage | AI 服务、ai-plan、ai-import-service | 生成计划不等于写入；必须用户确认 |
-| AI 记事 | NoteBoard | note-item-service | 记事独立于行动中心；导出确定性生成 |
+| AI 记事 | NoteBoard | note-item-service | 记事独立于行动中心；合并以事务更新目标并将来源移入废纸篓；导出确定性生成 |
 | 知识库 | LibraryPage | library-service、library-markdown、library publish API | V2 本地加工、服务器只读呈现、评论、版本、关系原样保存和安全 Markdown；不在服务器做 AI 加工 |
 | 日报 | DailyReportsPage | daily-report API、模板、media service、delivery policy | Local/Cloud 按来源和内容哈希保存；媒体先校验/托管；来源设置决定 `RECEIVED` 或 `CANDIDATE` 及邮件入队 |
 | 完成和附件 | ActionCenterPage | completion、attachment service | 所有权、大小、MIME 和恢复边界 |

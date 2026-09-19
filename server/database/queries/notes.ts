@@ -1,4 +1,4 @@
-import { queryAll, queryOne, run } from '../connection.js';
+import { executeWithoutSave, queryAll, queryOne, run, runTransaction } from '../connection.js';
 import { escapeLike } from './search-utils.js';
 import type { DbNoteItem } from '../types.js';
 import crypto from 'node:crypto';
@@ -68,6 +68,34 @@ export function updateNoteItem(
   values.push(updates.updated_at || new Date().toISOString(), id, userId);
   run(`UPDATE note_items SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, values);
   return getNoteItem(id, userId);
+}
+
+export function mergeNoteItems(
+  sourceId: string,
+  userId: string,
+  targetId: string,
+  mergedContent: string,
+  completedAt: string,
+): { source: DbNoteItem; target: DbNoteItem } | undefined {
+  return runTransaction(() => {
+    const source = getNoteItem(sourceId, userId);
+    const target = getNoteItem(targetId, userId);
+    if (!source || !target) return undefined;
+
+    executeWithoutSave(
+      'UPDATE note_items SET content = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      [mergedContent, completedAt, targetId, userId],
+    );
+    executeWithoutSave(
+      'UPDATE note_items SET completed = 1, completed_at = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      [completedAt, completedAt, sourceId, userId],
+    );
+
+    const updatedSource = getNoteItem(sourceId, userId);
+    const updatedTarget = getNoteItem(targetId, userId);
+    if (!updatedSource || !updatedTarget) throw new Error('合并记事后读取失败');
+    return { source: updatedSource, target: updatedTarget };
+  });
 }
 
 export function deleteNoteItem(id: string, userId: string): boolean {

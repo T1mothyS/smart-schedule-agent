@@ -25,7 +25,7 @@ export interface AiNoteBoardController {
   toggleCompleted: (note: NoteItem) => Promise<void>;
   edit: (note: NoteItem, content: string) => Promise<void>;
   changeColor: (note: NoteItem, color: NoteItem['color']) => Promise<void>;
-  deleteNote: (note: NoteItem) => Promise<void>;
+  merge: (source: NoteItem, target: NoteItem) => Promise<void>;
   sendToAi: (note: NoteItem) => void;
 }
 
@@ -107,19 +107,22 @@ export function useAiNoteBoard({ initialNoteId, onSendToAi }: UseAiNoteBoardOpti
     }
   }, [updateNote]);
 
-  const deleteNote = useCallback(async (note: NoteItem) => {
+  const merge = useCallback(async (source: NoteItem, target: NoteItem) => {
     try {
-      const response = await fetch(`/api/note-items/${encodeURIComponent(note.id)}`, {
-        method: 'DELETE',
-        headers: authHeaders(),
+      const response = await fetch(`/api/note-items/${encodeURIComponent(source.id)}/merge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ targetId: target.id }),
       });
       const data = await readJsonResponse(response);
-      if (!response.ok || !data.success) throw new Error(data.error || '删除记事失败');
-      setNotes(previous => previous.filter(item => item.id !== note.id));
+      if (!response.ok || !data.source || !data.target) throw new Error(data.error || '合并记事失败');
+      setNotes(previous => previous.map(item => (
+        item.id === data.source.id ? data.source : item.id === data.target.id ? data.target : item
+      )));
       setError(null);
-    } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : '删除记事失败');
-      throw deleteError;
+    } catch (mergeError) {
+      setError(mergeError instanceof Error ? mergeError.message : '合并记事失败');
+      throw mergeError;
     }
   }, [authHeaders]);
 
@@ -159,7 +162,7 @@ export function useAiNoteBoard({ initialNoteId, onSendToAi }: UseAiNoteBoardOpti
     toggleCompleted,
     edit,
     changeColor,
-    deleteNote,
+    merge,
     sendToAi,
   };
 }
@@ -181,7 +184,7 @@ export function AiNoteBoardHost({ controller, aiBusy = false }: {
         onToggleCompleted={controller.toggleCompleted}
         onEdit={controller.edit}
         onColorChange={controller.changeColor}
-        onDelete={controller.deleteNote}
+        onMerge={controller.merge}
         onSendToAi={controller.sendToAi}
       />
       {controller.drawerOpen && (
