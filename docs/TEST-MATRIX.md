@@ -78,3 +78,7 @@ node scripts/browser-smoke.cjs '<包含 dist 的隔离源码目录>'
 ## Phase 3 故障与恢复
 
 persistence.test.ts 覆盖原子替换、内存回退、第二库失败、补偿失败停止访问、持久执行结果和用户恢复；persistence-crash.test.ts 在独立子进程中模拟中断并逐字核对恢复；phase3-api.test.ts 覆盖两账号、import/plan 确认失败重试、部分计划失败和周期完成去重。全部加入现有 npm test。具体限制见 [Phase 3 验收](PHASE3-PERSISTENCE-RECOVERY.md)。
+
+## 无固定期限待办管理
+
+`unscheduled-api.test.ts` 覆盖只读、账号隔离、完成历史、状态切换、全天写入校验和旧备份恢复。`scripts/unscheduled-browser-smoke.cjs` 使用构建产物与合成接口验证四个规定视口、浅暗主题、完成记录、完成/恢复、编辑入口、空态/错误、Escape 和返回焦点；使用与既有 browser-smoke 相同的 PLAYWRIGHT_MODULE。不得把本地验证写成生产真机通过。

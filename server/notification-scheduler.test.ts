@@ -151,8 +151,8 @@ test('高优先级固定邮件绕过渠道开关和免打扰，且重复扫描�
   createSchedule(userId, 'priority-todo', '2026-08-27T08:12:00', { type: 'todo' });
   createSchedule(userId, 'medium-event', '2026-08-27T08:10:00', { priority: 'medium' });
   createSchedule(userId, 'completed-event', '2026-08-27T08:10:00', { is_completed: true });
-  createSchedule(userId, 'all-day-event', '2026-08-27T08:10:00', { all_day: true });
-  createSchedule(userId, 'unscheduled-event', '2026-08-27T08:10:00', { is_unscheduled: true });
+  createSchedule(userId, 'all-day-event', '2026-08-27T00:00:00', { all_day: true });
+  createSchedule(userId, 'unscheduled-event', '2026-08-27T08:10:00', { type: 'todo', is_unscheduled: true });
   createSchedule(userId, 'already-started-event', '2026-08-27T07:59:00');
   createSchedule(disabledUserId, 'disabled-user-event', '2026-08-27T08:10:00');
 

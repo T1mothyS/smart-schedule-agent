@@ -13,6 +13,12 @@ import { normaliseScheduleApiFields } from '../schedule-input.js';
 
 export function createSchedulesRouter({ authenticate }: Pick<ReturnType<typeof createAuth>, 'authenticate'>) {
   const app = Router();
+  // Pure read: unlike the general calendar endpoint, never materialize reminder cycles.
+  app.get('/api/schedules/unscheduled', authenticate, (req, res) => {
+    const userId = (req as any).user.userId;
+    const schedules = scheduleStore.getAllSchedules(userId).filter(item => item.type === 'todo' && item.is_unscheduled);
+    res.json({ schedules });
+  });
   app.get("/api/schedules", authenticate, (req, res) => {
     try {
       const userId = (req as any).user?.userId;

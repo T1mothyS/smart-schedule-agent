@@ -332,8 +332,11 @@ export function ScheduleFormModal({
 
   const handleSave = () => {
     if (!form.title.trim()) return;
+    if (!isUnscheduled && (!/^\d{4}-\d{2}-\d{2}$/.test(form.date) || Number.isNaN(Date.parse(form.date)))) {
+      window.alert('请选择执行日期'); return;
+    }
     const startTime = isUnscheduled
-      ? new Date().toISOString()
+      ? editingSchedule?.start_time || new Date().toISOString()
       : form.all_day
       ? `${form.date}T00:00:00`
       : `${form.date}T${form.startTime}:00`;
@@ -478,6 +481,7 @@ export function ScheduleFormModal({
                   onChange={event => setForm(prev => ({
                     ...prev,
                     isUnscheduled: event.target.checked,
+                    date: event.target.checked ? prev.date : '',
                     reminder: event.target.checked ? '' : prev.reminder,
                     repeat: event.target.checked ? '' : prev.repeat,
                   }))}

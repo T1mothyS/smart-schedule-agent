@@ -6,6 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 import type { Schedule } from './calendar/schedule-types';
 import { ScheduleDetailModal } from './calendar/ScheduleDetailModal';
 import { ScheduleFormModal } from './calendar/ScheduleFormModal';
+import { UnscheduledTodoDrawer } from './UnscheduledTodoDrawer';
 
 interface ActionItem {
   id: string;
@@ -369,6 +370,7 @@ export function ActionCenterPage() {
   const [reopeningId, setReopeningId] = useState<string | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [showUnscheduled, setShowUnscheduled] = useState(false);
   const [showSendDialog, setShowSendDialog] = useState(false);
   const [sendingEmail, setSendingEmail] = useState(false);
   const [sendNotice, setSendNotice] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
@@ -680,6 +682,8 @@ export function ActionCenterPage() {
     </header>
 
     {sendNotice && <div className={'action-inline-notice ' + sendNotice.tone}>{sendNotice.text}</div>}
+    <button className="secondary-button" onClick={() => setShowUnscheduled(true)}>无固定期限待办 · 查看全部</button>
+    {showUnscheduled && <UnscheduledTodoDrawer onClose={() => setShowUnscheduled(false)} onChanged={() => void loadActions(false)} />}
 
     {loading ? <div className="empty-panel"><div className="loading-dot" />正在整理今天的行动</div> : <>
       <SuspendedTodoSection items={data.unscheduled} onComplete={complete} onEdit={openScheduleEditor} onMenuAction={handleMenuAction} openMenuId={openMenuId} setOpenMenuId={setOpenMenuId} completingId={completingId} />

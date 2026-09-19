@@ -1,4 +1,5 @@
 import { registerPersistence, persistDatabase, recoverPersistence, assertPersistenceReady } from './persistence.js';
+import { validateScheduleTime } from './schedule-time.js';
 /**
  * 日程数据存储模块
  * 使用 sql.js 存储日程数据
@@ -346,6 +347,7 @@ function safeNull(val: any): any {
 
 // 创建日程
 export function createSchedule(schedule: Omit<Schedule, 'created_at' | 'updated_at'>): Schedule {
+  validateScheduleTime(schedule);
   const now = new Date().toISOString();
   const isUnscheduled = schedule.is_unscheduled === true;
   const startTimeValue = schedule.start_time || now;
@@ -394,6 +396,7 @@ export function createSchedule(schedule: Omit<Schedule, 'created_at' | 'updated_
 
 // 批量创建日程（AI 排期使用）
 export function createSchedulesBatch(schedules: Omit<Schedule, 'created_at' | 'updated_at'>[]): Schedule[] {
+  schedules.forEach(validateScheduleTime);
   const results: Schedule[] = [];
   for (const s of schedules) {
     results.push(createSchedule(s));
@@ -408,6 +411,7 @@ export function updateSchedule(id: string, updates: Partial<Schedule>): Schedule
 
   const now = new Date().toISOString();
   const merged = { ...existing, ...updates, updated_at: now };
+  if (['type', 'all_day', 'is_unscheduled', 'start_time'].some(key => Object.prototype.hasOwnProperty.call(updates, key))) validateScheduleTime(merged);
   const isUnscheduled = merged.is_unscheduled === true;
   const startTimeValue = merged.start_time || now;
   let calendarId = existing.calendar_id;

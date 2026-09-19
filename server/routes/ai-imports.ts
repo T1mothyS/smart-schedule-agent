@@ -100,7 +100,7 @@ export function createAiImportsRouter({ authenticate }: Pick<ReturnType<typeof c
             type: 'todo',
             title: draft.title,
             description: draft.notes || undefined,
-            start_time: draft.dueDate + 'T' + (draft.dueTime || '09:00') + ':00',
+            start_time: draft.dueDate + 'T' + (draft.dueTime || '00:00') + ':00',
             end_time: undefined,
             all_day: !draft.dueTime,
             location: undefined,
