@@ -1,3 +1,4 @@
+import { PromptOptimizeDialog } from './PromptOptimizeDialog';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { NoteBoard, type NoteItem } from './NoteBoard';
@@ -26,15 +27,14 @@ export interface AiNoteBoardController {
   edit: (note: NoteItem, content: string) => Promise<void>;
   changeColor: (note: NoteItem, color: NoteItem['color']) => Promise<void>;
   merge: (source: NoteItem, target: NoteItem) => Promise<void>;
-  sendToAi: (note: NoteItem) => void;
+  replaceOptimized: (note: NoteItem, content: string) => Promise<void>;
 }
 
 interface UseAiNoteBoardOptions {
   initialNoteId?: string;
-  onSendToAi: (note: NoteItem) => void;
 }
 
-export function useAiNoteBoard({ initialNoteId, onSendToAi }: UseAiNoteBoardOptions): AiNoteBoardController {
+export function useAiNoteBoard({ initialNoteId }: UseAiNoteBoardOptions): AiNoteBoardController {
   const { isAuthenticated, authHeaders } = useAuth();
   const [notes, setNotes] = useState<NoteItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -148,7 +148,7 @@ export function useAiNoteBoard({ initialNoteId, onSendToAi }: UseAiNoteBoardOpti
 
   const toggleDrawer = useCallback(() => setDrawerOpen(open => !open), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
-  const sendToAi = useCallback((note: NoteItem) => onSendToAi(note), [onSendToAi]);
+  const replaceOptimized = useCallback((note: NoteItem, content: string) => updateNote(note.id, { content, expectedContent: note.content }), [updateNote]);
 
   return {
     notes,
@@ -163,7 +163,7 @@ export function useAiNoteBoard({ initialNoteId, onSendToAi }: UseAiNoteBoardOpti
     edit,
     changeColor,
     merge,
-    sendToAi,
+    replaceOptimized,
   };
 }
 
@@ -171,6 +171,7 @@ export function AiNoteBoardHost({ controller, aiBusy = false }: {
   controller: AiNoteBoardController;
   aiBusy?: boolean;
 }) {
+  const [optimizing, setOptimizing] = useState<NoteItem | null>(null);
   return (
     <>
       <NoteBoard
@@ -185,8 +186,9 @@ export function AiNoteBoardHost({ controller, aiBusy = false }: {
         onEdit={controller.edit}
         onColorChange={controller.changeColor}
         onMerge={controller.merge}
-        onSendToAi={controller.sendToAi}
+        onOptimize={setOptimizing}
       />
+      {optimizing && <PromptOptimizeDialog note={optimizing} onClose={() => setOptimizing(null)} onReplace={controller.replaceOptimized} />}
       {controller.drawerOpen && (
         <button type="button" className="note-board-scrim" onClick={controller.closeDrawer} aria-label="关闭记事板" />
       )}

@@ -10,12 +10,8 @@ export function AiAssistantPage() {
   const activeTool = searchParams.get('tool') === 'email-import' ? 'email-import' : 'chat';
   const chatPanelRef = useRef<AiSchedulePanelHandle>(null);
   const [chatState, setChatState] = useState({ hasMessages: false, busy: false });
-  const sendNoteToAi = useCallback((note: Parameters<AiSchedulePanelHandle['sendNoteToAi']>[0]) => {
-    chatPanelRef.current?.sendNoteToAi(note);
-  }, []);
   const noteBoard = useAiNoteBoard({
     initialNoteId: searchParams.get('note') || undefined,
-    onSendToAi: sendNoteToAi,
   });
   const saveNote = useCallback((content: string) => noteBoard.createNote(content), [noteBoard.createNote]);
 

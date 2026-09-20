@@ -86,3 +86,11 @@ persistence.test.ts 覆盖原子替换、内存回退、第二库失败、补偿
 ## 无固定期限待办管理
 
 `unscheduled-api.test.ts` 覆盖只读、账号隔离、完成历史、状态切换、全天写入校验和旧备份恢复。`scripts/unscheduled-browser-smoke.cjs` 使用构建产物与合成接口验证四个规定视口、浅暗主题、完成记录、完成/恢复、编辑入口、空态/错误、Escape 和返回焦点；使用与既有 browser-smoke 相同的 PLAYWRIGHT_MODULE。不得把本地验证写成生产真机通过。
+
+## 四项修复验收（2026-09-20）
+
+- 自动化：CalDAV 锁拥有者、保守恢复、保护锁异常、I/O 错误、退避与成功复位；原有范围/删除/账户保护继续回归。
+- 提示词：SDK 无工具及无持久化选项、边界校验、取消；记事条件替换 409、账号隔离和元数据保留。
+- Tools：`npm run tools:check` 检查全部启用源码；`npx tsx scripts/check-protected-tools.ts <解包目录>/protected-tools` 比较实际发布包清单和每个 HTML 的 SHA-256。缺文件或不一致阻止发布。
+- 浏览器：四视口、明暗主题，成长页滚轮/键盘到底、移动触摸；优化预览、复制、重新优化、取消、替换和失败；四个 Tools 与新工具合成数据操作。
+- 本地合成验证不代表真实 AI、生产、手机或长期同步验收。生产分别检查网页、合成文本真实 AI、CalDAV preview 与至少两个自动周期。

@@ -3,7 +3,6 @@ import { Bot, BookOpen, Send, Loader2, CheckCircle2, Edit3, MapPin, Clock, Save,
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { SCHEDULE_CATEGORY_COLORS, SCHEDULE_CATEGORY_LABELS } from '../utils/scheduleCategories';
-import type { NoteItem } from './NoteBoard';
 
 // ==================== 类型 ====================
 
@@ -93,7 +92,6 @@ interface AiSchedulePanelProps {
 
 export interface AiSchedulePanelHandle {
   resetHistory: () => Promise<void>;
-  sendNoteToAi: (note: NoteItem) => void;
 }
 
 // ==================== 常量 ====================
@@ -734,9 +732,6 @@ export const AiSchedulePanel = forwardRef<AiSchedulePanelHandle, AiSchedulePanel
     }
   }, [inputText, isLoading, onSaveNote, savingNotes]);
 
-  const handleSendNoteToAi = useCallback((note: NoteItem) => {
-    void submitMessage(note.content, { clearComposer: false });
-  }, [submitMessage]);
 
   const handleConfirmPlan = useCallback(async (messageId: string, planId: string) => {
     if (confirmingPlanId) return;
@@ -837,8 +832,7 @@ export const AiSchedulePanel = forwardRef<AiSchedulePanelHandle, AiSchedulePanel
 
   useImperativeHandle(ref, () => ({
     resetHistory: clearHistory,
-    sendNoteToAi: handleSendNoteToAi,
-  }), [clearHistory, handleSendNoteToAi]);
+  }), [clearHistory]);
 
   const EXAMPLES = [
     '今天上午去车站接人，下午两点开会，晚上约朋友吃饭',

@@ -73,7 +73,9 @@ GitHub push、tag 和 Release 是版本发布记录，和服务器部署分开�
 
 ## 受保护工具纯 HTML 快传路径
 
-纯 HTML 应用只修改 `protected-tools/<slug>/index.html` 和 `protected-tools/manifest.json` 时，可以使用独立工具发布编号和 SHA-256，不重新构建 React、重启 PM2 或升级整站版本。先在本地审阅 HTML，再运行：
+Tools 默认纳入源码和整站发布包，随应用版本发布和回滚，不采用 Knowledge Library 的独立外挂模式。完整发布前执行 `npm run tools:check`，解包后执行 `npx tsx scripts/check-protected-tools.ts <解包目录>/protected-tools`，清单或任一启用工具缺失/哈希不一致时阻止发布。
+
+纯 HTML 快传仅为另行明确授权的例外；工具 HTML、标题、摘要及 CSP 必须先纳入源码且与输入完全一致，脚本拒绝仅存在于临时目录的文件版本。例外发布编号只用于审计，不代替应用版本和源码记录。先在本地审阅并纳入源码，再运行：
 
 ```powershell
 pwsh -NoProfile -File scripts/prepare-protected-tool-release.ps1 `

@@ -65,3 +65,5 @@ Living/Contract 文档应标注 Status、Scope、Last verified commit/version、
 - [Phase 4 应用工厂、运行时与低耦合路由](PHASE4-APP-RUNTIME-ROUTERS.md)：独立 HTTP fixture、五组 worker 生命周期、账号隔离与兼容性验收。
 
 - [Phase 5 领域边界与迁移验收](PHASE5-DOMAIN-BOUNDARIES.md)：高耦合路由、数据库分层、等价 CSS 拆分及完整本地回归。
+
+2026-09-20 四项修复的当前合同入口：[CalDAV](CALDAV-BRIDGE.md)、[Tools 发布](DEPLOYMENT-PATHS.md)、[提示词优化接口](ARCHITECTURE.md)、[验收矩阵](TEST-MATRIX.md)。生产结果另记本机连续记录。

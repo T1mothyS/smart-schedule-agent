@@ -21,6 +21,13 @@
       "summary": "记录扑克牌收藏、切换档案，并支持本地导入导出。",
       "enabled": true,
       "cspProfile": "inline"
+    },
+    {
+      "slug": "codex-usage-dashboard-v3-1",
+      "title": "Codex Usage Dashboard V3.1",
+      "summary": "导入并查看 Codex 用量、模型明细与会话统计。",
+      "enabled": true,
+      "cspProfile": "inline"
     }
   ]
 }

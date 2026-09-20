@@ -1,4 +1,4 @@
-.evolution-page { width: 100%; max-width: 1240px; margin: 0 auto; padding: 26px 32px 48px; color: var(--td-text-color-primary); min-width: 0; overflow-wrap: anywhere; }
+.evolution-page { height: 100%; min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; width: 100%; max-width: 1240px; margin: 0 auto; padding: 26px 32px 48px; color: var(--td-text-color-primary); min-width: 0; overflow-wrap: anywhere; }
 .evolution-page button, .evolution-page select, .evolution-page a { min-height: 44px; }
 .evolution-page button { cursor: pointer; }
 .evolution-page button:disabled { opacity: .45; cursor: default; }

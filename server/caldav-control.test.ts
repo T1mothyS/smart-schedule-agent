@@ -12,7 +12,7 @@ function fixture() {
   const directory = fs.mkdtempSync(path.join(root, 'controller-')); let now = 0; let writes = 0;
   const plan: BridgePlan = { planToken: 'a'.repeat(64), scopeVersion: 'b'.repeat(64), complete: true, operations: [], issues: [], excluded: 0 };
   let failure: string | undefined;
-  const bridge = { includeCompleted: true, scopeVersion: plan.scopeVersion!, busy: false, preview: async () => { if (failure) throw new CaldavError(failure); return plan; }, sync: async () => { writes++; return { ...plan, applied: true as const }; } } as ReturnType<typeof createCaldavBridge>;
+  const bridge = { lockStatus: () => 'free' as const, includeCompleted: true, scopeVersion: plan.scopeVersion!, busy: false, preview: async () => { if (failure) throw new CaldavError(failure); return plan; }, sync: async () => { writes++; return { ...plan, applied: true as const }; } } as ReturnType<typeof createCaldavBridge>;
   const controller = createCaldavController(bridge, directory, () => true, () => true, () => now);
   return { controller, plan, directory, fail: (code?: string) => { failure = code; }, advance: (minutes: number) => { now += minutes * 60_000; }, writes: () => writes };
 }
@@ -71,4 +71,18 @@ test('projection scope change invalidates old phone consent before any automated
   const control = guard.readControl(f.directory); guard.writeControl({ ...control, confirmedScope: 'c'.repeat(64), verifiedScope: 'c'.repeat(64) }, f.directory);
   await f.controller.tick(); assert.equal(f.writes(), 1); assert.equal(f.controller.status().enabled, false);
   assert.equal(f.controller.status().lastError, 'SCOPE_CONFIRMATION_REQUIRED');
+});
+
+test('lock backoff persists and successful retry resets failures without revoking consent', async () => {
+  const f = fixture(); await f.controller.sync(f.plan.planToken); f.controller.automation(true, f.plan.scopeVersion, true);
+  f.fail('BRIDGE_LOCKED'); let total = 0;
+  for (const minutes of [5, 10, 20, 30, 30]) {
+    await f.controller.tick(); total += minutes;
+    const disk = guard.readControl(f.directory);
+    assert.equal(disk.enabled, true); assert.equal(disk.nextAttempt, total * 60_000);
+    await f.controller.tick(); assert.equal(f.writes(), 1); f.advance(minutes);
+  }
+  f.fail(); await f.controller.tick();
+  assert.equal(f.controller.status().failures, 0); assert.equal(f.controller.status().nextAttempt, undefined);
+  assert.equal(f.controller.status().lastError, undefined); assert.equal(f.writes(), 2);
 });

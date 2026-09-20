@@ -1,3 +1,4 @@
+import { OptimizeError, optimizerInput, optimizePrompt } from '../prompt-optimize.js';
 import { Router } from 'express';
 import type { createAuth } from '../auth.js';
 import { defaultModel, resolveCodeBuddyCredential, getMissingCodeBuddyCredentialMessage } from '../ai-credentials.js';
@@ -23,6 +24,28 @@ import { parseQueryDatesForCards, AI_CATEGORY_LABELS_CN, buildCompactScheduleQue
 
 export function createAiRouter({ authenticate }: Pick<ReturnType<typeof createAuth>, 'authenticate'>) {
   const app = Router();
+  app.post('/api/ai/prompt-optimize', authenticate, async (req, res) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90_000);
+    const disconnect = () => { if (!res.writableEnded) controller.abort(); };
+    res.on('close', disconnect);
+    try {
+      const text = optimizerInput(req.body?.text);
+      const userId = ((req as any).user as JwtPayload).userId;
+      const credential = resolveCodeBuddyCredential(userId);
+      if (!credential) throw new OptimizeError(getMissingCodeBuddyCredentialMessage(userId), 400);
+      const optimizedText = await optimizePrompt(text, {
+        model: db.getUserPreferredModel(userId, defaultModel), env: buildCodeBuddyEnv(credential),
+      }, controller);
+      addLog('info', 'ai', '提示词优化完成', { textLength: text.length, resultLength: optimizedText.length });
+      if (!res.destroyed) res.setHeader('Cache-Control', 'no-store').json({ optimizedText });
+    } catch (error) {
+      const status = controller.signal.aborted ? 504 : error instanceof OptimizeError ? error.status : 502;
+      addLog('warn', 'ai', '提示词优化失败', { status });
+      if (!res.destroyed) res.status(status).json({ error: controller.signal.aborted ? '优化已取消或超时，请重试' : error instanceof OptimizeError ? error.message : 'AI 优化失败，请重试' });
+    } finally { clearTimeout(timeout); res.off('close', disconnect); }
+  });
+
   app.get("/api/ai-schedule/history", authenticate, (req, res) => {
     try {
       const payload = (req as any).user as JwtPayload;

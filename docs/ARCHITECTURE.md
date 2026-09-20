@@ -117,3 +117,9 @@ server/db.ts 保留兼容导出；server/database/connection.ts 拥有连接与�
 ## 7. 构建产物
 
 Vite Web 构建写入 dist/；Electron TypeScript 编译写入 dist-electron/；build:electron 准备只含 main.js、preload.js、app-url.json、package.json 和桌面图标的 dist-desktop/；安装包写入 release/。部署包还必须保留受保护工具的 `protected-tools/` 目录，它不属于 `dist/`，不能只上传前端构建产物。构建需要合法 HTTPS 的 ELECTRON_APP_URL 或 APP_URL，但该值不应写入提交或覆盖 .env。
+
+## Tools 与提示词优化（2026-09-20）
+
+Tools 的正式来源是 `protected-tools/manifest.json` 及各 slug 的 `index.html`，默认纳入源码、完整发布包及整站版本和回滚生命周期；不采用 Knowledge Library 的独立内容发布模式。发布检查见 [部署路径](DEPLOYMENT-PATHS.md)。
+
+`POST /api/ai/prompt-optimize` 使用当前账号认证、凭据及首选模型，接收 `{ text }`，返回 `{ optimizedText }`；正文为 1–2000 字符，输出同上限，90 秒超时。该独立调用禁用工具、配置加载和会话持久化，不读取日程/知识库，不写业务或聊天历史。记事板先预览，再显式替换或复制。`PATCH /api/note-items/:id` 新增可选 `expectedContent`，与正文同步比较后写入；原文已变化返回 409，旧调用保持兼容。

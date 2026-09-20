@@ -61,6 +61,15 @@ const errors = [], checks = [];
         assert.equal(await page.title(), 'AI Calendar - 项目成长');
         assert.equal(await page.locator('html').evaluate(e => e.classList.contains('dark')), theme === 'dark');
         await noOverflow(`${width} ${theme} growth`);
+        const scroller = page.locator('.evolution-page');
+        await scroller.hover(); await page.mouse.wheel(0, 600);
+        await page.waitForFunction(() => document.querySelector('.evolution-page').scrollTop > 0);
+        await scroller.evaluate(e => { e.tabIndex = 0; e.focus(); });
+        await page.keyboard.press('Control+End');
+        await page.waitForFunction(() => { const e = document.querySelector('.evolution-page'); return e.scrollTop + e.clientHeight >= e.scrollHeight - 2; });
+        checks.push(`${width} ${theme} wheel and keyboard bottom reachable`);
+        await scroller.evaluate(e => { e.scrollTop = 0; });
+
         await page.screenshot({ path: path.join(output, `${width}-${theme}-growth.png`), fullPage: true });
         await page.locator('.evolution-detail').scrollIntoViewIfNeeded();
         await page.screenshot({ path: path.join(output, `${width}-${theme}-detail.png`) });
@@ -93,6 +102,17 @@ const errors = [], checks = [];
         assert.ok(await page.getByRole('heading', { name: '这一刻，系统怎样连接', exact: true }).isVisible());
       }
     }
+    const touchContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await touchContext.addInitScript(() => localStorage.setItem('aicalendar_token', 'synthetic-only'));
+    await touchContext.route('**/*', api);
+    const touchPage = await touchContext.newPage(); await touchPage.goto(base + '/project');
+    await touchPage.locator('.evolution-page').waitFor();
+    const cdp = await touchContext.newCDPSession(touchPage);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 190, y: 700 }] });
+    for (const y of [600, 450, 300, 180]) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 190, y }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await touchPage.waitForFunction(() => document.querySelector('.evolution-page').scrollTop > 0);
+    checks.push('mobile touch scroll moves page'); await touchContext.close();
     await page.locator('#evolution-milestone').selectOption('cloud');
     await page.goBack(); assert.equal(await page.locator('#evolution-milestone').inputValue(), 'retrieval');
     await page.goForward(); assert.equal(await page.locator('#evolution-milestone').inputValue(), 'cloud'); checks.push('history navigation and deep link');

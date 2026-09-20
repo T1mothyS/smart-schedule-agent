@@ -21,7 +21,7 @@ export function createCaldavController(bridge: ReturnType<typeof createCaldavBri
     save(control); return result;
   }
   return {
-    status: () => ({ ...state(), scopeVersion: bridge.scopeVersion, includeCompleted: bridge.includeCompleted, writeEnabled: canWrite(), automationAvailable: canAutomate(), busy: bridge.busy || bridgeActive() }),
+    status: () => ({ ...state(), lockStatus: bridge.lockStatus(), scopeVersion: bridge.scopeVersion, includeCompleted: bridge.includeCompleted, writeEnabled: canWrite(), automationAvailable: canAutomate(), busy: bridge.busy || bridgeActive() }),
     preview: () => bridge.preview(), sync,
     automation(enabled: boolean, scopeVersion?: string, phoneVerified?: boolean) {
       const control = state();
@@ -48,7 +48,7 @@ export function createCaldavController(bridge: ReturnType<typeof createCaldavBri
         const code = error instanceof CaldavError ? error.code : 'CALDAV_BRIDGE_FAILED';
         if (code === 'BRIDGE_BUSY') return;
         control.lastError = code; control.failures++;
-        if (['CALDAV_NETWORK_ERROR', 'CALDAV_READ_FAILED', 'CALDAV_BODY_FAILED', 'CALDAV_WRITE_FAILED', 'CALDAV_DELETE_FAILED', 'SOURCE_CHANGED_RETRY_PREVIEW', 'PREVIEW_CHANGED_OR_BLOCKED'].includes(code)) {
+        if (['BRIDGE_LOCKED', 'CALDAV_NETWORK_ERROR', 'CALDAV_READ_FAILED', 'CALDAV_BODY_FAILED', 'CALDAV_WRITE_FAILED', 'CALDAV_DELETE_FAILED', 'SOURCE_CHANGED_RETRY_PREVIEW', 'PREVIEW_CHANGED_OR_BLOCKED'].includes(code)) {
           control.nextAttempt = now() + [5, 10, 20, 30][Math.min(control.failures - 1, 3)] * 60_000;
         } else { control.enabled = false; control.nextAttempt = undefined; }
         save(control);

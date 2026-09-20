@@ -182,6 +182,16 @@ const server = http.createServer((req, res) => {
     await page.getByText('导入档案', { exact: true }).waitFor();
     checks.push({ poker: true, pokerBatch: true, pokerExport: true, pokerImport: true });
 
+    await openTool('codex-usage-dashboard-v3-1');
+    await page.locator('#sampleBtn').click();
+    await page.locator('#rangeSeg button[data-r="7"]').click();
+    await page.locator('#fileInput').setInputFiles({ name: 'synthetic.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ daily: [{ date: '2026-09-20', inputTokens: 100, outputTokens: 20, totalTokens: 120, costUSD: 0.01 }] })) });
+    await page.locator('#statusText').filter({ hasText: '已导入' }).waitFor();
+    await page.locator('#copyMdBtn').click();
+    await page.locator('#exportTokenPng').click();
+    if (!await page.evaluate(() => window.__toolsLastDownloadName.endsWith('.png'))) throw Error('Usage chart export failed');
+    checks.push({ usageDashboardImport: true, usageDashboardCopy: true, usageDashboardExport: true });
+
     fs.writeFileSync(path.join(output, 'result.json'), JSON.stringify({ checks, errors }, null, 2));
     console.log(JSON.stringify({ checks, errors }));
     if (errors.length || checks.some(check => check.overflow)) process.exitCode = 1;

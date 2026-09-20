@@ -1,3 +1,4 @@
+import { acquireBridgeLock, bridgeLockStatus } from './caldav-lock.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { atomicWriteFile } from './persistence.js';
@@ -202,13 +203,12 @@ export function createCaldavBridge(config: BridgeConfig, stateFile: string, read
   }
   async function run(planToken?: string) {
     if (busy) throw new CaldavError('BRIDGE_BUSY'); busy = true;
-    let lock: number | undefined;
+    let releaseLock: (() => Promise<void>) | undefined;
     try {
       if (planToken !== undefined) {
         if (!config.writeEnabled) throw new CaldavError('BRIDGE_WRITES_DISABLED', 403);
         fs.mkdirSync(path.dirname(stateFile), { recursive: true });
-        try { lock = fs.openSync(stateFile + '.lock', 'wx', 0o600); }
-        catch { throw new CaldavError('BRIDGE_LOCKED'); }
+        releaseLock = acquireBridgeLock(stateFile + '.lock');
       }
       const prepared = await prepare();
       if (planToken === undefined) return prepared.publicPlan;
@@ -241,9 +241,9 @@ export function createCaldavBridge(config: BridgeConfig, stateFile: string, read
       return { ...prepared.publicPlan, applied: true as const };
     } finally {
       try {
-        if (lock !== undefined) { fs.closeSync(lock); fs.unlinkSync(stateFile + '.lock'); }
+        await releaseLock?.();
       } finally { busy = false; }
     }
   }
-  return { preview: () => run(), sync: (token: string) => run(token), scopeVersion, includeCompleted: config.includeCompleted, get busy() { return busy; } };
+  return { lockStatus: () => bridgeLockStatus(stateFile + ".lock"), preview: () => run(), sync: (token: string) => run(token), scopeVersion, includeCompleted: config.includeCompleted, get busy() { return busy; } };
 }

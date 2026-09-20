@@ -42,26 +42,17 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "找不�
 $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath | ConvertFrom-Json
 if ($null -eq $manifest.tools) { throw '工具清单缺少 tools 数组。' }
 
-$entries = [System.Collections.Generic.List[object]]::new()
-foreach ($item in @($manifest.tools)) {
-  if (-not $item.slug -or -not ($item.slug -match '^[a-z0-9]+(?:-[a-z0-9]+)*$')) { throw '现有工具清单包含无效 slug。' }
-  if ($item.slug -eq $Slug) { continue }
-  $entries.Add([ordered]@{
-    slug = [string]$item.slug
-    title = ([string]$item.title).Trim()
-    summary = ([string]$item.summary).Trim()
-    enabled = if ($null -eq $item.enabled) { $true } else { [bool]$item.enabled }
-    cspProfile = if ($item.cspProfile) { [string]$item.cspProfile } else { 'inline' }
-  })
+# Fast uploads are an exception; the source tree remains authoritative.
+$sourceEntry = @($manifest.tools | Where-Object { $_.slug -eq $Slug })
+$trackedHtml = Join-Path $ToolsRoot "$Slug/index.html"
+if ($sourceEntry.Count -ne 1 -or -not (Test-Path -LiteralPath $trackedHtml -PathType Leaf)) {
+  throw '请先将工具 HTML 和清单纳入源码，再准备例外快传。'
 }
-$entries.Add([ordered]@{
-  slug = $Slug
-  title = $Title.Trim()
-  summary = $Summary.Trim()
-  enabled = $true
-  cspProfile = $CspProfile
-})
-
+if ((Get-FileHash -LiteralPath $trackedHtml).Hash -ne (Get-FileHash -LiteralPath $sourcePath).Hash -or
+    $sourceEntry[0].title -ne $Title.Trim() -or $sourceEntry[0].summary -ne $Summary.Trim() -or
+    $sourceEntry[0].cspProfile -ne $CspProfile -or $sourceEntry[0].enabled -eq $false) {
+  throw '快传输入必须与源码 HTML 和清单完全一致。'
+}
 $releaseId = "tool-$((Get-Date).ToUniversalTime().ToString('yyMMdd.HHmmss'))-$Slug"
 $releaseDirectory = Join-Path ([IO.Path]::GetFullPath($OutputRoot)) $releaseId
 if (Test-Path -LiteralPath $releaseDirectory) { throw "发布目录已存在，请稍后重试: $releaseDirectory" }
@@ -70,11 +61,7 @@ $stageToolRoot = Join-Path $stageRoot $Slug
 New-Item -ItemType Directory -Path $stageToolRoot -Force | Out-Null
 
 $utf8NoBom = [Text.UTF8Encoding]::new($false)
-$nextManifest = [ordered]@{
-  version = if ($manifest.version) { [int]$manifest.version } else { 1 }
-  tools = @($entries)
-}
-[IO.File]::WriteAllText((Join-Path $stageRoot 'manifest.json'), ($nextManifest | ConvertTo-Json -Depth 6), $utf8NoBom)
+[IO.File]::WriteAllBytes((Join-Path $stageRoot 'manifest.json'), [IO.File]::ReadAllBytes($manifestPath))
 [IO.File]::WriteAllBytes((Join-Path $stageToolRoot 'index.html'), [IO.File]::ReadAllBytes($sourcePath))
 
 $sourceHash = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()

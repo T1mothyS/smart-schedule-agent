@@ -321,3 +321,25 @@ test('记事合并按目标在前追加来源，并以事务移入废纸篓', as
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+test('optimizer replacement is conditional, account isolated, and preserves note metadata', async () => {
+  const [note] = noteItems.createNoteItems(user.id, ['original'], 'purple');
+  noteItems.updateNoteItem(user.id, note.id, { completed: true });
+  const server = http.createServer(api.app); const port = await listen(server);
+  const request = (token: string, body: object) => fetch(`http://127.0.0.1:${port}/api/note-items/${note.id}`, {
+    method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  try {
+    assert.equal((await request(otherToken, { content: 'x', expectedContent: 'original' })).status, 404);
+    assert.equal((await request(userToken, { content: 'optimized', expectedContent: 'outdated' })).status, 409);
+    assert.equal(noteItems.getNoteItem(user.id, note.id)?.content, 'original');
+    const result = await request(userToken, { content: 'optimized', expectedContent: 'original' });
+    assert.equal(result.status, 200); const saved = (await result.json()).item;
+    assert.equal(saved.content, 'optimized'); assert.equal(saved.color, 'purple'); assert.equal(saved.completed, true);
+    const endpoint = `http://127.0.0.1:${port}/api/ai/prompt-optimize`;
+    assert.equal((await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
+    for (const text of ['', 'x'.repeat(2001), {}]) {
+      assert.equal((await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${userToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })).status, 400);
+    }
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});

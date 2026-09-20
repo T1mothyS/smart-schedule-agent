@@ -6,7 +6,7 @@ import type { SettingsAuthHeaders } from '../types';
 
 interface Summary { breakdown?: Record<string, number>; counts?: Record<string, number>; exclusions?: Record<string, number>; issues: Array<{ sourceId: string; code: string }>; complete?: boolean }
 interface Plan extends Summary { sourceMappings?: Array<{ sourceId: string; cycleId: string; taskId: string; derivedSourceIds: string[]; current: boolean; status: string; enabled: boolean; included: boolean }>; planToken: string; scopeVersion: string; migrationRequired: boolean; requiresDeleteConfirmation: boolean; operations: Array<{ sourceId: string; action: string }> }
-interface Status { includeCompleted?: boolean; enabled: boolean; mode: string; confirmedScope?: string; verifiedScope?: string; scopeVersion: string; automationAvailable: boolean; writeEnabled: boolean; busy: boolean; lastSuccess?: string; lastError?: string; nextAttempt?: number; summary?: Summary }
+interface Status { lockStatus?: 'free' | 'active' | 'stale' | 'unknown' | 'maintenance' | 'io-error'; includeCompleted?: boolean; enabled: boolean; mode: string; confirmedScope?: string; verifiedScope?: string; scopeVersion: string; automationAvailable: boolean; writeEnabled: boolean; busy: boolean; lastSuccess?: string; lastError?: string; nextAttempt?: number; summary?: Summary }
 const labels: Record<string, string> = { event: '日程', todo: '已排期待办', cycle: '周期实例', pending: '未完成', current_cycle: '当前周期', historical_cycle: '历史周期', cancelled_cycle: '已取消周期', merged_copy: '已归并副本', completed: '已完成', unscheduled: '未排期', derived_cycle: '周期派生副本（去重）', disabled_cycle: '已停用周期', completed_cycle: '已结束周期', outside_scope: '范围外日历', unsupported_type: '不支持的类型', create: '新增', update: '更新', delete: '撤回', unchanged: '无变化', recover: '恢复确认', held: '保留待处理' };
 const errors: Record<string, string> = {
   CALDAV_BRIDGE_DISABLED: '服务器尚未开启荣耀日历桥接。', CALDAV_BRIDGE_FORBIDDEN: '此账号未绑定荣耀日历桥接。',
@@ -56,7 +56,10 @@ export function CaldavSettings({ authHeaders }: { authHeaders: SettingsAuthHeade
         <span>{status?.includeCompleted ? '已完成项目保留并标记状态，不产生手机提醒。' : '兼容策略：已完成项目仍排除；需服务器显式启用。'}无固定期限待办及未确认草稿不进入手机；待办与周期完成仍在网页登记。</span>
         {status?.lastSuccess && <span>最近写入 CalDAV：{new Date(status.lastSuccess).toLocaleString('zh-CN')}（不代表手机已刷新）</span>}
         {status?.nextAttempt && <span>下次重试：{new Date(status.nextAttempt).toLocaleString('zh-CN')}</span>}
-        {status?.lastError && <span>{explain(status.lastError)}</span>}
+        {status?.busy ? <span>正在同步</span> : status?.lastError === 'BRIDGE_LOCKED' ? <span>
+          {status.lockStatus === 'unknown' || status.lockStatus === 'maintenance' ? '锁归属无法判断，需要维护；当前同步写入被阻塞。' : '本次同步被锁阻塞。'}
+          {status.enabled ? '自动同步仍开启，将按下次重试时间检查。' : '自动同步已停用。'}
+        </span> : status?.lastError && <span>{status.lastError === 'BRIDGE_LOCK_IO_ERROR' ? '同步锁读写失败，请检查文件权限和磁盘；自动同步已停用。' : explain(status.lastError)}</span>}
         {error && <span role="alert">{error}</span>}{message && <span>{message}</span>}
       </div>
       <div className="settings-actions">

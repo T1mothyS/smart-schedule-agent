@@ -29,13 +29,14 @@ export function createNotesRouter({ authenticate }: { authenticate: RequestHandl
     try {
       const userId = (req as any).user.userId;
       const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
-      const unknownFields = Object.keys(body).filter(key => !['content', 'completed', 'color'].includes(key));
+      const unknownFields = Object.keys(body).filter(key => !['content', 'completed', 'color', 'expectedContent'].includes(key));
       if (unknownFields.length) return res.status(400).json({ error: '只允许修改记事内容、完成状态或颜色' });
+      if (body.expectedContent !== undefined && (typeof body.expectedContent !== 'string' || typeof body.content !== 'string')) return res.status(400).json({ error: '原文校验必须与正文一起提交' });
       const item = noteItemService.updateNoteItem(userId, req.params.id, body);
       if (!item) return res.status(404).json({ error: '记事不存在或无权访问' });
       res.json({ item });
     } catch (error: any) {
-      res.status(400).json({ error: error?.message || '更新记事失败' });
+      res.status(error instanceof noteItemService.NoteContentConflict ? 409 : 400).json({ error: error?.message || '更新记事失败' });
     }
   });
 

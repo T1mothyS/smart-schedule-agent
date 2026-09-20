@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronUp, CircleX, Copy, Forward, GitMerge, ListPlus, Pencil, RotateCcw, StickyNote, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, CircleX, Copy, Forward, GitMerge, Sparkles, Pencil, RotateCcw, StickyNote, X } from 'lucide-react';
 import { formatNotesAsCsv, formatNotesAsText, noteExportFilename } from '../utils/note-export';
 import { NOTE_COLORS, NOTE_COLOR_LABELS, NOTE_COLOR_STYLES, normaliseNoteColor, type NoteColor } from '../utils/note-colors';
 
@@ -27,7 +27,7 @@ interface NoteBoardProps {
   onEdit: (note: NoteItem, content: string) => Promise<void>;
   onColorChange: (note: NoteItem, color: NoteColor) => Promise<void>;
   onMerge: (source: NoteItem, target: NoteItem) => Promise<void>;
-  onSendToAi: (note: NoteItem) => void;
+  onOptimize: (note: NoteItem) => void;
 }
 
 function NoteColorPicker({ note, disabled, open, onToggle, onChange }: {
@@ -105,7 +105,7 @@ function NoteRow({
   onToggleCompleted,
   onMerge,
   onCopy,
-  onSendToAi,
+  onOptimize,
   onToggleColorPicker,
 }: {
   note: NoteItem & { displayIndex: number };
@@ -129,7 +129,7 @@ function NoteRow({
   onToggleCompleted: () => void;
   onMerge: () => void;
   onCopy: () => void;
-  onSendToAi: () => void;
+  onOptimize: () => void;
   onToggleColorPicker: () => void;
 }) {
   const color = normaliseNoteColor(note.color);
@@ -165,7 +165,7 @@ function NoteRow({
         >
           {editing ? <Check size={15} /> : <Pencil size={15} />}
         </button>
-        <button type="button" className="note-board-action" onClick={onSendToAi} disabled={disabled} title="送入 AI 队列" aria-label={`送入 AI 队列：${note.content}`}><ListPlus size={15} /></button>
+        <button type="button" className="note-board-action" onClick={onOptimize} disabled={disabled} title="优化提示词" aria-label={`优化提示词：${note.content}`}><Sparkles size={15} /></button>
         <button type="button" className="note-board-action" onClick={onCopy} disabled={disabled} title={copyFeedback === 'success' ? '已复制' : copyFeedback === 'error' ? '复制失败' : '复制正文'} aria-label={`复制记事：${note.content}`}>
           {copyFeedback === 'success' ? <Check size={15} /> : copyFeedback === 'error' ? <CircleX size={15} /> : <Copy size={15} />}
         </button>
@@ -236,7 +236,7 @@ export function NoteBoard({
   onEdit,
   onColorChange,
   onMerge,
-  onSendToAi,
+  onOptimize,
 }: NoteBoardProps) {
   const [completedOpen, setCompletedOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -254,7 +254,7 @@ export function NoteBoard({
     if (!drawerOpen) return;
     drawerRef.current?.querySelector<HTMLElement>('button, input, textarea')?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCloseDrawer();
+      if (event.key === 'Escape' && !document.querySelector('[aria-modal="true"]')) onCloseDrawer();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -448,7 +448,7 @@ export function NoteBoard({
       onToggleCompleted={() => { void completeOrRestore(note); }}
       onMerge={() => { void mergeNote(note); }}
       onCopy={() => { void copyNote(note); }}
-      onSendToAi={() => onSendToAi(note)}
+      onOptimize={() => onOptimize(note)}
       onToggleColorPicker={() => setColorPickerId(current => current === note.id ? null : note.id)}
     />
   );
@@ -502,7 +502,7 @@ export function NoteBoard({
           {notes.length === 0 && <div className="note-board-empty">还没有记事<br /><span>在输入框打开记事模式即可快速记录</span></div>}
         </>}
       </div>
-      <span className="sr-only">送入队列会作为普通 AI 对话处理，确认计划后不会自动完成这条记事。</span>
+      <span className="sr-only">优化提示词会先展示预览，只有选择替换原文后才会修改记事。</span>
     </aside>
   );
 }

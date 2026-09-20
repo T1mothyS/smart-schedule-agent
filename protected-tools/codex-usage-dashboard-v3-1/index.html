@@ -1,0 +1,449 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Codex Usage Dashboard V2</title>
+<style>
+:root{
+  --bg:#090d14;--panel:#101620;--panel2:#141b27;--line:#263142;--line2:#1d2634;
+  --text:#eef3fb;--muted:#8f9bad;--subtle:#667387;
+  --blue:#83a0ff;--cyan:#62d6ee;--green:#66dfb5;--yellow:#f7c66a;--red:#ff7f8d;--purple:#bd8cff;
+  --shadow:0 16px 42px rgba(0,0,0,.25)
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+body{min-height:100vh}
+button,input,select,textarea{font:inherit}
+button{color:inherit}
+.app{max-width:1480px;margin:0 auto;padding:18px}
+.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:15px}
+.brand{display:flex;gap:12px;align-items:center}
+.logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--blue),var(--green));box-shadow:0 8px 28px rgba(131,160,255,.22)}
+.title{font-size:20px;font-weight:800}.subtitle{font-size:12px;color:var(--muted);margin-top:2px}
+.actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+.btn{border:1px solid var(--line);background:var(--panel);padding:8px 11px;border-radius:10px;cursor:pointer;transition:.16s ease;font-size:12px}
+.btn:hover{border-color:#3a4b63;transform:translateY(-1px)}
+.btn.primary{background:#1c2944;border-color:#344d7f}.btn.good{background:#172a27;border-color:#2f5a50}
+.input{display:none}
+.statusbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid var(--line);background:rgba(16,22,32,.82);border-radius:12px;margin-bottom:12px}
+.status-left{display:flex;align-items:center;gap:11px;color:var(--muted)}
+.status-primary{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:750;color:var(--text)}
+.status-detail{font-size:11px;color:var(--muted);margin-top:2px}
+.status-badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;font-size:9px;font-weight:800;letter-spacing:.08em}
+.statusbar.sample{border-color:#6b5528;background:linear-gradient(180deg,rgba(65,49,20,.38),rgba(28,23,15,.55))}
+.statusbar.sample .status-badge{background:#4c3914;border:1px solid #80642b;color:#ffd986}
+.statusbar.sample .dot{background:var(--yellow);box-shadow:0 0 0 5px rgba(247,198,106,.08)}
+.statusbar.real{border-color:#285548;background:linear-gradient(180deg,rgba(19,54,46,.36),rgba(14,31,28,.48))}
+.statusbar.real .status-badge{background:#173b32;border:1px solid #2e6d5c;color:#8ef0cf}
+.statusbar.real .dot{background:var(--green);box-shadow:0 0 0 5px rgba(102,223,181,.08)}
+.dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.status-right{font-size:10px;color:var(--subtle);text-align:right;line-height:1.35}
+.status-right strong{display:block;color:#b7c3d5;font-size:11px;font-weight:650;margin-top:2px}
+.help{position:relative}
+.help::after{content:attr(data-help);position:absolute;right:0;top:calc(100% + 9px);bottom:auto;width:max-content;max-width:310px;padding:8px 10px;border:1px solid #3a485d;border-radius:9px;background:#0b111a;color:#d7e0ed;font-size:11px;font-weight:500;line-height:1.45;white-space:normal;box-shadow:0 12px 30px rgba(0,0,0,.4);opacity:0;transform:translateY(-4px);pointer-events:none;transition:.15s;z-index:100}
+.help::before{content:"";position:absolute;right:18px;top:calc(100% + 4px);bottom:auto;border:5px solid transparent;border-bottom-color:#3a485d;opacity:0;transition:.15s;z-index:101}
+.help:hover::after,.help:hover::before,.help:focus-visible::after,.help:focus-visible::before{opacity:1;transform:translateY(0)}
+.quick{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,#111824,#0e141e);padding:13px 14px;margin-bottom:12px}
+.quick-title{font-size:13px;font-weight:700}.quick-sub{font-size:11px;color:var(--muted);margin-top:3px}
+.cmd{margin-top:8px;display:flex;align-items:center;gap:8px;background:#090e16;border:1px solid var(--line2);border-radius:9px;padding:8px 10px;min-width:0}
+.cmd code{font-family:"Cascadia Code","SFMono-Regular",Consolas,monospace;font-size:11px;color:#cbd6e8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cmd-actions{display:flex;gap:7px;flex-wrap:wrap}
+.dropzone{display:none;border:1px dashed #40506a;background:#101827;border-radius:14px;padding:15px;margin-bottom:12px}.dropzone.active{display:block}.dropzone.drag{border-color:var(--blue)}
+.grid6{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:12px}
+.card{background:linear-gradient(180deg,var(--panel),#0e141e);border:1px solid var(--line);border-radius:15px;box-shadow:var(--shadow)}
+.metric{padding:14px}.metric-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}.metric-value{font-size:23px;font-weight:800;margin-top:7px;letter-spacing:-.5px}.metric-foot{font-size:10px;color:var(--subtle);margin-top:5px;line-height:1.35}
+.panel{padding:15px;margin-bottom:12px}.head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:11px}.head-title{font-size:14px;font-weight:750}.head-sub{font-size:11px;color:var(--muted);margin-top:2px}
+.toolbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.seg{display:flex;background:#0b111a;border:1px solid var(--line);padding:3px;border-radius:9px}.seg button{border:0;background:transparent;padding:5px 8px;border-radius:6px;color:var(--muted);cursor:pointer;font-size:11px}.seg button.active{background:#202b40;color:var(--text)}
+.select{background:#0d131d;border:1px solid var(--line);color:var(--text);border-radius:8px;padding:5px 8px;font-size:11px}
+.chart{height:310px;position:relative}.chart.small{height:235px}.chart canvas{display:block;width:100%;height:100%}
+.legend{display:flex;gap:11px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted)}.legend button{display:flex;gap:6px;align-items:center;border:0;background:none;padding:0;cursor:pointer;color:inherit}.legend button.off{opacity:.35;text-decoration:line-through}.sw{width:9px;height:9px;border-radius:3px}
+.two{display:grid;grid-template-columns:1.15fr .85fr;gap:12px}.two.equal{grid-template-columns:1fr 1fr}
+.model-list{display:flex;flex-direction:column;gap:9px}.model-row{display:grid;grid-template-columns:minmax(130px,1fr) 2fr auto;gap:10px;align-items:center;padding:9px 10px;border:1px solid var(--line2);border-radius:11px;background:#0f1620}.model-name{font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.model-meta{font-size:10px;color:var(--muted);margin-top:2px}.bar{height:7px;background:#202a39;border-radius:999px;overflow:hidden}.bar i{display:block;height:100%;border-radius:inherit}.model-val{text-align:right}.model-val strong{font-size:12px;display:block}.model-val span{font-size:10px;color:var(--muted)}
+.table-wrap{overflow:auto;max-height:430px;border:1px solid var(--line2);border-radius:11px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{padding:9px 10px;border-bottom:1px solid var(--line2);white-space:nowrap}th{position:sticky;top:0;background:#141c28;color:var(--muted);font-weight:650;text-align:left;z-index:1}.num{text-align:right}tbody tr:hover td{background:#121a27}.pill{display:inline-flex;padding:3px 7px;border-radius:999px;background:#182235;border:1px solid #2b3950}
+.stats-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:8px}.stat{padding:10px;border:1px solid var(--line2);border-radius:10px;background:#0e151f}.stat b{font-size:14px}.stat span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;margin-bottom:5px}
+.heatmap-wrap{overflow-x:auto}.heatmap{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,12px);grid-auto-columns:12px;gap:3px;padding:4px 0}.heatcell{width:12px;height:12px;border-radius:2px;background:#151d28}.heatlabels{display:flex;justify-content:space-between;margin-top:5px;color:var(--subtle);font-size:10px}
+.insights{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.insight{padding:11px;border:1px solid var(--line2);border-radius:11px;background:#0f1620}.insight b{font-size:12px}.insight p{font-size:11px;color:var(--muted);line-height:1.5;margin:5px 0 0}
+.rangebox{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;margin-bottom:11px;color:var(--muted);font-size:10px}.rangebox input{width:100%}
+.note{font-size:10px;color:var(--subtle);line-height:1.55}.empty{padding:28px;text-align:center;color:var(--muted)}
+.tooltip{position:fixed;z-index:20;display:none;pointer-events:none;background:#0c121b;border:1px solid #35445a;border-radius:9px;padding:8px 9px;box-shadow:0 12px 35px rgba(0,0,0,.35);font-size:10px;line-height:1.55;max-width:260px}
+.toast{position:fixed;right:17px;bottom:17px;opacity:0;transform:translateY(8px);transition:.2s;background:#111a27;border:1px solid #35445a;border-radius:9px;padding:9px 11px;font-size:11px;pointer-events:none}.toast.show{opacity:1;transform:none}
+@media(max-width:1100px){.grid6{grid-template-columns:repeat(3,1fr)}.two,.two.equal{grid-template-columns:1fr}.stats-grid{grid-template-columns:repeat(4,1fr)}}
+@media(max-width:680px){.app{padding:11px}.topbar{flex-direction:column}.actions{justify-content:flex-start}.quick{grid-template-columns:1fr}.grid6{grid-template-columns:repeat(2,1fr)}.stats-grid{grid-template-columns:repeat(2,1fr)}.insights{grid-template-columns:1fr}.model-row{grid-template-columns:1fr auto}.model-row .bar{grid-column:1/-1}.chart{height:260px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="brand"><div class="logo"></div><div><div class="title">Codex Usage</div><div class="subtitle">纯前端 · 本地解析 · AI Calendar Tools 原型 V3.1</div></div></div>
+    <div class="actions">
+      <label class="btn primary help" data-help="选择 ccusage 导出的本地 JSON 文件。文件只在浏览器内解析，不会上传。" for="fileInput" tabindex="0">导入 JSON</label><input id="fileInput" class="input" type="file" accept=".json,application/json">
+      <button class="btn help" data-help="读取剪贴板里的 ccusage JSON 并立即分析。推荐先复制下方 Daily 命令到 PowerShell 执行。" id="pasteBtn">粘贴 JSON</button>
+      <button class="btn help" data-help="切换到内置演示数据，仅用于预览界面；不是你的真实 Codex 使用记录。" id="sampleBtn">示例数据</button>
+      <button class="btn help" data-help="把当前筛选范围的统计摘要复制成 Markdown，方便粘到 ChatGPT、知识库或笔记中；不是复制原始 JSON。" id="copyMdBtn">复制 Markdown</button>
+    </div>
+  </div>
+
+  <div class="statusbar sample" id="statusBar">
+    <div class="status-left">
+      <span class="dot"></span>
+      <div>
+        <div class="status-primary"><span id="statusText">当前为示例数据</span><span class="status-badge" id="statusBadge">DEMO</span></div>
+        <div class="status-detail" id="statusDetail">仅用于预览界面，不代表你的真实 Codex 使用情况。</div>
+      </div>
+    </div>
+    <div class="status-right"><span>载入时间</span><strong id="importedAt">—</strong></div>
+  </div>
+
+  <section class="quick">
+    <div>
+      <div class="quick-title">最快取数：PowerShell → Clipboard → 本页粘贴</div>
+      <div class="quick-sub">点击复制命令，去终端直接粘贴执行；完成后回到这里点“粘贴 JSON”。</div>
+      <div class="cmd"><code id="dailyCmd">npx ccusage@latest codex daily --json --breakdown | Set-Clipboard</code></div>
+    </div>
+    <div class="cmd-actions">
+      <button class="btn good help" data-help="复制“按天统计”的 PowerShell 命令。运行后，Daily JSON 会直接进入剪贴板；它负责趋势图、模型占比、成本、缓存率等主体分析。" id="copyDailyCmd">复制 Daily 命令</button>
+      <button class="btn help" data-help="复制“按会话统计”的 PowerShell 命令。只有想看下方 Sessions 会话排行时才需要运行；粘贴后会补充会话数据，并保留已载入的 Daily 数据。" id="copySessionCmd">复制 Session 命令</button>
+    </div>
+  </section>
+
+  <div class="dropzone" id="dropzone"><b>把 ccusage JSON 拖进来</b><div class="note" style="margin-top:4px">支持 daily / weekly / monthly / sessions。数据只在当前浏览器内解析。</div></div>
+
+  <div class="grid6">
+    <div class="card metric"><div class="metric-label">Total Cost</div><div class="metric-value" id="sumCost">—</div><div class="metric-foot">API-equivalent，不是订阅实际账单</div></div>
+    <div class="card metric"><div class="metric-label">Total Tokens</div><div class="metric-value" id="sumTotal">—</div><div class="metric-foot" id="sumRange">所选时间范围</div></div>
+    <div class="card metric"><div class="metric-label">Input Tokens</div><div class="metric-value" id="sumInput">—</div><div class="metric-foot">Raw input</div></div>
+    <div class="card metric"><div class="metric-label">Output Tokens</div><div class="metric-value" id="sumOutput">—</div><div class="metric-foot">Model output</div></div>
+    <div class="card metric"><div class="metric-label">Cache Read Rate</div><div class="metric-value" id="sumCache">—</div><div class="metric-foot" id="sumCacheSub">Cache Read / (Input + Cache Write + Cache Read)</div></div>
+    <div class="card metric"><div class="metric-label">Entries</div><div class="metric-value" id="sumEntries">—</div><div class="metric-foot">当前筛选后的数据点</div></div>
+  </div>
+
+  <section class="card panel">
+    <div class="head">
+      <div><div class="head-title">Time Range</div><div class="head-sub">快捷范围 + 细粒度范围滑块</div></div>
+      <div class="seg" id="rangeSeg"><button data-r="7">7D</button><button data-r="30" class="active">30D</button><button data-r="90">90D</button><button data-r="all">All</button></div>
+    </div>
+    <div class="rangebox"><span id="rangeStartLabel">—</span><input id="rangeSlider" type="range" min="1" max="30" value="30"><span id="rangeEndLabel">—</span></div>
+  </section>
+
+  <section class="card panel">
+    <div class="head">
+      <div><div class="head-title">Token Composition</div><div class="head-sub">每日 Token 按模型分层累计；某一天的总高度 = 当天总 Token</div></div>
+      <div class="toolbar"><button class="btn" id="exportTokenPng">导出图表 PNG</button></div>
+    </div>
+    <div class="chart"><canvas id="tokenChart"></canvas></div>
+    <div class="legend" id="tokenLegend"></div>
+  </section>
+
+  <section class="card panel">
+    <div class="head">
+      <div><div class="head-title">API-equivalent Cost</div><div class="head-sub">每天按 API 定价折算的等价成本（USD）；不代表你的订阅实际扣费</div></div>
+      <div class="toolbar"><button class="btn" id="exportCostPng">导出图表 PNG</button></div>
+    </div>
+    <div class="chart small"><canvas id="costChart"></canvas></div>
+  </section>
+
+  <div class="two">
+    <section class="card panel">
+      <div class="head"><div><div class="head-title">Cache Efficiency</div><div class="head-sub">Cache Read / (Input + Cache Write + Cache Read)，范围固定为 0–100%</div></div></div>
+      <div class="chart small"><canvas id="cacheChart"></canvas></div>
+    </section>
+    <section class="card panel">
+      <div class="head"><div><div class="head-title">Model Breakdown</div><div class="head-sub">所选范围内按模型聚合</div></div></div>
+      <div class="model-list" id="modelList"></div>
+    </section>
+  </div>
+
+  <section class="card panel">
+    <div class="head">
+      <div><div class="head-title">Statistics</div><div class="head-sub">类似 ccusageview：均值、中位数、分位数、离散程度</div></div>
+      <select class="select" id="statMetric">
+        <option value="cost">Cost</option><option value="totalTokens" selected>Total Tokens</option>
+        <option value="inputTokens">Input</option><option value="outputTokens">Output</option>
+        <option value="cacheReadTokens">Cache Read</option><option value="cacheRate">Cache Read Rate</option>
+      </select>
+    </div>
+    <div class="stats-grid" id="statsGrid"></div>
+  </section>
+
+  <div class="two equal">
+    <section class="card panel">
+      <div class="head"><div><div class="head-title">Activity Heatmap</div><div class="head-sub">按每天 Token 强度显示活跃度</div></div></div>
+      <div class="heatmap-wrap"><div class="heatmap" id="heatmap"></div><div class="heatlabels"><span>Earlier</span><span>More active →</span></div></div>
+    </section>
+    <section class="card panel">
+      <div class="head">
+        <div><div class="head-title">Day of Week</div><div class="head-sub">按星期聚合使用强度</div></div>
+        <select class="select" id="dowAgg"><option value="avg">Avg</option><option value="sum">Sum</option><option value="max">Max</option></select>
+      </div>
+      <div class="chart small"><canvas id="dowChart"></canvas></div>
+    </section>
+  </div>
+
+  <section class="card panel">
+    <div class="head"><div><div class="head-title">Detailed Model Breakdown</div><div class="head-sub">支持按列查看模型 Token 与成本构成</div></div></div>
+    <div class="table-wrap">
+      <table><thead><tr><th>Model</th><th class="num">Input</th><th class="num">Cache Read</th><th class="num">Output</th><th class="num">Total</th><th class="num">Cache Rate</th><th class="num">API Eq.</th></tr></thead><tbody id="modelTable"></tbody></table>
+    </div>
+  </section>
+
+  <section class="card panel" id="sessionsPanel">
+    <div class="head"><div><div class="head-title">Sessions</div><div class="head-sub">Session JSON 是补充数据：再次粘贴时只更新会话排行，不会覆盖上面的 Daily/趋势数据。</div></div></div>
+    <div class="table-wrap">
+      <table><thead><tr><th>Session</th><th>Model</th><th class="num">Input</th><th class="num">Cached</th><th class="num">Output</th><th class="num">Total</th></tr></thead><tbody id="sessionTable"></tbody></table>
+    </div>
+  </section>
+
+  <section class="card panel">
+    <div class="head"><div><div class="head-title">Raw Data Table</div><div class="head-sub">所选时间范围内的完整日级数据</div></div></div>
+    <div class="table-wrap">
+      <table><thead><tr><th>Date</th><th class="num">Cost</th><th class="num">Input</th><th class="num">Cache Read</th><th class="num">Output</th><th class="num">Total</th><th>Models</th></tr></thead><tbody id="rawTable"></tbody></table>
+    </div>
+  </section>
+
+  <section class="card panel">
+    <div class="head"><div><div class="head-title">Usage Insights</div><div class="head-sub">浏览器根据当前范围自动生成，不调用 AI</div></div></div>
+    <div class="insights" id="insights"></div>
+  </section>
+
+  <div class="note">V3.1 仍然是单文件前端：没有后端、没有数据库、没有上传。Cache Read Rate 按 ccusageview 口径计算：Cache Read / (Input + Cache Write + Cache Read)。后续嵌入 AI Calendar 时，可以直接保留整个分析层，只把“导入/粘贴 JSON”替换成 Local Bridge 自动读取。</div>
+</div>
+<div class="tooltip" id="tooltip"></div><div class="toast" id="toast"></div>
+
+<script>
+(() => {
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const COLORS=["#83a0ff","#66dfb5","#f7c66a","#bd8cff","#62d6ee","#ff7f8d","#9bd373","#e7a7d1"];
+const sessionCmd="npx ccusage@latest codex session --json | Set-Clipboard";
+let state={daily:[],sessions:[]}, baseRange=30, windowCount=30, hiddenModels=new Set(), loadedAt=new Date();
+
+const num=v=>Number.isFinite(+v)?+v:0;
+const sum=(a,f)=>a.reduce((s,x)=>s+num(f(x)),0);
+const cacheRate=(input,create,read)=>{const den=num(input)+num(create)+num(read);return den>0?num(read)/den:null};
+const formatLoadedAt=d=>new Intl.DateTimeFormat("zh-CN",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(d);
+const fmt=n=>{n=num(n);let a=Math.abs(n);if(a>=1e9)return trim(n/1e9,2)+"B";if(a>=1e6)return trim(n/1e6,2)+"M";if(a>=1e3)return trim(n/1e3,2)+"K";return Math.round(n).toLocaleString()};
+const trim=(n,d)=>n.toFixed(d).replace(/\.?0+$/,"");
+const money=n=>"$"+(num(n)>=100?num(n).toFixed(0):num(n).toFixed(2));
+const pct=n=>Number.isFinite(n)?(n*100).toFixed(1)+"%":"—";
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const shortModel=s=>String(s||"Unknown").replace(/^openai\//,"").replace(/^anthropic\//,"").replace(/^gpt-/i,"GPT-");
+const toast=m=>{let t=$("#toast");t.textContent=m;t.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove("show"),1700)};
+const copy=async t=>{try{await navigator.clipboard.writeText(t);toast("已复制到剪贴板")}catch{prompt("请复制：",t)}};
+
+function sample(){
+ const models=["gpt-5.6-luna","gpt-5.6-sol","gpt-6-astra"];
+ const daily=[],now=new Date();
+ for(let i=149;i>=0;i--){
+  let d=new Date(now);d.setDate(now.getDate()-i);let date=d.toISOString().slice(0,10),k=149-i;
+  let base=Math.max(7,44*(.82+.32*Math.sin(k/8)+.18*Math.sin(k/3.1))+(k%17===0?38:0));
+  let shares=[.48+.07*Math.sin(k/13),.34+.06*Math.cos(k/10),.18+.035*Math.sin(k/5)];
+  let z=shares.reduce((a,b)=>a+b,0);shares=shares.map(x=>x/z);
+  let breakdown=models.map((m,j)=>{let total=base*1e6*shares[j],output=total*.07,prompt=total-output,rate=[.91,.84,.72][j]+.025*Math.sin(k/7),cache=prompt*rate,input=prompt-cache;
+   return {modelName:m,inputTokens:Math.round(input),outputTokens:Math.round(output),cacheReadTokens:Math.round(cache),cacheCreationTokens:0,cost:total/1e6*[.10,.22,.41][j]};});
+  daily.push({date,inputTokens:sum(breakdown,x=>x.inputTokens),outputTokens:sum(breakdown,x=>x.outputTokens),cacheReadTokens:sum(breakdown,x=>x.cacheReadTokens),cacheCreationTokens:0,totalTokens:sum(breakdown,x=>x.inputTokens+x.cacheReadTokens+x.cacheCreationTokens+x.outputTokens),costUSD:sum(breakdown,x=>x.cost),modelBreakdowns:breakdown});
+ }
+ const sessions=[
+  {sessionId:"AI Calendar / Codex Usage Dashboard",modelsUsed:["gpt-5.6-sol"],inputTokens:20e6,cacheReadTokens:132e6,outputTokens:9.2e6,totalTokens:161.2e6},
+  {sessionId:"Daily V2 Cloud Shadow",modelsUsed:["gpt-5.6-luna"],inputTokens:12e6,cacheReadTokens:103e6,outputTokens:6.8e6,totalTokens:121.8e6},
+  {sessionId:"VBA Weekly Report Automation",modelsUsed:["gpt-5.6-luna"],inputTokens:8e6,cacheReadTokens:62e6,outputTokens:4.1e6,totalTokens:74.1e6},
+  {sessionId:"Architecture Review",modelsUsed:["gpt-6-astra"],inputTokens:17e6,cacheReadTokens:38e6,outputTokens:7.9e6,totalTokens:62.9e6}
+ ];
+ return {daily,sessions};
+}
+function normalize(raw){
+ if(!raw||typeof raw!=="object")throw Error("JSON 顶层不是对象");
+ let out={daily:[],sessions:[],reportKinds:[]};
+
+ const hasDaily=Array.isArray(raw.daily);
+ const hasWeekly=Array.isArray(raw.weekly);
+ const hasMonthly=Array.isArray(raw.monthly);
+ const hasHourly=Array.isArray(raw.hourly);
+ const hasSessions=Array.isArray(raw.sessions);
+
+ // Time-series reports: only these are allowed to update the Daily/time-series slot.
+ const arr=hasDaily?raw.daily:hasWeekly?raw.weekly:hasMonthly?raw.monthly:hasHourly?raw.hourly:null;
+ if(Array.isArray(arr)){
+   out.daily=arr.map(normEntry);
+   out.reportKinds.push(hasDaily?"daily":hasWeekly?"weekly":hasMonthly?"monthly":"hourly");
+ }
+
+ // Session report is an independent data slot.
+ if(hasSessions){
+   out.sessions=raw.sessions.map(s=>({
+     sessionId:s.sessionId||s.projectPath||s.label||"Unknown Session",
+     lastActivity:s.lastActivity||"",
+     inputTokens:num(s.inputTokens),
+     outputTokens:num(s.outputTokens),
+     cacheReadTokens:num(s.cacheReadTokens),
+     cacheCreationTokens:num(s.cacheCreationTokens),
+     totalTokens:num(s.totalTokens),
+     modelsUsed:Array.isArray(s.modelsUsed)?s.modelsUsed:[],
+     modelBreakdowns:Array.isArray(s.modelBreakdowns)?s.modelBreakdowns:[]
+   }));
+   out.reportKinds.push("session");
+ }
+
+ // A totals-only object may be visualized as one aggregate point, but NEVER do this
+ // for a Session report: ccusage session JSON also contains totals.
+ if(!out.daily.length&&!hasSessions&&raw.totals){
+   out.daily=[normEntry({date:"Total",...raw.totals,modelBreakdowns:raw.modelBreakdowns||[]})];
+   out.reportKinds.push("totals");
+ }
+
+ if(!out.daily.length&&!out.sessions.length)throw Error("未识别到 daily / weekly / monthly / hourly / sessions");
+ return out;
+}
+function normEntry(e){
+ let b=[];
+ if(Array.isArray(e.modelBreakdowns))b=e.modelBreakdowns.map(m=>({modelName:m.modelName||m.model||"Unknown",inputTokens:num(m.inputTokens),outputTokens:num(m.outputTokens),cacheReadTokens:num(m.cacheReadTokens),cacheCreationTokens:num(m.cacheCreationTokens),cost:num(m.cost??m.costUSD)}));
+ else if(e.models&&typeof e.models==="object"&&!Array.isArray(e.models))b=Object.entries(e.models).map(([name,m])=>({modelName:name,inputTokens:num(m.inputTokens),outputTokens:num(m.outputTokens),cacheReadTokens:num(m.cacheReadTokens),cacheCreationTokens:num(m.cacheCreationTokens),cost:num(m.costUSD??m.cost)}));
+ return {date:e.date||e.period||e.label||"",inputTokens:num(e.inputTokens),outputTokens:num(e.outputTokens),cacheReadTokens:num(e.cacheReadTokens),cacheCreationTokens:num(e.cacheCreationTokens),totalTokens:num(e.totalTokens)||num(e.inputTokens)+num(e.cacheReadTokens)+num(e.cacheCreationTokens)+num(e.outputTokens),costUSD:num(e.costUSD??e.totalCost??e.cost),modelBreakdowns:b};
+}
+function activeEntries(){let d=state.daily;if(baseRange==="all")return d.slice(Math.max(0,d.length-windowCount));let n=Math.min(num(baseRange),d.length);return d.slice(Math.max(0,d.length-Math.min(windowCount,n)));}
+function models(entries){
+ let m=new Map();
+ for(let d of entries){
+  let bs=d.modelBreakdowns?.length?d.modelBreakdowns:[{modelName:"Unknown",inputTokens:d.inputTokens,outputTokens:d.outputTokens,cacheReadTokens:d.cacheReadTokens,cacheCreationTokens:d.cacheCreationTokens,cost:d.costUSD}];
+  for(let x of bs){if(!m.has(x.modelName))m.set(x.modelName,{name:x.modelName,input:0,output:0,cache:0,create:0,cost:0});let a=m.get(x.modelName);a.input+=x.inputTokens;a.output+=x.outputTokens;a.cache+=x.cacheReadTokens;a.create+=x.cacheCreationTokens;a.cost+=x.cost}
+ }
+ return [...m.values()].map(x=>({...x,total:x.input+x.cache+x.create+x.output})).sort((a,b)=>b.total-a.total);
+}
+function render(){
+ let e=activeEntries(),ms=models(e),input=sum(e,x=>x.inputTokens),cache=sum(e,x=>x.cacheReadTokens),create=sum(e,x=>x.cacheCreationTokens),cr=cacheRate(input,create,cache);
+ $("#sumCost").textContent=money(sum(e,x=>x.costUSD));$("#sumTotal").textContent=fmt(sum(e,x=>x.totalTokens));$("#sumInput").textContent=fmt(input);$("#sumOutput").textContent=fmt(sum(e,x=>x.outputTokens));$("#sumCache").textContent=cr==null?"N/A":pct(cr);$("#sumCacheSub").textContent=`${fmt(cache)} read / ${fmt(input+create+cache)} prompt-input total`;$("#sumEntries").textContent=e.length;
+ $("#sumRange").textContent=e.length?`${e[0].date} → ${e.at(-1).date}`:"—";$("#rangeStartLabel").textContent=e[0]?.date||"—";$("#rangeEndLabel").textContent=e.at(-1)?.date||"—";
+ renderToken(e,ms);renderCost(e);renderCache(e);renderModels(ms);renderStats(e);renderHeatmap(state.daily);renderDow(e);renderTables(e,ms);renderSessions();renderInsights(e,ms);
+}
+function setupCanvas(id){
+ let c=$(id),r=c.getBoundingClientRect(),d=window.devicePixelRatio||1;c.width=Math.max(1,r.width*d);c.height=Math.max(1,r.height*d);let x=c.getContext("2d");x.setTransform(d,0,0,d,0,0);x.clearRect(0,0,r.width,r.height);return {c,ctx:x,w:r.width,h:r.height};
+}
+function axis(ctx,w,h,max,formatter=fmt){
+ const p={l:53,r:16,t:12,b:31},cw=w-p.l-p.r,ch=h-p.t-p.b;ctx.font="10px system-ui";ctx.strokeStyle="#253041";ctx.fillStyle="#7f8da1";ctx.lineWidth=1;
+ for(let i=0;i<5;i++){let y=p.t+ch*i/4;ctx.beginPath();ctx.moveTo(p.l,y);ctx.lineTo(w-p.r,y);ctx.stroke();ctx.fillText(formatter(max*(1-i/4)),4,y+3)}
+ return {...p,cw,ch};
+}
+function xlabels(ctx,e,p,w,h){
+ if(!e.length)return;ctx.fillStyle="#7f8da1";ctx.font="10px system-ui";let n=Math.min(6,e.length);
+ for(let j=0;j<n;j++){let i=Math.round(j*(e.length-1)/(n-1||1)),x=p.l+p.cw*(i/(e.length-1||1));ctx.fillText(String(e[i].date).slice(5),Math.max(p.l,Math.min(w-42,x-14)),h-8)}
+}
+function renderToken(e,ms){
+ let {c,ctx,w,h}=setupCanvas("#tokenChart"),visible=ms.filter(m=>!hiddenModels.has(m.name));
+ let rows=e.map(d=>{let map=new Map((d.modelBreakdowns||[]).map(x=>[x.modelName,x.inputTokens+x.cacheReadTokens+x.cacheCreationTokens+x.outputTokens]));return {d,vals:visible.map(m=>num(map.get(m.name)))}}),max=Math.max(1,...rows.map(r=>r.vals.reduce((a,b)=>a+b,0)))*1.08,p=axis(ctx,w,h,max);
+ let n=e.length,step=p.cw/Math.max(1,n-1),x=i=>p.l+i*step,y=v=>p.t+p.ch-(v/max)*p.ch;
+ // stacked areas
+ let cumulative=new Array(n).fill(0);
+ visible.forEach((m,mi)=>{
+  let low=[...cumulative],high=rows.map((r,i)=>{cumulative[i]+=r.vals[mi]||0;return cumulative[i]});
+  ctx.beginPath();for(let i=0;i<n;i++){let xx=x(i),yy=y(high[i]);i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)}
+  for(let i=n-1;i>=0;i--)ctx.lineTo(x(i),y(low[i]));ctx.closePath();ctx.globalAlpha=.62;ctx.fillStyle=COLORS[mi%COLORS.length];ctx.fill();ctx.globalAlpha=1;
+  ctx.beginPath();for(let i=0;i<n;i++){let xx=x(i),yy=y(high[i]);i?ctx.lineTo(xx,yy):ctx.moveTo(xx,yy)}ctx.strokeStyle=COLORS[mi%COLORS.length];ctx.lineWidth=1.4;ctx.stroke();
+ });
+ xlabels(ctx,e,p,w,h);
+ let lg=$("#tokenLegend");lg.innerHTML=ms.map((m,i)=>`<button data-model="${esc(m.name)}" class="${hiddenModels.has(m.name)?"off":""}"><i class="sw" style="background:${COLORS[i%COLORS.length]}"></i>${esc(shortModel(m.name))}</button>`).join("");
+ lg.querySelectorAll("button").forEach(b=>b.onclick=()=>{let n=b.dataset.model;hiddenModels.has(n)?hiddenModels.delete(n):hiddenModels.add(n);render()});
+ attachChartTooltip(c,e,(idx)=>{let d=e[idx],parts=[`<b>${esc(d.date)}</b>`,`Total: ${fmt(d.totalTokens)}`];for(let x of d.modelBreakdowns||[])parts.push(`${esc(shortModel(x.modelName))}: ${fmt(x.inputTokens+x.cacheReadTokens+x.cacheCreationTokens+x.outputTokens)}`);return parts.join("<br>")},p);
+}
+function renderCost(e){
+ let {c,ctx,w,h}=setupCanvas("#costChart"),vals=e.map(x=>x.costUSD),max=Math.max(1,...vals)*1.12,p=axis(ctx,w,h,max,v=>"$"+trim(v,1)),n=e.length,x=i=>p.l+p.cw*(i/(n-1||1)),y=v=>p.t+p.ch-(v/max)*p.ch;
+ let g=ctx.createLinearGradient(0,p.t,0,p.t+p.ch);g.addColorStop(0,"rgba(102,223,181,.25)");g.addColorStop(1,"rgba(102,223,181,0)");
+ ctx.beginPath();e.forEach((d,i)=>i?ctx.lineTo(x(i),y(vals[i])):ctx.moveTo(x(i),y(vals[i])));if(n){ctx.lineTo(x(n-1),p.t+p.ch);ctx.lineTo(x(0),p.t+p.ch);ctx.closePath();ctx.fillStyle=g;ctx.fill()}
+ ctx.beginPath();e.forEach((d,i)=>i?ctx.lineTo(x(i),y(vals[i])):ctx.moveTo(x(i),y(vals[i])));ctx.strokeStyle="#66dfb5";ctx.lineWidth=2;ctx.stroke();xlabels(ctx,e,p,w,h);
+ attachChartTooltip(c,e,idx=>`<b>${esc(e[idx].date)}</b><br>API Eq.: ${money(e[idx].costUSD)}`,p);
+}
+function renderCache(e){
+ let {c,ctx,w,h}=setupCanvas("#cacheChart"),vals=e.map(d=>cacheRate(d.inputTokens,d.cacheCreationTokens,d.cacheReadTokens)),max=1,p=axis(ctx,w,h,max,v=>(v*100).toFixed(0)+"%"),n=e.length,x=i=>p.l+p.cw*(i/(n-1||1)),y=v=>p.t+p.ch-num(v)*p.ch;
+ ctx.beginPath();let started=false;e.forEach((d,i)=>{if(vals[i]==null)return;let xx=x(i),yy=y(vals[i]);started?ctx.lineTo(xx,yy):(ctx.moveTo(xx,yy),started=true)});ctx.strokeStyle="#62d6ee";ctx.lineWidth=2;ctx.stroke();xlabels(ctx,e,p,w,h);attachChartTooltip(c,e,idx=>`<b>${esc(e[idx].date)}</b><br>Cache Rate: ${vals[idx]==null?"N/A":pct(vals[idx])}<br><span style="color:#8f9bad">read / (input + write + read)</span>`,p);
+}
+function renderModels(ms){
+ let total=sum(ms,x=>x.total),el=$("#modelList");el.innerHTML=ms.length?ms.map((m,i)=>`<div class="model-row"><div><div class="model-name">${esc(shortModel(m.name))}</div><div class="model-meta">${cacheRate(m.input,m.create,m.cache)==null?"N/A":pct(cacheRate(m.input,m.create,m.cache))} cache · ${money(m.cost)}</div></div><div class="bar"><i style="width:${total?m.total/total*100:0}%;background:${COLORS[i%COLORS.length]}"></i></div><div class="model-val"><strong>${fmt(m.total)}</strong><span>${pct(total?m.total/total:0)}</span></div></div>`).join(""):'<div class="empty">无模型拆分</div>';
+}
+function valuesFor(e,key){if(key==="cost")return e.map(x=>x.costUSD);if(key==="cacheRate")return e.map(x=>cacheRate(x.inputTokens,x.cacheCreationTokens,x.cacheReadTokens)??0);return e.map(x=>num(x[key]));}
+function quant(a,q){if(!a.length)return 0;let s=[...a].sort((x,y)=>x-y),p=(s.length-1)*q,b=Math.floor(p),r=p-b;return s[b]+(s[b+1]!==undefined?r*(s[b+1]-s[b]):0)}
+function renderStats(e){
+ let key=$("#statMetric").value,a=valuesFor(e,key),n=a.length,mean=n?sum(a,x=>x)/n:0,sd=n?Math.sqrt(sum(a,x=>(x-mean)**2)/n):0,format=key==="cost"?money:key==="cacheRate"?pct:fmt;
+ let items=[["Sum",format(sum(a,x=>x))],["Mean",format(mean)],["Median P50",format(quant(a,.5))],["Min",format(n?Math.min(...a):0)],["Max",format(n?Math.max(...a):0)],["P90",format(quant(a,.9))],["P95",format(quant(a,.95))],["Std Dev",format(sd)]];
+ $("#statsGrid").innerHTML=items.map(x=>`<div class="stat"><span>${x[0]}</span><b>${x[1]}</b></div>`).join("");
+}
+function renderHeatmap(all){
+ let el=$("#heatmap"),vals=all.map(x=>x.totalTokens),max=Math.max(...vals,1),min=Math.min(...vals,0);el.innerHTML=all.map(d=>{let z=(d.totalTokens-min)/(max-min||1),a=.12+.88*Math.pow(z,.65);return `<div class="heatcell" title="${esc(d.date)} · ${fmt(d.totalTokens)}" style="background:rgba(102,223,181,${a.toFixed(2)})"></div>`}).join("");
+}
+function renderDow(e){
+ let agg=$("#dowAgg").value,names=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],b=names.map(x=>({name:x,v:[]}));for(let d of e){let dt=new Date(d.date+"T00:00:00"),idx=(dt.getDay()+6)%7;if(Number.isFinite(idx))b[idx].v.push(d.totalTokens)}
+ let vals=b.map(x=>agg==="sum"?sum(x.v,y=>y):agg==="max"?(x.v.length?Math.max(...x.v):0):(x.v.length?sum(x.v,y=>y)/x.v.length:0)),{c,ctx,w,h}=setupCanvas("#dowChart"),max=Math.max(1,...vals)*1.1,p=axis(ctx,w,h,max),gap=9,bw=(p.cw-gap*8)/7;
+ b.forEach((x,i)=>{let xx=p.l+gap+i*(bw+gap),hh=vals[i]/max*p.ch,yy=p.t+p.ch-hh;ctx.fillStyle=COLORS[i%COLORS.length];ctx.globalAlpha=.8;ctx.fillRect(xx,yy,bw,hh);ctx.globalAlpha=1;ctx.fillStyle="#8290a4";ctx.font="10px system-ui";ctx.fillText(x.name,xx+bw/2-10,h-8)});
+}
+function renderTables(e,ms){
+ $("#modelTable").innerHTML=ms.length?ms.map(m=>`<tr><td><span class="pill">${esc(shortModel(m.name))}</span></td><td class="num">${fmt(m.input)}</td><td class="num">${fmt(m.cache)}</td><td class="num">${fmt(m.output)}</td><td class="num">${fmt(m.total)}</td><td class="num">${cacheRate(m.input,m.create,m.cache)==null?"N/A":pct(cacheRate(m.input,m.create,m.cache))}</td><td class="num">${money(m.cost)}</td></tr>`).join(""):'<tr><td colspan="7" class="empty">无模型数据</td></tr>';
+ $("#rawTable").innerHTML=e.length?e.slice().reverse().map(d=>`<tr><td>${esc(d.date)}</td><td class="num">${money(d.costUSD)}</td><td class="num">${fmt(d.inputTokens)}</td><td class="num">${fmt(d.cacheReadTokens)}</td><td class="num">${fmt(d.outputTokens)}</td><td class="num">${fmt(d.totalTokens)}</td><td>${esc((d.modelBreakdowns||[]).map(x=>shortModel(x.modelName)).join(", ")||"—")}</td></tr>`).join(""):'<tr><td colspan="7" class="empty">无日级数据</td></tr>';
+}
+function renderSessions(){
+ let s=[...state.sessions].sort((a,b)=>b.totalTokens-a.totalTokens);$("#sessionTable").innerHTML=s.length?s.map(x=>`<tr><td>${esc(x.sessionId)}</td><td>${esc(shortModel(x.modelsUsed?.[0]||x.modelBreakdowns?.[0]?.modelName||"—"))}</td><td class="num">${fmt(x.inputTokens)}</td><td class="num">${fmt(x.cacheReadTokens)}</td><td class="num">${fmt(x.outputTokens)}</td><td class="num">${fmt(x.totalTokens)}</td></tr>`).join(""):'<tr><td colspan="6" class="empty">当前 JSON 没有 sessions；可点击上方“复制 Session 命令”单独获取。</td></tr>';
+}
+function renderInsights(e,ms){
+ let total=sum(ms,x=>x.total),top=ms[0],input=sum(e,x=>x.inputTokens),cache=sum(e,x=>x.cacheReadTokens),create=sum(e,x=>x.cacheCreationTokens),cr=cacheRate(input,create,cache),peak=e.slice().sort((a,b)=>b.totalTokens-a.totalTokens)[0],avg=e.length?sum(e,x=>x.totalTokens)/e.length:0,cost=sum(e,x=>x.costUSD);
+ let out=[];if(top)out.push([`${shortModel(top.name)} 占比最高`,`当前范围 ${pct(total?top.total/total:0)}，累计 ${fmt(top.total)} Token。`]);if(cr!=null)out.push([`Cache Read Rate ${pct(cr)}`,`缓存读取 ${fmt(cache)} / (Input ${fmt(input)} + Cache Write ${fmt(create)} + Cache Read ${fmt(cache)})。`]);if(peak)out.push([`峰值 ${peak.date}`,`当天 ${fmt(peak.totalTokens)} Token；区间日均 ${fmt(avg)}；API 等价成本合计 ${money(cost)}。`]);
+ $("#insights").innerHTML=out.map(x=>`<div class="insight"><b>${esc(x[0])}</b><p>${esc(x[1])}</p></div>`).join("");
+}
+function attachChartTooltip(c,e,fn,p){
+ c.onmousemove=ev=>{if(!e.length)return;let r=c.getBoundingClientRect(),x=ev.clientX-r.left;if(x<p.l||x>r.width-p.r){hideTip();return}let idx=Math.round((x-p.l)/p.cw*(e.length-1));idx=Math.max(0,Math.min(e.length-1,idx));let t=$("#tooltip");t.innerHTML=fn(idx);t.style.display="block";t.style.left=Math.min(innerWidth-270,ev.clientX+12)+"px";t.style.top=Math.min(innerHeight-120,ev.clientY+12)+"px"};c.onmouseleave=hideTip;
+}
+function hideTip(){$("#tooltip").style.display="none"}
+function exportCanvas(id,name){let a=document.createElement("a");a.href=$(id).toDataURL("image/png");a.download=name;a.click()}
+function markdown(){
+ let e=activeEntries(),ms=models(e),lines=["# Codex Usage","","## Summary",`- Range: ${e[0]?.date||"—"} → ${e.at(-1)?.date||"—"}`,`- Total Tokens: ${fmt(sum(e,x=>x.totalTokens))}`,`- API-equivalent Cost: ${money(sum(e,x=>x.costUSD))}`,"","## Models","", "| Model | Input | Cache Read | Output | Total | Cost |","|---|---:|---:|---:|---:|---:|"];
+ ms.forEach(m=>lines.push(`| ${shortModel(m.name)} | ${fmt(m.input)} | ${fmt(m.cache)} | ${fmt(m.output)} | ${fmt(m.total)} | ${money(m.cost)} |`));return lines.join("\n");
+}
+function setLoadStatus(kind,label){
+ loadedAt=new Date();
+ const bar=$("#statusBar"),isSample=kind==="sample";
+ bar.classList.toggle("sample",isSample);bar.classList.toggle("real",!isSample);
+ $("#statusText").textContent=isSample?"当前为示例数据":`已导入：${label}`;
+ $("#statusBadge").textContent=isSample?"DEMO":"REAL DATA";
+ $("#statusDetail").textContent=isSample?"仅用于预览界面，不代表你的真实 Codex 使用情况。":"正在展示你刚导入的 ccusage 数据；所有解析均在本地浏览器完成。";
+ $("#importedAt").textContent=formatLoadedAt(loadedAt);
+}
+async function loadText(t,label){
+ try{
+   let n=normalize(JSON.parse(t));
+   const updated=[];
+   if(n.daily.length){state.daily=n.daily;updated.push(n.reportKinds.find(k=>k!=="session")||"time-series")}
+   if(n.sessions.length){state.sessions=n.sessions;updated.push("session")}
+
+   setLoadStatus("real",label);
+   if(updated.length===1&&updated[0]==="session"){
+     $("#statusDetail").textContent=`已补充 Session 数据；原有 Daily/趋势数据保持不变。当前 ${state.sessions.length} 个会话。`;
+   }else if(updated.includes("session")&&updated.length>1){
+     $("#statusDetail").textContent="本次同时更新了时间序列与 Session 数据；所有解析均在本地浏览器完成。";
+   }else{
+     $("#statusDetail").textContent=`已更新 ${updated[0]||"时间序列"} 数据；已有 Session 数据会继续保留。`;
+   }
+
+   // Only reset the time-range controls when a time-series report was actually imported.
+   if(n.daily.length){
+     baseRange=30;
+     windowCount=Math.min(30,state.daily.length||30);
+     $("#rangeSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("active",x.dataset.r==="30"));
+     syncRange();
+   }
+   render();
+   toast(updated.length===1&&updated[0]==="session"?"Session 已合并，Daily 已保留":"JSON 解析成功");
+ }catch(err){console.error(err);toast("解析失败："+err.message)}
+}
+function syncRange(){
+ let max=baseRange==="all"?Math.max(1,state.daily.length):Math.max(1,Math.min(num(baseRange),state.daily.length));$("#rangeSlider").max=max;windowCount=Math.max(1,Math.min(windowCount,max));$("#rangeSlider").value=windowCount;
+}
+$("#copyDailyCmd").onclick=()=>copy($("#dailyCmd").textContent);$("#copySessionCmd").onclick=()=>copy(sessionCmd);$("#copyMdBtn").onclick=()=>copy(markdown());
+$("#pasteBtn").onclick=async()=>{try{let t=await navigator.clipboard.readText();if(!t.trim())throw Error();loadText(t,"剪贴板 JSON")}catch{let t=prompt("请粘贴 ccusage JSON：");if(t)loadText(t,"粘贴 JSON")}};
+$("#fileInput").onchange=async e=>{let f=e.target.files?.[0];if(f)loadText(await f.text(),f.name)};
+$("#sampleBtn").onclick=()=>{state=sample();baseRange=30;windowCount=30;hiddenModels.clear();setLoadStatus("sample","示例数据");syncRange();render();toast("已切换示例数据")};
+$("#rangeSeg").onclick=e=>{let b=e.target.closest("button");if(!b)return;baseRange=b.dataset.r==="all"?"all":num(b.dataset.r);$("#rangeSeg").querySelectorAll("button").forEach(x=>x.classList.toggle("active",x===b));syncRange();windowCount=num($("#rangeSlider").max);$("#rangeSlider").value=windowCount;render()};
+$("#rangeSlider").oninput=e=>{windowCount=num(e.target.value);render()};$("#statMetric").onchange=()=>renderStats(activeEntries());$("#dowAgg").onchange=()=>renderDow(activeEntries());
+$("#exportTokenPng").onclick=()=>exportCanvas("#tokenChart","codex-token-composition.png");$("#exportCostPng").onclick=()=>exportCanvas("#costChart","codex-cost.png");
+document.addEventListener("dragenter",e=>{e.preventDefault();$("#dropzone").classList.add("active","drag")});document.addEventListener("dragover",e=>e.preventDefault());document.addEventListener("drop",async e=>{e.preventDefault();$("#dropzone").classList.remove("drag");let f=e.dataTransfer?.files?.[0];if(f)loadText(await f.text(),f.name)});
+window.addEventListener("resize",()=>{clearTimeout(window._rz);window._rz=setTimeout(render,120)});
+state=sample();setLoadStatus("sample","示例数据");syncRange();render();
+})();
+</script>
+</body>
+</html>

@@ -117,9 +117,10 @@ export function createNoteItems(userId: string, contents: unknown, color: unknow
   })));
 }
 
-export function updateNoteItem(userId: string, id: string, updates: { content?: unknown; completed?: unknown; color?: unknown }): NoteItem | undefined {
+export function updateNoteItem(userId: string, id: string, updates: { expectedContent?: unknown; content?: unknown; completed?: unknown; color?: unknown }): NoteItem | undefined {
   const existing = db.getNoteItem(id, userId);
   if (!existing) return undefined;
+  if (updates.expectedContent !== undefined && updates.expectedContent !== existing.content) throw new NoteContentConflict();
   const patch: Parameters<typeof db.updateNoteItem>[2] = {};
   if (updates.content !== undefined) patch.content = validateContent(updates.content);
   if (updates.color !== undefined) patch.color = validateColor(updates.color);
@@ -159,4 +160,8 @@ export function deleteNoteItem(userId: string, id: string): boolean {
 
 export function exportNoteItems(userId: string): NoteItem[] {
   return listNoteItems(userId);
+}
+
+export class NoteContentConflict extends Error {
+  constructor() { super("原文已变化，请重新打开最新记事后优化；当前结果仍可复制。"); }
 }
