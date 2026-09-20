@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Codex Usage Dashboard V2</title>
+<title>Codex Usage Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2383a0ff'/%3E%3Cpath d='M18 19h28v8H26v10h20v8H18z' fill='white'/%3E%3C/svg%3E">
 <style>
 :root{
   --bg:#090d14;--panel:#101620;--panel2:#141b27;--line:#263142;--line2:#1d2634;
@@ -20,7 +21,7 @@ button{color:inherit}
 .topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:15px}
 .brand{display:flex;gap:12px;align-items:center}
 .logo{width:38px;height:38px;border-radius:11px;background:linear-gradient(135deg,var(--blue),var(--green));box-shadow:0 8px 28px rgba(131,160,255,.22)}
-.title{font-size:20px;font-weight:800}.subtitle{font-size:12px;color:var(--muted);margin-top:2px}
+.title{font-size:20px;font-weight:800}.subtitle{font-size:12px;color:var(--muted);margin-top:2px}.version-badge{display:inline-flex;align-items:center;margin-left:7px;padding:2px 6px;border:1px solid #344d7f;border-radius:999px;background:#18243a;color:#b9c9ff;font-size:9px;font-weight:800;letter-spacing:.06em;vertical-align:1px}
 .actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
 .btn{border:1px solid var(--line);background:var(--panel);padding:8px 11px;border-radius:10px;cursor:pointer;transition:.16s ease;font-size:12px}
 .btn:hover{border-color:#3a4b63;transform:translateY(-1px)}
@@ -63,7 +64,7 @@ button{color:inherit}
 .model-list{display:flex;flex-direction:column;gap:9px}.model-row{display:grid;grid-template-columns:minmax(130px,1fr) 2fr auto;gap:10px;align-items:center;padding:9px 10px;border:1px solid var(--line2);border-radius:11px;background:#0f1620}.model-name{font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.model-meta{font-size:10px;color:var(--muted);margin-top:2px}.bar{height:7px;background:#202a39;border-radius:999px;overflow:hidden}.bar i{display:block;height:100%;border-radius:inherit}.model-val{text-align:right}.model-val strong{font-size:12px;display:block}.model-val span{font-size:10px;color:var(--muted)}
 .table-wrap{overflow:auto;max-height:430px;border:1px solid var(--line2);border-radius:11px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{padding:9px 10px;border-bottom:1px solid var(--line2);white-space:nowrap}th{position:sticky;top:0;background:#141c28;color:var(--muted);font-weight:650;text-align:left;z-index:1}.num{text-align:right}tbody tr:hover td{background:#121a27}.pill{display:inline-flex;padding:3px 7px;border-radius:999px;background:#182235;border:1px solid #2b3950}
 .stats-grid{display:grid;grid-template-columns:repeat(8,1fr);gap:8px}.stat{padding:10px;border:1px solid var(--line2);border-radius:10px;background:#0e151f}.stat b{font-size:14px}.stat span{display:block;color:var(--muted);font-size:9px;text-transform:uppercase;margin-bottom:5px}
-.heatmap-wrap{overflow-x:auto}.heatmap{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,12px);grid-auto-columns:12px;gap:3px;padding:4px 0}.heatcell{width:12px;height:12px;border-radius:2px;background:#151d28}.heatlabels{display:flex;justify-content:space-between;margin-top:5px;color:var(--subtle);font-size:10px}
+.heatmap-wrap{overflow-x:auto}.heatmap{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,12px);grid-auto-columns:12px;gap:3px;padding:4px 0}.heatcell{width:12px;height:12px;border-radius:2px;background:#151d28;cursor:crosshair}.heatlabels{display:flex;justify-content:space-between;margin-top:5px;color:var(--subtle);font-size:10px}
 .insights{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.insight{padding:11px;border:1px solid var(--line2);border-radius:11px;background:#0f1620}.insight b{font-size:12px}.insight p{font-size:11px;color:var(--muted);line-height:1.5;margin:5px 0 0}
 .rangebox{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;margin-bottom:11px;color:var(--muted);font-size:10px}.rangebox input{width:100%}
 .note{font-size:10px;color:var(--subtle);line-height:1.55}.empty{padding:28px;text-align:center;color:var(--muted)}
@@ -76,7 +77,7 @@ button{color:inherit}
 <body>
 <div class="app">
   <div class="topbar">
-    <div class="brand"><div class="logo"></div><div><div class="title">Codex Usage</div><div class="subtitle">纯前端 · 本地解析 · AI Calendar Tools 原型 V3.1</div></div></div>
+    <div class="brand"><div class="logo"></div><div><div class="title">Codex Usage Dashboard <span class="version-badge">V5</span></div><div class="subtitle">纯前端 · 本地解析 · AI Calendar Tools</div></div></div>
     <div class="actions">
       <label class="btn primary help" data-help="选择 ccusage 导出的本地 JSON 文件。文件只在浏览器内解析，不会上传。" for="fileInput" tabindex="0">导入 JSON</label><input id="fileInput" class="input" type="file" accept=".json,application/json">
       <button class="btn help" data-help="读取剪贴板里的 ccusage JSON 并立即分析。推荐先复制下方 Daily 命令到 PowerShell 执行。" id="pasteBtn">粘贴 JSON</button>
@@ -111,7 +112,7 @@ button{color:inherit}
   <div class="dropzone" id="dropzone"><b>把 ccusage JSON 拖进来</b><div class="note" style="margin-top:4px">支持 daily / weekly / monthly / sessions。数据只在当前浏览器内解析。</div></div>
 
   <div class="grid6">
-    <div class="card metric"><div class="metric-label">Total Cost</div><div class="metric-value" id="sumCost">—</div><div class="metric-foot">API-equivalent，不是订阅实际账单</div></div>
+    <div class="card metric"><div class="metric-label">Total Cost</div><div class="metric-value" id="sumCost">—</div><div class="metric-foot" id="sumCostSub">优先 ccusage；缺失时本地兜底</div></div>
     <div class="card metric"><div class="metric-label">Total Tokens</div><div class="metric-value" id="sumTotal">—</div><div class="metric-foot" id="sumRange">所选时间范围</div></div>
     <div class="card metric"><div class="metric-label">Input Tokens</div><div class="metric-value" id="sumInput">—</div><div class="metric-foot">Raw input</div></div>
     <div class="card metric"><div class="metric-label">Output Tokens</div><div class="metric-value" id="sumOutput">—</div><div class="metric-foot">Model output</div></div>
@@ -207,7 +208,7 @@ button{color:inherit}
     <div class="insights" id="insights"></div>
   </section>
 
-  <div class="note">V3.1 仍然是单文件前端：没有后端、没有数据库、没有上传。Cache Read Rate 按 ccusageview 口径计算：Cache Read / (Input + Cache Write + Cache Read)。后续嵌入 AI Calendar 时，可以直接保留整个分析层，只把“导入/粘贴 JSON”替换成 Local Bridge 自动读取。</div>
+  <div class="note">V5 仍然是单文件前端：没有后端、没有数据库、没有上传。成本优先使用 ccusage JSON 返回值；仅在缺失时使用内置价格表兜底。遇到新模型且 ccusage 未提供成本、内置表也无法识别时，明确显示 N/A，不用 $0 或部分成本冒充完整成本。模型排序按 GPT 版本号自动降序，同版本再按 Astra → Sol → Terra → Luna 排序，因此未来多数新版本无需修改 HTML。Cache Read Rate = Cache Read / (Input + Cache Write + Cache Read)。</div>
 </div>
 <div class="tooltip" id="tooltip"></div><div class="toast" id="toast"></div>
 
@@ -215,6 +216,17 @@ button{color:inherit}
 (() => {
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const COLORS=["#83a0ff","#66dfb5","#f7c66a","#bd8cff","#62d6ee","#ff7f8d","#9bd373","#e7a7d1"];
+// Fallback only. ccusage-provided costs always take priority.
+// USD per 1M text tokens; snapshot retained so known models still work offline if cost fields are absent.
+const FALLBACK_PRICING={
+  "gpt-6-astra":{input:10,cache:1,write:12.5,output:50},
+  "gpt-5.6-sol":{input:4,cache:.4,write:5,output:20},
+  "gpt-5.6-terra":{input:2,cache:.2,write:2.5,output:12},
+  "gpt-5.6-luna":{input:.2,cache:.02,write:.25,output:1.2},
+  "gpt-5.5":{input:5,cache:.5,write:5,output:30},
+  "gpt-5.4":{input:2.5,cache:.25,write:2.5,output:15}
+};
+const MODEL_TIER_ORDER=["astra","sol","terra","luna"];
 const sessionCmd="npx ccusage@latest codex session --json | Set-Clipboard";
 let state={daily:[],sessions:[]}, baseRange=30, windowCount=30, hiddenModels=new Set(), loadedAt=new Date();
 
@@ -224,10 +236,63 @@ const cacheRate=(input,create,read)=>{const den=num(input)+num(create)+num(read)
 const formatLoadedAt=d=>new Intl.DateTimeFormat("zh-CN",{year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(d);
 const fmt=n=>{n=num(n);let a=Math.abs(n);if(a>=1e9)return trim(n/1e9,2)+"B";if(a>=1e6)return trim(n/1e6,2)+"M";if(a>=1e3)return trim(n/1e3,2)+"K";return Math.round(n).toLocaleString()};
 const trim=(n,d)=>n.toFixed(d).replace(/\.?0+$/,"");
-const money=n=>"$"+(num(n)>=100?num(n).toFixed(0):num(n).toFixed(2));
+const finiteOrNull=v=>v===null||v===undefined||v===""?null:(Number.isFinite(Number(v))?Number(v):null);
+const money=n=>n==null||!Number.isFinite(Number(n))?"N/A":"$"+(Number(n)>=100?Number(n).toFixed(0):Number(n).toFixed(2));
 const pct=n=>Number.isFinite(n)?(n*100).toFixed(1)+"%":"—";
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const shortModel=s=>String(s||"Unknown").replace(/^openai\//,"").replace(/^anthropic\//,"").replace(/^gpt-/i,"GPT-");
+const exact=n=>Math.round(num(n)).toLocaleString("en-US");
+function normalizeModelName(name){return String(name||"").toLowerCase().replace(/^openai\//,"")}
+function pricingKey(name){
+ let k=normalizeModelName(name);
+ if(k==="gpt-5.6")return "gpt-5.6-sol";
+ for(const id of Object.keys(FALLBACK_PRICING))if(k===id||k.startsWith(id+"-")||k.startsWith(id+":"))return id;
+ return k;
+}
+function modelSortMeta(name){
+ const k=normalizeModelName(name),m=k.match(/^gpt-(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[-:]([a-z0-9-]+))?/i);
+ if(!m)return {gpt:false,v:[-1,-1,-1],tier:99,key:k};
+ const suffix=(k==="gpt-5.6"?"sol":(m[4]||"")).toLowerCase();
+ let tier=MODEL_TIER_ORDER.findIndex(x=>suffix===x||suffix.startsWith(x+"-")||suffix.startsWith(x+":"));
+ if(tier<0)tier=99;
+ return {gpt:true,v:[num(m[1]),num(m[2]),num(m[3])],tier,key:k};
+}
+function modelCompare(a,b){
+ const A=modelSortMeta(a.name),B=modelSortMeta(b.name);
+ if(A.gpt!==B.gpt)return A.gpt?-1:1;
+ if(A.gpt)for(let i=0;i<3;i++)if(A.v[i]!==B.v[i])return B.v[i]-A.v[i];
+ if(A.tier!==B.tier)return A.tier-B.tier;
+ return num(b.total)-num(a.total)||A.key.localeCompare(B.key);
+}
+function estimateModelCost(name,input,cache,create,output){
+ const p=FALLBACK_PRICING[pricingKey(name)];
+ if(!p)return null;
+ return (num(input)*p.input+num(cache)*p.cache+num(create)*p.write+num(output)*p.output)/1e6;
+}
+function resolveModelCost(raw,name,input,cache,create,output){
+ const explicit=finiteOrNull(raw),tokens=num(input)+num(cache)+num(create)+num(output);
+ // A positive ccusage cost is authoritative. Zero is authoritative only when there were no tokens.
+ if(explicit!==null&&(explicit>0||tokens===0))return {value:explicit,known:true,source:"ccusage"};
+ const estimated=estimateModelCost(name,input,cache,create,output);
+ if(estimated!==null)return {value:estimated,known:true,source:"fallback"};
+ return {value:null,known:false,source:"unknown"};
+}
+function aggregateCostInfo(entries){
+ if(!entries.length)return {value:0,known:true,unknown:0,sources:new Set()};
+ let total=0,unknown=0,sources=new Set();
+ for(const d of entries){
+   if(!d.costKnown){unknown++;continue}
+   total+=num(d.costUSD);if(d.costSource)sources.add(d.costSource);
+ }
+ return {value:unknown?null:total,known:unknown===0,unknown,sources};
+}
+function costSourceText(info){
+ if(!info.known)return `${info.unknown} 个数据点成本未知（新模型或 ccusage 未提供）`;
+ if(info.sources.size===0)return "无成本数据";
+ if(info.sources.size===1&&info.sources.has("ccusage"))return "成本由 ccusage 提供";
+ if(info.sources.size===1&&info.sources.has("fallback"))return "ccusage 未提供成本，使用内置价格表兜底";
+ return "成本来源混合：ccusage + 本地兜底";
+}
 const toast=m=>{let t=$("#toast");t.textContent=m;t.classList.add("show");clearTimeout(toast.t);toast.t=setTimeout(()=>t.classList.remove("show"),1700)};
 const copy=async t=>{try{await navigator.clipboard.writeText(t);toast("已复制到剪贴板")}catch{prompt("请复制：",t)}};
 
@@ -240,8 +305,8 @@ function sample(){
   let shares=[.48+.07*Math.sin(k/13),.34+.06*Math.cos(k/10),.18+.035*Math.sin(k/5)];
   let z=shares.reduce((a,b)=>a+b,0);shares=shares.map(x=>x/z);
   let breakdown=models.map((m,j)=>{let total=base*1e6*shares[j],output=total*.07,prompt=total-output,rate=[.91,.84,.72][j]+.025*Math.sin(k/7),cache=prompt*rate,input=prompt-cache;
-   return {modelName:m,inputTokens:Math.round(input),outputTokens:Math.round(output),cacheReadTokens:Math.round(cache),cacheCreationTokens:0,cost:total/1e6*[.10,.22,.41][j]};});
-  daily.push({date,inputTokens:sum(breakdown,x=>x.inputTokens),outputTokens:sum(breakdown,x=>x.outputTokens),cacheReadTokens:sum(breakdown,x=>x.cacheReadTokens),cacheCreationTokens:0,totalTokens:sum(breakdown,x=>x.inputTokens+x.cacheReadTokens+x.cacheCreationTokens+x.outputTokens),costUSD:sum(breakdown,x=>x.cost),modelBreakdowns:breakdown});
+   const rc=resolveModelCost(null,m,input,cache,0,output);return {modelName:m,inputTokens:Math.round(input),outputTokens:Math.round(output),cacheReadTokens:Math.round(cache),cacheCreationTokens:0,cost:rc.value,costKnown:rc.known,costSource:rc.source};});
+  daily.push({date,inputTokens:sum(breakdown,x=>x.inputTokens),outputTokens:sum(breakdown,x=>x.outputTokens),cacheReadTokens:sum(breakdown,x=>x.cacheReadTokens),cacheCreationTokens:0,totalTokens:sum(breakdown,x=>x.inputTokens+x.cacheReadTokens+x.cacheCreationTokens+x.outputTokens),costUSD:sum(breakdown,x=>x.cost),costKnown:true,costSource:"fallback",modelBreakdowns:breakdown});
  }
  const sessions=[
   {sessionId:"AI Calendar / Codex Usage Dashboard",modelsUsed:["gpt-5.6-sol"],inputTokens:20e6,cacheReadTokens:132e6,outputTokens:9.2e6,totalTokens:161.2e6},
@@ -296,22 +361,42 @@ function normalize(raw){
 }
 function normEntry(e){
  let b=[];
- if(Array.isArray(e.modelBreakdowns))b=e.modelBreakdowns.map(m=>({modelName:m.modelName||m.model||"Unknown",inputTokens:num(m.inputTokens),outputTokens:num(m.outputTokens),cacheReadTokens:num(m.cacheReadTokens),cacheCreationTokens:num(m.cacheCreationTokens),cost:num(m.cost??m.costUSD)}));
- else if(e.models&&typeof e.models==="object"&&!Array.isArray(e.models))b=Object.entries(e.models).map(([name,m])=>({modelName:name,inputTokens:num(m.inputTokens),outputTokens:num(m.outputTokens),cacheReadTokens:num(m.cacheReadTokens),cacheCreationTokens:num(m.cacheCreationTokens),cost:num(m.costUSD??m.cost)}));
- return {date:e.date||e.period||e.label||"",inputTokens:num(e.inputTokens),outputTokens:num(e.outputTokens),cacheReadTokens:num(e.cacheReadTokens),cacheCreationTokens:num(e.cacheCreationTokens),totalTokens:num(e.totalTokens)||num(e.inputTokens)+num(e.cacheReadTokens)+num(e.cacheCreationTokens)+num(e.outputTokens),costUSD:num(e.costUSD??e.totalCost??e.cost),modelBreakdowns:b};
+ const normalizeModel=(name,m)=>{
+   const inputTokens=num(m.inputTokens),outputTokens=num(m.outputTokens),cacheReadTokens=num(m.cacheReadTokens),cacheCreationTokens=num(m.cacheCreationTokens);
+   const rc=resolveModelCost(m.cost??m.costUSD,name,inputTokens,cacheReadTokens,cacheCreationTokens,outputTokens);
+   return {modelName:name||"Unknown",inputTokens,outputTokens,cacheReadTokens,cacheCreationTokens,cost:rc.value,costKnown:rc.known,costSource:rc.source};
+ };
+ if(Array.isArray(e.modelBreakdowns))b=e.modelBreakdowns.map(m=>normalizeModel(m.modelName||m.model||"Unknown",m));
+ else if(e.models&&typeof e.models==="object"&&!Array.isArray(e.models))b=Object.entries(e.models).map(([name,m])=>normalizeModel(name,m));
+ const inputTokens=num(e.inputTokens),outputTokens=num(e.outputTokens),cacheReadTokens=num(e.cacheReadTokens),cacheCreationTokens=num(e.cacheCreationTokens);
+ const totalTokens=num(e.totalTokens)||inputTokens+cacheReadTokens+cacheCreationTokens+outputTokens;
+ const explicitCost=finiteOrNull(e.costUSD??e.totalCost??e.cost);
+ let costUSD=null,costKnown=false,costSource="unknown";
+ if(explicitCost!==null&&(explicitCost>0||totalTokens===0)){
+   costUSD=explicitCost;costKnown=true;costSource="ccusage";
+ }else if(b.length&&b.every(x=>x.costKnown)){
+   costUSD=b.reduce((t,x)=>t+num(x.cost),0);costKnown=true;
+   costSource=b.every(x=>x.costSource==="ccusage")?"ccusage":b.every(x=>x.costSource==="fallback")?"fallback":"mixed";
+ }
+ return {date:e.date||e.period||e.label||"",inputTokens,outputTokens,cacheReadTokens,cacheCreationTokens,totalTokens,costUSD,costKnown,costSource,modelBreakdowns:b};
 }
 function activeEntries(){let d=state.daily;if(baseRange==="all")return d.slice(Math.max(0,d.length-windowCount));let n=Math.min(num(baseRange),d.length);return d.slice(Math.max(0,d.length-Math.min(windowCount,n)));}
 function models(entries){
  let m=new Map();
  for(let d of entries){
-  let bs=d.modelBreakdowns?.length?d.modelBreakdowns:[{modelName:"Unknown",inputTokens:d.inputTokens,outputTokens:d.outputTokens,cacheReadTokens:d.cacheReadTokens,cacheCreationTokens:d.cacheCreationTokens,cost:d.costUSD}];
-  for(let x of bs){if(!m.has(x.modelName))m.set(x.modelName,{name:x.modelName,input:0,output:0,cache:0,create:0,cost:0});let a=m.get(x.modelName);a.input+=x.inputTokens;a.output+=x.outputTokens;a.cache+=x.cacheReadTokens;a.create+=x.cacheCreationTokens;a.cost+=x.cost}
+  let bs=d.modelBreakdowns?.length?d.modelBreakdowns:[{modelName:"Unknown",inputTokens:d.inputTokens,outputTokens:d.outputTokens,cacheReadTokens:d.cacheReadTokens,cacheCreationTokens:d.cacheCreationTokens,cost:d.costUSD,costKnown:d.costKnown,costSource:d.costSource}];
+  for(let x of bs){
+    if(!m.has(x.modelName))m.set(x.modelName,{name:x.modelName,input:0,output:0,cache:0,create:0,cost:0,costKnown:true,costSources:new Set()});
+    let a=m.get(x.modelName);a.input+=x.inputTokens;a.output+=x.outputTokens;a.cache+=x.cacheReadTokens;a.create+=x.cacheCreationTokens;
+    if(x.costKnown===false||x.cost==null)a.costKnown=false;else a.cost+=num(x.cost);
+    if(x.costSource)a.costSources.add(x.costSource);
+  }
  }
- return [...m.values()].map(x=>({...x,total:x.input+x.cache+x.create+x.output})).sort((a,b)=>b.total-a.total);
+ return [...m.values()].map(x=>({...x,cost:x.costKnown?x.cost:null,total:x.input+x.cache+x.create+x.output})).sort(modelCompare);
 }
 function render(){
- let e=activeEntries(),ms=models(e),input=sum(e,x=>x.inputTokens),cache=sum(e,x=>x.cacheReadTokens),create=sum(e,x=>x.cacheCreationTokens),cr=cacheRate(input,create,cache);
- $("#sumCost").textContent=money(sum(e,x=>x.costUSD));$("#sumTotal").textContent=fmt(sum(e,x=>x.totalTokens));$("#sumInput").textContent=fmt(input);$("#sumOutput").textContent=fmt(sum(e,x=>x.outputTokens));$("#sumCache").textContent=cr==null?"N/A":pct(cr);$("#sumCacheSub").textContent=`${fmt(cache)} read / ${fmt(input+create+cache)} prompt-input total`;$("#sumEntries").textContent=e.length;
+ let e=activeEntries(),ms=models(e),input=sum(e,x=>x.inputTokens),cache=sum(e,x=>x.cacheReadTokens),create=sum(e,x=>x.cacheCreationTokens),cr=cacheRate(input,create,cache),ci=aggregateCostInfo(e);
+ $("#sumCost").textContent=money(ci.value);$("#sumCostSub").textContent=costSourceText(ci);$("#sumTotal").textContent=fmt(sum(e,x=>x.totalTokens));$("#sumInput").textContent=fmt(input);$("#sumOutput").textContent=fmt(sum(e,x=>x.outputTokens));$("#sumCache").textContent=cr==null?"N/A":pct(cr);$("#sumCacheSub").textContent=`${fmt(cache)} read / ${fmt(input+create+cache)} prompt-input total`;$("#sumEntries").textContent=e.length;
  $("#sumRange").textContent=e.length?`${e[0].date} → ${e.at(-1).date}`:"—";$("#rangeStartLabel").textContent=e[0]?.date||"—";$("#rangeEndLabel").textContent=e.at(-1)?.date||"—";
  renderToken(e,ms);renderCost(e);renderCache(e);renderModels(ms);renderStats(e);renderHeatmap(state.daily);renderDow(e);renderTables(e,ms);renderSessions();renderInsights(e,ms);
 }
@@ -345,11 +430,16 @@ function renderToken(e,ms){
  attachChartTooltip(c,e,(idx)=>{let d=e[idx],parts=[`<b>${esc(d.date)}</b>`,`Total: ${fmt(d.totalTokens)}`];for(let x of d.modelBreakdowns||[])parts.push(`${esc(shortModel(x.modelName))}: ${fmt(x.inputTokens+x.cacheReadTokens+x.cacheCreationTokens+x.outputTokens)}`);return parts.join("<br>")},p);
 }
 function renderCost(e){
- let {c,ctx,w,h}=setupCanvas("#costChart"),vals=e.map(x=>x.costUSD),max=Math.max(1,...vals)*1.12,p=axis(ctx,w,h,max,v=>"$"+trim(v,1)),n=e.length,x=i=>p.l+p.cw*(i/(n-1||1)),y=v=>p.t+p.ch-(v/max)*p.ch;
+ let {c,ctx,w,h}=setupCanvas("#costChart"),vals=e.map(x=>x.costKnown?x.costUSD:null),known=vals.filter(v=>v!=null&&Number.isFinite(v)),max=Math.max(1,...known)*1.12,p=axis(ctx,w,h,max,v=>"$"+trim(v,1)),n=e.length,x=i=>p.l+p.cw*(i/(n-1||1)),y=v=>p.t+p.ch-(v/max)*p.ch;
+ const segments=[];let seg=[];for(let i=0;i<n;i++){if(vals[i]==null){if(seg.length)segments.push(seg),seg=[]}else seg.push(i)}if(seg.length)segments.push(seg);
  let g=ctx.createLinearGradient(0,p.t,0,p.t+p.ch);g.addColorStop(0,"rgba(102,223,181,.25)");g.addColorStop(1,"rgba(102,223,181,0)");
- ctx.beginPath();e.forEach((d,i)=>i?ctx.lineTo(x(i),y(vals[i])):ctx.moveTo(x(i),y(vals[i])));if(n){ctx.lineTo(x(n-1),p.t+p.ch);ctx.lineTo(x(0),p.t+p.ch);ctx.closePath();ctx.fillStyle=g;ctx.fill()}
- ctx.beginPath();e.forEach((d,i)=>i?ctx.lineTo(x(i),y(vals[i])):ctx.moveTo(x(i),y(vals[i])));ctx.strokeStyle="#66dfb5";ctx.lineWidth=2;ctx.stroke();xlabels(ctx,e,p,w,h);
- attachChartTooltip(c,e,idx=>`<b>${esc(e[idx].date)}</b><br>API Eq.: ${money(e[idx].costUSD)}`,p);
+ for(const ids of segments){
+   if(ids.length>1){ctx.beginPath();ids.forEach((i,j)=>j?ctx.lineTo(x(i),y(vals[i])):ctx.moveTo(x(i),y(vals[i])));ctx.lineTo(x(ids.at(-1)),p.t+p.ch);ctx.lineTo(x(ids[0]),p.t+p.ch);ctx.closePath();ctx.fillStyle=g;ctx.fill()}
+   ctx.beginPath();ids.forEach((i,j)=>j?ctx.lineTo(x(i),y(vals[i])):ctx.moveTo(x(i),y(vals[i])));ctx.strokeStyle="#66dfb5";ctx.lineWidth=2;ctx.stroke();
+ }
+ if(!known.length){ctx.fillStyle="#667387";ctx.font="11px system-ui";ctx.fillText("Cost unavailable",p.l+12,p.t+22)}
+ xlabels(ctx,e,p,w,h);
+ attachChartTooltip(c,e,idx=>`<b>${esc(e[idx].date)}</b><br>API Eq.: ${money(e[idx].costKnown?e[idx].costUSD:null)}<br><span style="color:#8f9bad">${e[idx].costKnown?esc(e[idx].costSource):"unknown pricing"}</span>`,p);
 }
 function renderCache(e){
  let {c,ctx,w,h}=setupCanvas("#cacheChart"),vals=e.map(d=>cacheRate(d.inputTokens,d.cacheCreationTokens,d.cacheReadTokens)),max=1,p=axis(ctx,w,h,max,v=>(v*100).toFixed(0)+"%"),n=e.length,x=i=>p.l+p.cw*(i/(n-1||1)),y=v=>p.t+p.ch-num(v)*p.ch;
@@ -358,15 +448,28 @@ function renderCache(e){
 function renderModels(ms){
  let total=sum(ms,x=>x.total),el=$("#modelList");el.innerHTML=ms.length?ms.map((m,i)=>`<div class="model-row"><div><div class="model-name">${esc(shortModel(m.name))}</div><div class="model-meta">${cacheRate(m.input,m.create,m.cache)==null?"N/A":pct(cacheRate(m.input,m.create,m.cache))} cache · ${money(m.cost)}</div></div><div class="bar"><i style="width:${total?m.total/total*100:0}%;background:${COLORS[i%COLORS.length]}"></i></div><div class="model-val"><strong>${fmt(m.total)}</strong><span>${pct(total?m.total/total:0)}</span></div></div>`).join(""):'<div class="empty">无模型拆分</div>';
 }
-function valuesFor(e,key){if(key==="cost")return e.map(x=>x.costUSD);if(key==="cacheRate")return e.map(x=>cacheRate(x.inputTokens,x.cacheCreationTokens,x.cacheReadTokens)??0);return e.map(x=>num(x[key]));}
+function valuesFor(e,key){if(key==="cost")return e.every(x=>x.costKnown)?e.map(x=>x.costUSD):null;if(key==="cacheRate")return e.map(x=>cacheRate(x.inputTokens,x.cacheCreationTokens,x.cacheReadTokens)??0);return e.map(x=>num(x[key]));}
 function quant(a,q){if(!a.length)return 0;let s=[...a].sort((x,y)=>x-y),p=(s.length-1)*q,b=Math.floor(p),r=p-b;return s[b]+(s[b+1]!==undefined?r*(s[b+1]-s[b]):0)}
 function renderStats(e){
- let key=$("#statMetric").value,a=valuesFor(e,key),n=a.length,mean=n?sum(a,x=>x)/n:0,sd=n?Math.sqrt(sum(a,x=>(x-mean)**2)/n):0,format=key==="cost"?money:key==="cacheRate"?pct:fmt;
+ let key=$("#statMetric").value,a=valuesFor(e,key),format=key==="cost"?money:key==="cacheRate"?pct:fmt;
+ if(a===null){$("#statsGrid").innerHTML=[["Sum","N/A"],["Mean","N/A"],["Median P50","N/A"],["Min","N/A"],["Max","N/A"],["P90","N/A"],["P95","N/A"],["Std Dev","N/A"]].map(x=>`<div class="stat"><span>${x[0]}</span><b>${x[1]}</b></div>`).join("");return}
+ let n=a.length,mean=n?sum(a,x=>x)/n:0,sd=n?Math.sqrt(sum(a,x=>(x-mean)**2)/n):0;
  let items=[["Sum",format(sum(a,x=>x))],["Mean",format(mean)],["Median P50",format(quant(a,.5))],["Min",format(n?Math.min(...a):0)],["Max",format(n?Math.max(...a):0)],["P90",format(quant(a,.9))],["P95",format(quant(a,.95))],["Std Dev",format(sd)]];
  $("#statsGrid").innerHTML=items.map(x=>`<div class="stat"><span>${x[0]}</span><b>${x[1]}</b></div>`).join("");
 }
 function renderHeatmap(all){
- let el=$("#heatmap"),vals=all.map(x=>x.totalTokens),max=Math.max(...vals,1),min=Math.min(...vals,0);el.innerHTML=all.map(d=>{let z=(d.totalTokens-min)/(max-min||1),a=.12+.88*Math.pow(z,.65);return `<div class="heatcell" title="${esc(d.date)} · ${fmt(d.totalTokens)}" style="background:rgba(102,223,181,${a.toFixed(2)})"></div>`}).join("");
+ let el=$("#heatmap"),vals=all.map(x=>x.totalTokens),max=Math.max(...vals,1),min=Math.min(...vals,0);
+ el.innerHTML=all.map((d,i)=>{let z=(d.totalTokens-min)/(max-min||1),a=.12+.88*Math.pow(z,.65);return `<div class="heatcell" data-i="${i}" aria-label="${esc(d.date)} ${exact(d.totalTokens)} tokens" style="background:rgba(102,223,181,${a.toFixed(2)})"></div>`}).join("");
+ el.querySelectorAll(".heatcell").forEach(cell=>{
+   cell.onmousemove=ev=>{
+     const d=all[num(cell.dataset.i)],t=$("#tooltip");if(!d)return;
+     const breakdown=[...(d.modelBreakdowns||[])].map(x=>({name:x.modelName,total:x.inputTokens+x.cacheReadTokens+x.cacheCreationTokens+x.outputTokens})).sort(modelCompare);
+     const rows=[`<b>${esc(d.date)}</b>`,`Total: ${exact(d.totalTokens)} Token`,`Input: ${exact(d.inputTokens)}`,`Cache Read: ${exact(d.cacheReadTokens)}`,`Output: ${exact(d.outputTokens)}`,`API Eq.: ${money(d.costKnown?d.costUSD:null)}`];
+     if(breakdown.length){rows.push('<span style="color:#8f9bad">Models</span>');for(const x of breakdown)rows.push(`${esc(shortModel(x.name))}: ${exact(x.total)}`)}
+     t.innerHTML=rows.join("<br>");t.style.display="block";t.style.left=Math.min(innerWidth-270,ev.clientX+12)+"px";t.style.top=Math.min(innerHeight-180,ev.clientY+12)+"px";
+   };
+   cell.onmouseleave=hideTip;
+ });
 }
 function renderDow(e){
  let agg=$("#dowAgg").value,names=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],b=names.map(x=>({name:x,v:[]}));for(let d of e){let dt=new Date(d.date+"T00:00:00"),idx=(dt.getDay()+6)%7;if(Number.isFinite(idx))b[idx].v.push(d.totalTokens)}
@@ -374,15 +477,15 @@ function renderDow(e){
  b.forEach((x,i)=>{let xx=p.l+gap+i*(bw+gap),hh=vals[i]/max*p.ch,yy=p.t+p.ch-hh;ctx.fillStyle=COLORS[i%COLORS.length];ctx.globalAlpha=.8;ctx.fillRect(xx,yy,bw,hh);ctx.globalAlpha=1;ctx.fillStyle="#8290a4";ctx.font="10px system-ui";ctx.fillText(x.name,xx+bw/2-10,h-8)});
 }
 function renderTables(e,ms){
- $("#modelTable").innerHTML=ms.length?ms.map(m=>`<tr><td><span class="pill">${esc(shortModel(m.name))}</span></td><td class="num">${fmt(m.input)}</td><td class="num">${fmt(m.cache)}</td><td class="num">${fmt(m.output)}</td><td class="num">${fmt(m.total)}</td><td class="num">${cacheRate(m.input,m.create,m.cache)==null?"N/A":pct(cacheRate(m.input,m.create,m.cache))}</td><td class="num">${money(m.cost)}</td></tr>`).join(""):'<tr><td colspan="7" class="empty">无模型数据</td></tr>';
- $("#rawTable").innerHTML=e.length?e.slice().reverse().map(d=>`<tr><td>${esc(d.date)}</td><td class="num">${money(d.costUSD)}</td><td class="num">${fmt(d.inputTokens)}</td><td class="num">${fmt(d.cacheReadTokens)}</td><td class="num">${fmt(d.outputTokens)}</td><td class="num">${fmt(d.totalTokens)}</td><td>${esc((d.modelBreakdowns||[]).map(x=>shortModel(x.modelName)).join(", ")||"—")}</td></tr>`).join(""):'<tr><td colspan="7" class="empty">无日级数据</td></tr>';
+ $("#modelTable").innerHTML=ms.length?ms.map(m=>`<tr><td><span class="pill">${esc(shortModel(m.name))}</span></td><td class="num">${fmt(m.input)}</td><td class="num">${fmt(m.cache)}</td><td class="num">${fmt(m.output)}</td><td class="num">${fmt(m.total)}</td><td class="num">${cacheRate(m.input,m.create,m.cache)==null?"N/A":pct(cacheRate(m.input,m.create,m.cache))}</td><td class="num" title="${m.costKnown?"cost available":"unknown pricing"}">${money(m.cost)}</td></tr>`).join(""):'<tr><td colspan="7" class="empty">无模型数据</td></tr>';
+ $("#rawTable").innerHTML=e.length?e.slice().reverse().map(d=>`<tr><td>${esc(d.date)}</td><td class="num" title="${esc(d.costSource||"unknown")}">${money(d.costKnown?d.costUSD:null)}</td><td class="num">${fmt(d.inputTokens)}</td><td class="num">${fmt(d.cacheReadTokens)}</td><td class="num">${fmt(d.outputTokens)}</td><td class="num">${fmt(d.totalTokens)}</td><td>${esc((d.modelBreakdowns||[]).map(x=>shortModel(x.modelName)).join(", ")||"—")}</td></tr>`).join(""):'<tr><td colspan="7" class="empty">无日级数据</td></tr>';
 }
 function renderSessions(){
  let s=[...state.sessions].sort((a,b)=>b.totalTokens-a.totalTokens);$("#sessionTable").innerHTML=s.length?s.map(x=>`<tr><td>${esc(x.sessionId)}</td><td>${esc(shortModel(x.modelsUsed?.[0]||x.modelBreakdowns?.[0]?.modelName||"—"))}</td><td class="num">${fmt(x.inputTokens)}</td><td class="num">${fmt(x.cacheReadTokens)}</td><td class="num">${fmt(x.outputTokens)}</td><td class="num">${fmt(x.totalTokens)}</td></tr>`).join(""):'<tr><td colspan="6" class="empty">当前 JSON 没有 sessions；可点击上方“复制 Session 命令”单独获取。</td></tr>';
 }
 function renderInsights(e,ms){
- let total=sum(ms,x=>x.total),top=ms[0],input=sum(e,x=>x.inputTokens),cache=sum(e,x=>x.cacheReadTokens),create=sum(e,x=>x.cacheCreationTokens),cr=cacheRate(input,create,cache),peak=e.slice().sort((a,b)=>b.totalTokens-a.totalTokens)[0],avg=e.length?sum(e,x=>x.totalTokens)/e.length:0,cost=sum(e,x=>x.costUSD);
- let out=[];if(top)out.push([`${shortModel(top.name)} 占比最高`,`当前范围 ${pct(total?top.total/total:0)}，累计 ${fmt(top.total)} Token。`]);if(cr!=null)out.push([`Cache Read Rate ${pct(cr)}`,`缓存读取 ${fmt(cache)} / (Input ${fmt(input)} + Cache Write ${fmt(create)} + Cache Read ${fmt(cache)})。`]);if(peak)out.push([`峰值 ${peak.date}`,`当天 ${fmt(peak.totalTokens)} Token；区间日均 ${fmt(avg)}；API 等价成本合计 ${money(cost)}。`]);
+ let total=sum(ms,x=>x.total),top=ms[0],input=sum(e,x=>x.inputTokens),cache=sum(e,x=>x.cacheReadTokens),create=sum(e,x=>x.cacheCreationTokens),cr=cacheRate(input,create,cache),peak=e.slice().sort((a,b)=>b.totalTokens-a.totalTokens)[0],avg=e.length?sum(e,x=>x.totalTokens)/e.length:0,ci=aggregateCostInfo(e);
+ let out=[];if(top)out.push([`${shortModel(top.name)} 占比最高`,`当前范围 ${pct(total?top.total/total:0)}，累计 ${fmt(top.total)} Token。`]);if(cr!=null)out.push([`Cache Read Rate ${pct(cr)}`,`缓存读取 ${fmt(cache)} / (Input ${fmt(input)} + Cache Write ${fmt(create)} + Cache Read ${fmt(cache)})。`]);if(peak)out.push([`峰值 ${peak.date}`,`当天 ${fmt(peak.totalTokens)} Token；区间日均 ${fmt(avg)}；API 等价成本合计 ${money(ci.value)}${ci.known?"":"（存在未知价格）"}。`]);
  $("#insights").innerHTML=out.map(x=>`<div class="insight"><b>${esc(x[0])}</b><p>${esc(x[1])}</p></div>`).join("");
 }
 function attachChartTooltip(c,e,fn,p){
@@ -391,7 +494,7 @@ function attachChartTooltip(c,e,fn,p){
 function hideTip(){$("#tooltip").style.display="none"}
 function exportCanvas(id,name){let a=document.createElement("a");a.href=$(id).toDataURL("image/png");a.download=name;a.click()}
 function markdown(){
- let e=activeEntries(),ms=models(e),lines=["# Codex Usage","","## Summary",`- Range: ${e[0]?.date||"—"} → ${e.at(-1)?.date||"—"}`,`- Total Tokens: ${fmt(sum(e,x=>x.totalTokens))}`,`- API-equivalent Cost: ${money(sum(e,x=>x.costUSD))}`,"","## Models","", "| Model | Input | Cache Read | Output | Total | Cost |","|---|---:|---:|---:|---:|---:|"];
+ let e=activeEntries(),ms=models(e),ci=aggregateCostInfo(e),lines=["# Codex Usage","","## Summary",`- Range: ${e[0]?.date||"—"} → ${e.at(-1)?.date||"—"}`,`- Total Tokens: ${fmt(sum(e,x=>x.totalTokens))}`,`- API-equivalent Cost: ${money(ci.value)}`,`- Cost Source: ${costSourceText(ci)}`,"","## Models","", "| Model | Input | Cache Read | Output | Total | Cost |","|---|---:|---:|---:|---:|---:|"];
  ms.forEach(m=>lines.push(`| ${shortModel(m.name)} | ${fmt(m.input)} | ${fmt(m.cache)} | ${fmt(m.output)} | ${fmt(m.total)} | ${money(m.cost)} |`));return lines.join("\n");
 }
 function setLoadStatus(kind,label){
