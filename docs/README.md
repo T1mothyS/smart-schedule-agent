@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 当前规范、操作手册、历史证据与工程验证入口。
-- Last verified commit/version: `0.29.0-260920.0727`（2026-09-20，AI 记事板合并功能本地验证；各领域验证时点见对应文档，不代表生产版本）。
+- Last verified commit/version: `0.30.2-260920.2233`（2026-09-20，AI 记事板提示词原位覆盖与撤回本地验证；各领域验证时点见对应文档，不代表生产版本）。
 - Authority: 源码、自动测试与实际构建优先；仍有效的 AGENTS 硬约束其次。
 - Update trigger: 新增/移动文档，修改 API、数据归属、媒体或验收规则。
 - Supersedes: 无；现有文档路径保留。

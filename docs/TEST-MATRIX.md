@@ -4,7 +4,7 @@
 
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: AI 记事板合并按钮 / `0.29.0-260920.0727`（2026-09-20，本地专项回归；其他领域以各节证据为准）。
+- Last verified commit/version: AI 记事板提示词原位覆盖与撤回 / `0.30.2-260920.2233`（2026-09-20，本地专项回归和浏览器 smoke；其他领域以各节证据为准）。
 - CalDAV 补充验证：2026-09-18，隔离 POC 与主应用回归；仅覆盖下述独立入口，真机尚未验证。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
@@ -37,7 +37,7 @@
 | 通知与邮件 | notification-service.test.ts、notification-preferences-client.test.ts、email-service.test.ts、user-mail-api.test.ts | 设置渠道、免打扰、失败/重试和错误状态 | SMTP accepted 与收件箱到达分开验证 |
 | 日报 | daily-report*.test.ts、daily-digest-template.test.ts、daily-email-template.test.ts | /reports 列表、/reports/:date 阅读、媒体、版本更新和显式重发 | 发布接口、媒体托管、队列、SMTP 和收件箱逐层核对 |
 | AI 计划和导入 | ai-intent.test.ts、ai-json.test.ts、ai-plan.test.ts、codebuddy-config.test.ts | /assistant 和 /import 生成草稿、确认前不写入、错误降级 | 真实 AI 另行授权；验证账号 Key 和服务限流 |
-| AI 记事 | note-item.test.ts、note-export.test.ts、note-color-migration.test.ts | NoteBoard 创建/编辑/完成/恢复、两步合并、跨分区目标、超长错误、TXT/CSV、窄屏抽屉 | 生产数据备份、恢复和账号隔离；不把记事当待办 |
+| AI 记事 | note-item.test.ts、note-export.test.ts、note-color-migration.test.ts、phase5-migrations.test.ts、scripts/prompt-optimize-browser-smoke.cjs | NoteBoard 创建/编辑/完成/恢复、原位优化锁定/覆盖、刷新后撤回、重复优化计数、手动新基线、版本冲突、两步合并、跨分区目标、超长错误、TXT/CSV、四视口明暗主题 | 生产数据备份、恢复和账号隔离；不把记事当待办；合成 AI 不代表真实模型质量 |
 | 设置 | Settings V2 浏览器证据、notification-preferences-client.test.ts、user-mail-api.test.ts | 390×844、430×932、768×1024、1440×900；浅色/暗色、长文本、保存/取消/删除/撤销 | 真实设置读取/保存需授权；不把 synthetic API 证据写成生产验收 |
 | Tools 挂载应用 | protected-tools.test.ts、scripts/tools-browser-smoke.cjs、ToolsPage、`GET /api/tools` | Settings → 挂载工具 → Tools；四视口、浅色/暗色、卡片链接、键盘焦点、无横向溢出；四个 HTML 应用真实打开效果 | 真实登录 Cookie、工具页面、Plotly/支付宝 iframe 降级和浏览器本地数据需单独授权验收 |
 | 附件、导出和备份 | export-service.test.ts、core.test.ts、attachment 相关实现 | 下载、大小/MIME、检查备份、合并/替换取消路径 | 备份前快照、恢复演练、附件权限和回滚 |
@@ -90,7 +90,7 @@ persistence.test.ts 覆盖原子替换、内存回退、第二库失败、补偿
 ## 四项修复验收（2026-09-20）
 
 - 自动化：CalDAV 锁拥有者、保守恢复、保护锁异常、I/O 错误、退避与成功复位；原有范围/删除/账户保护继续回归。
-- 提示词：SDK 无工具及无持久化选项、边界校验、取消；记事条件替换 409、账号隔离和元数据保留。
+- 提示词：SDK 无工具及无持久化选项、边界校验、取消；记事优化/撤回成功与失败不变、累计次数、手动编辑清状态、重复操作 409、正文版本冲突、账号隔离和迁移默认值。
 - Tools：`npm run tools:check` 检查全部启用源码；`npx tsx scripts/check-protected-tools.ts <解包目录>/protected-tools` 比较实际发布包清单和每个 HTML 的 SHA-256。缺文件或不一致阻止发布。
-- 浏览器：四视口、明暗主题，成长页滚轮/键盘到底、移动触摸；优化预览、复制、重新优化、取消、替换和失败；四个 Tools 与新工具合成数据操作。
+- 浏览器：四视口、明暗主题，成长页滚轮/键盘到底、移动触摸；记事板不出现 `role="dialog"`，优化期间编辑框锁定、结果原位覆盖、按钮切换撤回、刷新保留撤回、二次优化计数、手动保存清除撤回、失败/版本冲突不覆盖新正文；四个 Tools 与新工具合成数据操作。
 - 本地合成验证不代表真实 AI、生产、手机或长期同步验收。生产分别检查网页、合成文本真实 AI、CalDAV preview 与至少两个自动周期。

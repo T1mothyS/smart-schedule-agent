@@ -74,7 +74,23 @@ export function migrateNotes(db: Database, { queryAll, queryOne }: SchemaQueries
     // 旧版本没有颜色列，新增列使用中性灰作为安全默认值；SQLite 旧表无法原地补 CHECK 约束，API 层仍会严格校验写入值。
     db.run("ALTER TABLE note_items ADD COLUMN color TEXT NOT NULL DEFAULT 'neutral'");
   }
+  const noteMigrations: Array<[string, string]> = [
+    ['is_optimized', 'INTEGER NOT NULL DEFAULT 0'],
+    ['optimization_count', 'INTEGER NOT NULL DEFAULT 0'],
+    ['optimization_previous_content', 'TEXT'],
+    ['content_revision', 'INTEGER NOT NULL DEFAULT 0'],
+  ];
+  for (const [name, definition] of noteMigrations) {
+    if (!noteColumns.some(column => column.name === name)) db.run(`ALTER TABLE note_items ADD COLUMN ${name} ${definition}`);
+  }
   db.run("UPDATE note_items SET color = 'neutral' WHERE color IS NULL OR color NOT IN ('neutral', 'purple', 'blue', 'green', 'amber', 'rose')");
+  db.run('UPDATE note_items SET optimization_count = 0 WHERE optimization_count IS NULL OR optimization_count < 0');
+  db.run('UPDATE note_items SET content_revision = 0 WHERE content_revision IS NULL OR content_revision < 0');
+  db.run(`UPDATE note_items
+    SET is_optimized = 0, optimization_previous_content = NULL
+    WHERE is_optimized IS NULL OR is_optimized NOT IN (0, 1)
+      OR is_optimized = 1 AND (optimization_previous_content IS NULL OR trim(optimization_previous_content) = '')`);
+  db.run('UPDATE note_items SET optimization_previous_content = NULL WHERE is_optimized = 0');
 
 }
 

@@ -6,6 +6,9 @@ import { NOTE_COLORS, NOTE_COLOR_LABELS, NOTE_COLOR_STYLES, normaliseNoteColor, 
 export interface NoteItem {
   id: string;
   content: string;
+  isOptimized: boolean;
+  optimizationCount: number;
+  contentRevision: number;
   completed: boolean;
   completedAt: string | null;
   color: NoteColor;
@@ -27,7 +30,8 @@ interface NoteBoardProps {
   onEdit: (note: NoteItem, content: string) => Promise<void>;
   onColorChange: (note: NoteItem, color: NoteColor) => Promise<void>;
   onMerge: (source: NoteItem, target: NoteItem) => Promise<void>;
-  onOptimize: (note: NoteItem) => void;
+  onOptimize: (note: NoteItem, signal?: AbortSignal) => Promise<NoteItem>;
+  onRevertOptimization: (note: NoteItem, signal?: AbortSignal) => Promise<NoteItem>;
 }
 
 function NoteColorPicker({ note, disabled, open, onToggle, onChange }: {
@@ -96,6 +100,8 @@ function NoteRow({
   mergeSourceSelected,
   mergeSourceExists,
   mergeBusy,
+  optimizing,
+  optimizationDisabled,
   onToggleSelected,
   onStartEdit,
   onEditValueChange,
@@ -120,6 +126,8 @@ function NoteRow({
   mergeSourceSelected: boolean;
   mergeSourceExists: boolean;
   mergeBusy: boolean;
+  optimizing: boolean;
+  optimizationDisabled: boolean;
   onToggleSelected: () => void;
   onStartEdit: () => void;
   onEditValueChange: (value: string) => void;
@@ -134,7 +142,7 @@ function NoteRow({
 }) {
   const color = normaliseNoteColor(note.color);
   const colorStyle = NOTE_COLOR_STYLES[color];
-  const disabled = aiBusy || saving || mergeBusy;
+  const disabled = aiBusy || saving || mergeBusy || optimizing;
   const mergeTitle = mergeSourceSelected
     ? '取消合并来源'
     : mergeSourceExists
@@ -165,7 +173,21 @@ function NoteRow({
         >
           {editing ? <Check size={15} /> : <Pencil size={15} />}
         </button>
-        <button type="button" className="note-board-action" onClick={onOptimize} disabled={disabled} title="优化提示词" aria-label={`优化提示词：${note.content}`}><Sparkles size={15} /></button>
+        <button
+          type="button"
+          className="note-board-action"
+          onClick={onOptimize}
+          disabled={disabled || optimizationDisabled}
+          aria-busy={optimizing}
+          title={optimizing ? '正在处理…' : note.isOptimized ? `撤回第 ${note.optimizationCount} 次优化` : 'AI 优化'}
+          aria-label={optimizing
+            ? `正在处理：${note.content}`
+            : note.isOptimized
+              ? `撤回第 ${note.optimizationCount} 次优化：${note.content}`
+              : `AI 优化：${note.content}`}
+        >
+          {note.isOptimized ? <RotateCcw size={15} /> : <Sparkles size={15} />}
+        </button>
         <button type="button" className="note-board-action" onClick={onCopy} disabled={disabled} title={copyFeedback === 'success' ? '已复制' : copyFeedback === 'error' ? '复制失败' : '复制正文'} aria-label={`复制记事：${note.content}`}>
           {copyFeedback === 'success' ? <Check size={15} /> : copyFeedback === 'error' ? <CircleX size={15} /> : <Copy size={15} />}
         </button>
@@ -237,6 +259,7 @@ export function NoteBoard({
   onColorChange,
   onMerge,
   onOptimize,
+  onRevertOptimization,
 }: NoteBoardProps) {
   const [completedOpen, setCompletedOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -247,8 +270,10 @@ export function NoteBoard({
   const [mergeBusy, setMergeBusy] = useState(false);
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState<{ id: string; kind: CopyFeedback }>({ id: '', kind: null });
+  const [optimizationBusyId, setOptimizationBusyId] = useState<string | null>(null);
   const drawerRef = useRef<HTMLElement>(null);
   const copyTimerRef = useRef<number | null>(null);
+  const optimizationAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!drawerOpen) return;
@@ -272,10 +297,11 @@ export function NoteBoard({
 
   useEffect(() => () => {
     if (copyTimerRef.current !== null) window.clearTimeout(copyTimerRef.current);
+    optimizationAbortRef.current?.abort();
   }, []);
 
   const startEdit = (note: NoteItem) => {
-    if (aiBusy) return;
+    if (aiBusy || optimizationBusyId !== null) return;
     setEditingId(note.id);
     setEditValue(note.content);
     setColorPickerId(null);
@@ -297,6 +323,38 @@ export function NoteBoard({
       // 父组件会把错误显示在记事板顶部，保留编辑态便于修正后重试。
     } finally {
       setSavingId(null);
+    }
+  };
+
+  const editingNote = editingId ? notes.find(note => note.id === editingId) : undefined;
+  const hasUnsavedEdit = Boolean(editingNote && editValue !== editingNote.content);
+
+  const runOptimization = async (note: NoteItem) => {
+    if (aiBusy || optimizationBusyId !== null) return;
+    if (hasUnsavedEdit) return;
+
+    if (editingId !== note.id) {
+      setEditingId(note.id);
+      setEditValue(note.content);
+      setColorPickerId(null);
+    }
+
+    const controller = new AbortController();
+    optimizationAbortRef.current = controller;
+    setOptimizationBusyId(note.id);
+    try {
+      const item = note.isOptimized
+        ? await onRevertOptimization(note, controller.signal)
+        : await onOptimize(note, controller.signal);
+      setEditingId(item.id);
+      setEditValue(item.content);
+    } catch {
+      // 父组件负责显示错误；失败时保留原正文和当前编辑态。
+    } finally {
+      if (optimizationAbortRef.current === controller) {
+        optimizationAbortRef.current = null;
+        setOptimizationBusyId(null);
+      }
     }
   };
 
@@ -439,6 +497,8 @@ export function NoteBoard({
       mergeSourceSelected={mergeSourceId === note.id}
       mergeSourceExists={mergeSourceId !== null}
       mergeBusy={mergeBusy}
+      optimizing={optimizationBusyId === note.id}
+      optimizationDisabled={optimizationBusyId !== null || hasUnsavedEdit}
       onToggleSelected={() => toggleSelected(note.id)}
       onStartEdit={() => startEdit(note)}
       onEditValueChange={setEditValue}
@@ -448,7 +508,7 @@ export function NoteBoard({
       onToggleCompleted={() => { void completeOrRestore(note); }}
       onMerge={() => { void mergeNote(note); }}
       onCopy={() => { void copyNote(note); }}
-      onOptimize={() => onOptimize(note)}
+      onOptimize={() => { void runOptimization(note); }}
       onToggleColorPicker={() => setColorPickerId(current => current === note.id ? null : note.id)}
     />
   );
@@ -502,7 +562,7 @@ export function NoteBoard({
           {notes.length === 0 && <div className="note-board-empty">还没有记事<br /><span>在输入框打开记事模式即可快速记录</span></div>}
         </>}
       </div>
-      <span className="sr-only">优化提示词会先展示预览，只有选择替换原文后才会修改记事。</span>
+      <span className="sr-only">AI 优化会在当前编辑框中锁定正文并直接保存结果；优化完成后可撤回一次，手动保存新正文会建立新的撤回基线。</span>
     </aside>
   );
 }

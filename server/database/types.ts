@@ -243,6 +243,10 @@ export interface DbNoteItem {
   id: string;
   user_id: string;
   content: string;
+  is_optimized: number;
+  optimization_count: number;
+  optimization_previous_content: string | null;
+  content_revision: number;
   completed: number;
   completed_at: string | null;
   color: string;

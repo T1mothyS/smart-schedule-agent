@@ -57,7 +57,7 @@ Knowledge Library V2 首次部署、令牌权限、分层验收和回滚见 [`do
 - 每日摘要不再按账号和自然日全局去重；同一配置时间的重复扫描仍按触发键幂等，修改当天提醒时间后可以再次生成邮件。
 - 邮件只有在 Nodemailer 返回至少一个 `accepted` 且没有 `rejected/pending` 时才标记为 `sent`；这表示 SMTP 已接受，不等同于收件箱最终到达。
 - 浏览器提前提醒仍可单独使用，不替代高优先级固定邮件。
-- AI 助手提供独立记事模式：每个非空输入行保存为一个账号隔离的记事条目；条目可完成、恢复、编辑、删除、设置预设颜色、优化提示词或导出 TXT/CSV。优化提示词先展示原文与结果，支持替换、复制、重新优化及取消；只有明确替换才更新正文，且会检查原文是否已变化。
+- AI 助手提供独立记事模式：每个非空输入行保存为一个账号隔离的记事条目；条目可完成、恢复、编辑、删除、设置预设颜色、优化提示词或导出 TXT/CSV。点击“AI 优化”会自动进入当前卡片编辑框，请求期间锁定正文，成功后直接覆盖并保存；按钮切换为“撤回”，刷新后仍保留单步撤回。手动保存新正文会清除当前撤回状态，但保留累计成功次数，并通过正文版本校验避免慢响应覆盖新内容。
 
 ## 2. 技术结构
 
@@ -419,7 +419,7 @@ cp .env.example .env
 | `server/daily-email-template.ts` | 每日摘要邮件的天气、进度、分类与完整日程模板 |
 | `server/weather-service.ts` | Open-Meteo 地点搜索、天气读取、缓存、超时和天气代码转换 |
 | `server/export-service.ts` | 当前账号的可读 JSON/CSV 数据导出与表格公式注入防护 |
-| `server/note-item-service.ts` | 账号隔离的 AI 记事 CRUD、事务合并、批量校验和预设颜色校验 |
+| `server/note-item-service.ts` | 账号隔离的 AI 记事 CRUD、提示词优化/撤回状态、正文版本校验、事务合并、批量校验和预设颜色校验 |
 | `server/library-service.ts` | 知识库条目校验、搜索、版本、评论、关系、发布幂等、生命周期和导出 |
 | `server/library-markdown.ts` | 知识库 Markdown 的保守安全渲染和危险链接处理 |
 | `server/library-publish-token-service.ts` | 独立知识库发布令牌的哈希保存、轮换、撤销和鉴权 |
@@ -554,7 +554,7 @@ npm run build
 
 - `/api/auth/*`：验证码、注册、登录和当前用户。
 - `/api/action-center`：今日行动中心聚合。
-- `/api/note-items`：当前账号的 AI 记事条目 CRUD；批量 POST 会按非空行创建条目；`POST /api/note-items/:sourceId/merge` 将来源正文追加到目标正文并把来源移入废纸篓，合并受单条 2,000 字符限制。
+- `/api/note-items`：当前账号的 AI 记事条目 CRUD；批量 POST 会按非空行创建条目；`POST /api/note-items/:id/optimize` 按 `expectedContent + expectedRevision` 原子提交优化结果，`POST /api/note-items/:id/revert-optimization` 原子撤回上一版；正文 `PATCH` 会清除当前撤回状态并递增版本，颜色/完成状态更新不会清除；`POST /api/note-items/:sourceId/merge` 将来源正文追加到目标正文并把来源移入废纸篓，合并受单条 2,000 字符限制。
 - `/api/schedules`、`/api/calendars`、`/api/categories`：日历数据。
 - `/api/cycle-reminders`：周期事务、模板、完成和测试邮件。
 - `/api/notification-preferences`、`/api/notifications`：提醒偏好与发送记录。
@@ -581,7 +581,7 @@ npm run build
 
 ## 11. 备份与恢复
 
-用户备份文件扩展名为 `.aicalendar-backup`，使用口令派生密钥并加密。导出内容包含个人日历、周期事务、AI 记事、完成记录、附件、日报、通知偏好和确认后的 AI 导入记录，不包含密码、角色、JWT、SMTP 凭据和 AI API Key。旧版缺少记事字段的备份仍可恢复；CSV 导出不包含 AI 记事。
+用户备份文件扩展名为 `.aicalendar-backup`，使用口令派生密钥并加密。导出内容包含个人日历、周期事务、AI 记事（包括当前优化状态、累计次数和正文版本）、完成记录、附件、日报、通知偏好和确认后的 AI 导入记录，不包含密码、角色、JWT、SMTP 凭据和 AI API Key。旧版缺少记事字段的备份仍可恢复；CSV 导出不包含 AI 记事。
 
 恢复前先使用“检查备份”查看版本、数量和冲突，再选择：
 

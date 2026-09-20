@@ -1,4 +1,5 @@
-import { OptimizeError, optimizerInput, optimizePrompt } from '../prompt-optimize.js';
+import { OptimizeError } from '../prompt-optimize.js';
+import { createPromptOptimizationRunId, runPromptOptimization } from '../note-prompt-optimization.js';
 import { Router } from 'express';
 import type { createAuth } from '../auth.js';
 import { defaultModel, resolveCodeBuddyCredential, getMissingCodeBuddyCredentialMessage } from '../ai-credentials.js';
@@ -26,22 +27,18 @@ export function createAiRouter({ authenticate }: Pick<ReturnType<typeof createAu
   const app = Router();
   app.post('/api/ai/prompt-optimize', authenticate, async (req, res) => {
     const controller = new AbortController();
+    const runId = createPromptOptimizationRunId();
     const timeout = setTimeout(() => controller.abort(), 90_000);
     const disconnect = () => { if (!res.writableEnded) controller.abort(); };
     res.on('close', disconnect);
     try {
-      const text = optimizerInput(req.body?.text);
       const userId = ((req as any).user as JwtPayload).userId;
-      const credential = resolveCodeBuddyCredential(userId);
-      if (!credential) throw new OptimizeError(getMissingCodeBuddyCredentialMessage(userId), 400);
-      const optimizedText = await optimizePrompt(text, {
-        model: db.getUserPreferredModel(userId, defaultModel), env: buildCodeBuddyEnv(credential),
-      }, controller);
-      addLog('info', 'ai', '提示词优化完成', { textLength: text.length, resultLength: optimizedText.length });
-      if (!res.destroyed) res.setHeader('Cache-Control', 'no-store').json({ optimizedText });
+      const run = await runPromptOptimization(userId, req.body?.text, controller, runId);
+      addLog('info', 'ai', '提示词优化完成', { runId: run.runId, textLength: run.input.length, resultLength: run.optimizedText.length });
+      if (!res.destroyed) res.setHeader('Cache-Control', 'no-store').json({ optimizedText: run.optimizedText });
     } catch (error) {
       const status = controller.signal.aborted ? 504 : error instanceof OptimizeError ? error.status : 502;
-      addLog('warn', 'ai', '提示词优化失败', { status });
+      addLog('warn', 'ai', '提示词优化失败', { runId, status });
       if (!res.destroyed) res.status(status).json({ error: controller.signal.aborted ? '优化已取消或超时，请重试' : error instanceof OptimizeError ? error.message : 'AI 优化失败，请重试' });
     } finally { clearTimeout(timeout); res.off('close', disconnect); }
   });

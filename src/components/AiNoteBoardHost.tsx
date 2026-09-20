@@ -1,4 +1,3 @@
-import { PromptOptimizeDialog } from './PromptOptimizeDialog';
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { NoteBoard, type NoteItem } from './NoteBoard';
@@ -14,6 +13,17 @@ async function readJsonResponse(response: Response): Promise<any> {
   }
 }
 
+function normaliseNoteItem(item: NoteItem): NoteItem {
+  const optimizationCount = Number(item.optimizationCount);
+  const contentRevision = Number(item.contentRevision);
+  return {
+    ...item,
+    isOptimized: item.isOptimized === true || Number(item.isOptimized) === 1,
+    optimizationCount: Number.isInteger(optimizationCount) && optimizationCount >= 0 ? optimizationCount : 0,
+    contentRevision: Number.isInteger(contentRevision) && contentRevision >= 0 ? contentRevision : 0,
+  };
+}
+
 export interface AiNoteBoardController {
   notes: NoteItem[];
   loading: boolean;
@@ -27,7 +37,8 @@ export interface AiNoteBoardController {
   edit: (note: NoteItem, content: string) => Promise<void>;
   changeColor: (note: NoteItem, color: NoteItem['color']) => Promise<void>;
   merge: (source: NoteItem, target: NoteItem) => Promise<void>;
-  replaceOptimized: (note: NoteItem, content: string) => Promise<void>;
+  optimize: (note: NoteItem, signal?: AbortSignal) => Promise<NoteItem>;
+  revertOptimization: (note: NoteItem, signal?: AbortSignal) => Promise<NoteItem>;
 }
 
 interface UseAiNoteBoardOptions {
@@ -54,7 +65,7 @@ export function useAiNoteBoard({ initialNoteId }: UseAiNoteBoardOptions): AiNote
       const response = await fetch('/api/note-items', { headers: authHeaders() });
       const data = await readJsonResponse(response);
       if (!response.ok) throw new Error(data.error || '获取记事失败');
-      setNotes(Array.isArray(data.items) ? data.items : []);
+      setNotes(Array.isArray(data.items) ? data.items.map(normaliseNoteItem) : []);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '获取记事失败');
@@ -68,16 +79,19 @@ export function useAiNoteBoard({ initialNoteId }: UseAiNoteBoardOptions): AiNote
     else setNotes([]);
   }, [isAuthenticated, loadNotes]);
 
-  const updateNote = useCallback(async (id: string, body: Record<string, unknown>) => {
+  const updateNote = useCallback(async (id: string, body: Record<string, unknown>, signal?: AbortSignal): Promise<NoteItem> => {
     const response = await fetch(`/api/note-items/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(body),
+      signal,
     });
     const data = await readJsonResponse(response);
     if (!response.ok || !data.item) throw new Error(data.error || '更新记事失败');
-    setNotes(previous => previous.map(item => item.id === id ? data.item : item));
+    const item = normaliseNoteItem(data.item);
+    setNotes(previous => previous.map(previousItem => previousItem.id === id ? item : previousItem));
     setError(null);
+    return item;
   }, [authHeaders]);
 
   const toggleCompleted = useCallback(async (note: NoteItem) => {
@@ -91,7 +105,7 @@ export function useAiNoteBoard({ initialNoteId }: UseAiNoteBoardOptions): AiNote
 
   const edit = useCallback(async (note: NoteItem, content: string) => {
     try {
-      await updateNote(note.id, { content });
+      await updateNote(note.id, { content, expectedContent: note.content, expectedRevision: note.contentRevision });
     } catch (editError) {
       setError(editError instanceof Error ? editError.message : '更新记事失败');
       throw editError;
@@ -116,8 +130,10 @@ export function useAiNoteBoard({ initialNoteId }: UseAiNoteBoardOptions): AiNote
       });
       const data = await readJsonResponse(response);
       if (!response.ok || !data.source || !data.target) throw new Error(data.error || '合并记事失败');
+      const mergedSource = normaliseNoteItem(data.source);
+      const mergedTarget = normaliseNoteItem(data.target);
       setNotes(previous => previous.map(item => (
-        item.id === data.source.id ? data.source : item.id === data.target.id ? data.target : item
+        item.id === mergedSource.id ? mergedSource : item.id === mergedTarget.id ? mergedTarget : item
       )));
       setError(null);
     } catch (mergeError) {
@@ -138,7 +154,7 @@ export function useAiNoteBoard({ initialNoteId }: UseAiNoteBoardOptions): AiNote
       const data = await readJsonResponse(response);
       if (!response.ok) throw new Error(data.error || '保存记事失败');
       const created = Array.isArray(data.items) ? data.items as NoteItem[] : [];
-      setNotes(previous => [...created, ...previous]);
+      setNotes(previous => [...created.map(normaliseNoteItem), ...previous]);
       setError(null);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : '保存记事失败');
@@ -148,7 +164,44 @@ export function useAiNoteBoard({ initialNoteId }: UseAiNoteBoardOptions): AiNote
 
   const toggleDrawer = useCallback(() => setDrawerOpen(open => !open), []);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
-  const replaceOptimized = useCallback((note: NoteItem, content: string) => updateNote(note.id, { content, expectedContent: note.content }), [updateNote]);
+  const optimize = useCallback(async (note: NoteItem, signal?: AbortSignal): Promise<NoteItem> => {
+    try {
+      const response = await fetch(`/api/note-items/${encodeURIComponent(note.id)}/optimize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ expectedContent: note.content, expectedRevision: note.contentRevision }),
+        signal,
+      });
+      const data = await readJsonResponse(response);
+      if (!response.ok || !data.item) throw new Error(data.error || 'AI 优化失败，请重试');
+      const item = normaliseNoteItem(data.item);
+      setNotes(previous => previous.map(previousItem => previousItem.id === item.id ? item : previousItem));
+      setError(null);
+      return item;
+    } catch (error) {
+      if (!signal?.aborted) setError(error instanceof Error ? error.message : 'AI 优化失败，请重试');
+      throw error;
+    }
+  }, [authHeaders]);
+  const revertOptimization = useCallback(async (note: NoteItem, signal?: AbortSignal): Promise<NoteItem> => {
+    try {
+      const response = await fetch(`/api/note-items/${encodeURIComponent(note.id)}/revert-optimization`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ expectedContent: note.content, expectedRevision: note.contentRevision }),
+        signal,
+      });
+      const data = await readJsonResponse(response);
+      if (!response.ok || !data.item) throw new Error(data.error || '撤回优化失败，请重试');
+      const item = normaliseNoteItem(data.item);
+      setNotes(previous => previous.map(previousItem => previousItem.id === item.id ? item : previousItem));
+      setError(null);
+      return item;
+    } catch (error) {
+      if (!signal?.aborted) setError(error instanceof Error ? error.message : '撤回优化失败，请重试');
+      throw error;
+    }
+  }, [authHeaders]);
 
   return {
     notes,
@@ -163,7 +216,8 @@ export function useAiNoteBoard({ initialNoteId }: UseAiNoteBoardOptions): AiNote
     edit,
     changeColor,
     merge,
-    replaceOptimized,
+    optimize,
+    revertOptimization,
   };
 }
 
@@ -171,7 +225,6 @@ export function AiNoteBoardHost({ controller, aiBusy = false }: {
   controller: AiNoteBoardController;
   aiBusy?: boolean;
 }) {
-  const [optimizing, setOptimizing] = useState<NoteItem | null>(null);
   return (
     <>
       <NoteBoard
@@ -186,9 +239,9 @@ export function AiNoteBoardHost({ controller, aiBusy = false }: {
         onEdit={controller.edit}
         onColorChange={controller.changeColor}
         onMerge={controller.merge}
-        onOptimize={setOptimizing}
+        onOptimize={controller.optimize}
+        onRevertOptimization={controller.revertOptimization}
       />
-      {optimizing && <PromptOptimizeDialog note={optimizing} onClose={() => setOptimizing(null)} onReplace={controller.replaceOptimized} />}
       {controller.drawerOpen && (
         <button type="button" className="note-board-scrim" onClick={controller.closeDrawer} aria-label="关闭记事板" />
       )}

@@ -2,7 +2,7 @@
 
 - Status: LIVING
 - Scope: 本文列明的源码结构、合同或验证方法；历史证据按时点使用。
-- Last verified commit/version: AI 记事板合并按钮 / `0.29.0-260920.0727`（2026-09-20，本地源码与专项测试；其他领域以各节证据为准）。
+- Last verified commit/version: AI 记事板提示词原位覆盖与撤回 / `0.30.2-260920.2233`（2026-09-20，本地源码、自动测试和浏览器 smoke；其他领域以各节证据为准）。
 - Authority: 当前源码与自动化验证优先；文档职责见文档索引。
 - Update trigger: 本领域 API、数据归属、媒体策略或验收入口变化。
 - Supersedes: 原文中已纠正的漂移描述；保留历史快照时间边界。
@@ -36,7 +36,7 @@ React/Vite 与 Electron 壳都使用同一套前端页面。Electron 主进程�
 | src/components/ScheduleView.tsx、CalendarView.tsx、ScheduleSidebar.tsx | 日历、日程和分类 |
 | src/components/ReminderPage.tsx | 周期事务、完成和提醒历史 |
 | src/components/AiSchedulePanel.tsx、AiImportPage.tsx | 普通 AI、天气和待确认导入 |
-| src/components/NoteBoard.tsx | AI 记事的 CRUD、颜色、完成、事务合并和导出 |
+| src/components/NoteBoard.tsx | AI 记事的 CRUD、颜色、完成、原位提示词优化/撤回、事务合并和导出 |
 | src/components/DailyReportsPage.tsx | 日报列表、独立阅读页和显式重发 |
 | src/components/LibraryPage.tsx、library/LibraryDetailPage.tsx | 知识库列表与异步阅读、评论、版本 |
 | src/pages/ToolsPage.tsx | 登录后的挂载应用菜单；不加入产品顶部导航 |
@@ -122,4 +122,6 @@ Vite Web 构建写入 dist/；Electron TypeScript 编译写入 dist-electron/；
 
 Tools 的正式来源是 `protected-tools/manifest.json` 及各 slug 的 `index.html`，默认纳入源码、完整发布包及整站版本和回滚生命周期；不采用 Knowledge Library 的独立内容发布模式。发布检查见 [部署路径](DEPLOYMENT-PATHS.md)。
 
-`POST /api/ai/prompt-optimize` 使用当前账号认证、凭据及首选模型，接收 `{ text }`，返回 `{ optimizedText }`；正文为 1–2000 字符，输出同上限，90 秒超时。该独立调用禁用工具、配置加载和会话持久化，不读取日程/知识库，不写业务或聊天历史。记事板先预览，再显式替换或复制。`PATCH /api/note-items/:id` 新增可选 `expectedContent`，与正文同步比较后写入；原文已变化返回 409，旧调用保持兼容。
+`POST /api/ai/prompt-optimize` 仍保留为兼容性的纯优化接口：使用当前账号认证、凭据及首选模型，接收 `{ text }`，返回 `{ optimizedText }`；正文为 1–2000 字符，输出同上限，90 秒超时。该独立调用禁用工具、配置加载和会话持久化，不读取日程/知识库，不写业务或聊天历史。
+
+记事板使用 `POST /api/note-items/:id/optimize` 和 `POST /api/note-items/:id/revert-optimization` 完成原位覆盖与单步撤回。`note_items` 的 `is_optimized`、`optimization_count`、`optimization_previous_content` 和 `content_revision` 分别记录当前撤回状态、成功优化累计次数、服务端私有的上一版正文和正文版本；对外 `NoteItem` 只返回前三者中的公开状态字段 `isOptimized`、`optimizationCount`、`contentRevision`，不暴露上一版正文。优化/撤回接口要求客户端提交 `expectedContent + expectedRevision`，并以单条条件 UPDATE 防止账号隔离、重复优化、重复撤回和异步慢响应覆盖新正文；每次优化尝试另有内部 `runId` 仅用于请求日志关联，不写入提示词或正文。`PATCH /api/note-items/:id` 的正文修改会清除当前优化状态、保留累计次数并递增版本；只改颜色或完成状态不会清除撤回。旧数据库和旧备份缺少这些字段时按未优化、次数 0、版本 0 迁移。

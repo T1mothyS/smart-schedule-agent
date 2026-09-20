@@ -29,9 +29,24 @@ export function searchNoteItems(userId: string, query: string, limit = 100): DbN
 export function createNoteItem(item: DbNoteItem): DbNoteItem {
   run(
     `INSERT INTO note_items
-     (id, user_id, content, completed, completed_at, color, linked_schedule_ids, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [item.id, item.user_id, item.content, item.completed ? 1 : 0, item.completed_at, item.color || 'neutral', item.linked_schedule_ids || '[]', item.created_at, item.updated_at],
+     (id, user_id, content, is_optimized, optimization_count, optimization_previous_content, content_revision,
+      completed, completed_at, color, linked_schedule_ids, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      item.id,
+      item.user_id,
+      item.content,
+      item.is_optimized ? 1 : 0,
+      Math.max(0, Math.trunc(Number(item.optimization_count) || 0)),
+      item.optimization_previous_content || null,
+      Math.max(0, Math.trunc(Number(item.content_revision) || 0)),
+      item.completed ? 1 : 0,
+      item.completed_at,
+      item.color || 'neutral',
+      item.linked_schedule_ids || '[]',
+      item.created_at,
+      item.updated_at,
+    ],
   );
   return item;
 }
@@ -39,13 +54,30 @@ export function createNoteItem(item: DbNoteItem): DbNoteItem {
 export function updateNoteItem(
   id: string,
   userId: string,
-  updates: Partial<Pick<DbNoteItem, 'content' | 'completed' | 'completed_at' | 'color' | 'linked_schedule_ids' | 'updated_at'>>,
+  updates: Partial<Pick<DbNoteItem, 'content' | 'is_optimized' | 'optimization_count' | 'optimization_previous_content' | 'content_revision' | 'completed' | 'completed_at' | 'color' | 'linked_schedule_ids' | 'updated_at'>>,
+  expected: { content?: string; contentRevision?: number } = {},
 ): DbNoteItem | undefined {
   const fields: string[] = [];
   const values: any[] = [];
   if (updates.content !== undefined) {
     fields.push('content = ?');
     values.push(updates.content);
+  }
+  if (updates.is_optimized !== undefined) {
+    fields.push('is_optimized = ?');
+    values.push(updates.is_optimized ? 1 : 0);
+  }
+  if (updates.optimization_count !== undefined) {
+    fields.push('optimization_count = ?');
+    values.push(Math.max(0, Math.trunc(Number(updates.optimization_count) || 0)));
+  }
+  if (updates.optimization_previous_content !== undefined) {
+    fields.push('optimization_previous_content = ?');
+    values.push(updates.optimization_previous_content || null);
+  }
+  if (updates.content_revision !== undefined) {
+    fields.push('content_revision = ?');
+    values.push(Math.max(0, Math.trunc(Number(updates.content_revision) || 0)));
   }
   if (updates.completed !== undefined) {
     fields.push('completed = ?');
@@ -65,9 +97,55 @@ export function updateNoteItem(
   }
   if (!fields.length) return getNoteItem(id, userId);
   fields.push('updated_at = ?');
-  values.push(updates.updated_at || new Date().toISOString(), id, userId);
-  run(`UPDATE note_items SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`, values);
-  return getNoteItem(id, userId);
+  values.push(updates.updated_at || new Date().toISOString());
+  const predicates = ['id = ?', 'user_id = ?'];
+  const predicateValues: unknown[] = [id, userId];
+  if (expected.content !== undefined) {
+    predicates.push('content = ?');
+    predicateValues.push(expected.content);
+  }
+  if (expected.contentRevision !== undefined) {
+    predicates.push('content_revision = ?');
+    predicateValues.push(expected.contentRevision);
+  }
+  const result = run(`UPDATE note_items SET ${fields.join(', ')} WHERE ${predicates.join(' AND ')}`, [...values, ...predicateValues]);
+  return result.changes > 0 ? getNoteItem(id, userId) : undefined;
+}
+
+export function commitNoteOptimization(
+  id: string,
+  userId: string,
+  expectedContent: string,
+  expectedRevision: number,
+  optimizedContent: string,
+  updatedAt = new Date().toISOString(),
+): DbNoteItem | undefined {
+  const result = run(
+    `UPDATE note_items
+     SET content = ?, is_optimized = 1, optimization_count = optimization_count + 1,
+         optimization_previous_content = ?, content_revision = content_revision + 1, updated_at = ?
+     WHERE id = ? AND user_id = ? AND content = ? AND content_revision = ? AND is_optimized = 0`,
+    [optimizedContent, expectedContent, updatedAt, id, userId, expectedContent, expectedRevision],
+  );
+  return result.changes > 0 ? getNoteItem(id, userId) : undefined;
+}
+
+export function revertNoteOptimization(
+  id: string,
+  userId: string,
+  expectedContent: string,
+  expectedRevision: number,
+  updatedAt = new Date().toISOString(),
+): DbNoteItem | undefined {
+  const result = run(
+    `UPDATE note_items
+     SET content = optimization_previous_content, is_optimized = 0,
+         optimization_previous_content = NULL, content_revision = content_revision + 1, updated_at = ?
+     WHERE id = ? AND user_id = ? AND content = ? AND content_revision = ?
+       AND is_optimized = 1 AND optimization_previous_content IS NOT NULL`,
+    [updatedAt, id, userId, expectedContent, expectedRevision],
+  );
+  return result.changes > 0 ? getNoteItem(id, userId) : undefined;
 }
 
 export function mergeNoteItems(
@@ -83,7 +161,10 @@ export function mergeNoteItems(
     if (!source || !target) return undefined;
 
     executeWithoutSave(
-      'UPDATE note_items SET content = ?, updated_at = ? WHERE id = ? AND user_id = ?',
+      `UPDATE note_items
+       SET content = ?, is_optimized = 0, optimization_previous_content = NULL,
+           content_revision = content_revision + 1, updated_at = ?
+       WHERE id = ? AND user_id = ?`,
       [mergedContent, completedAt, targetId, userId],
     );
     executeWithoutSave(
@@ -139,10 +220,26 @@ export function restoreUserNoteItems(
     const colorValues = ['neutral', 'purple', 'blue', 'green', 'amber', 'rose'] as const;
     const colorValue = String(rawRow.color || 'neutral');
     const color = (colorValues as readonly string[]).includes(colorValue) ? colorValue : 'neutral';
+    const rawOptimized = rawRow.is_optimized ?? rawRow.isOptimized;
+    const rawOptimizationCount = rawRow.optimization_count ?? rawRow.optimizationCount;
+    const optimizationCount = Number.isInteger(Number(rawOptimizationCount)) && Number(rawOptimizationCount) >= 0
+      ? Number(rawOptimizationCount)
+      : 0;
+    const rawPreviousContent = rawRow.optimization_previous_content ?? rawRow.optimizationPreviousContent;
+    const previousContent = typeof rawPreviousContent === 'string' && rawPreviousContent.trim()
+      ? rawPreviousContent.trim().slice(0, 2_000)
+      : null;
+    const isOptimized = (rawOptimized === true || Number(rawOptimized) === 1) && previousContent !== null;
+    const rawRevision = rawRow.content_revision ?? rawRow.contentRevision;
+    const contentRevision = Number.isInteger(Number(rawRevision)) && Number(rawRevision) >= 0 ? Number(rawRevision) : 0;
     createNoteItem({
       id,
       user_id: userId,
       content,
+      is_optimized: isOptimized ? 1 : 0,
+      optimization_count: optimizationCount,
+      optimization_previous_content: isOptimized ? previousContent : null,
+      content_revision: contentRevision,
       completed: completed ? 1 : 0,
       completed_at: completedAt,
       color,

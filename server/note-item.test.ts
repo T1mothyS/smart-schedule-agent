@@ -4,6 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import type { RequestHandler } from 'express';
 import type { NoteItem } from './note-item-service.js';
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicalendar-note-items-'));
@@ -17,6 +18,8 @@ const db = await import('./db.js');
 const noteItems = await import('./note-item-service.js');
 const backups = await import('./backup-service.js');
 const readableExport = await import('./export-service.js');
+const { createApp } = await import('./app.js');
+const { createNotesRouter } = await import('./routes/notes.js');
 
 await api.initializeServer();
 
@@ -219,6 +222,7 @@ test('记事合并按目标在前追加来源，并以事务移入废纸篓', as
   try {
     const [source] = noteItems.createNoteItems(mergeUser.id, ['来源第一行\n来源第二行'], 'rose');
     const [target] = noteItems.createNoteItems(mergeUser.id, ['目标正文'], 'blue');
+    noteItems.commitOptimizedNote(mergeUser.id, target.id, '目标正文', 0, '目标优化');
     const mergedResponse = await request(`/api/note-items/${source.id}/merge`, mergeToken, {
       method: 'POST',
       body: JSON.stringify({ targetId: target.id }),
@@ -226,9 +230,12 @@ test('记事合并按目标在前追加来源，并以事务移入废纸篓', as
     assert.equal(mergedResponse.status, 200);
     const merged = await mergedResponse.json();
     assert.equal(merged.target.id, target.id);
-    assert.equal(merged.target.content, '目标正文\n来源第一行\n来源第二行');
+    assert.equal(merged.target.content, '目标优化\n来源第一行\n来源第二行');
     assert.equal(merged.target.completed, false);
     assert.equal(merged.target.color, 'blue');
+    assert.equal(merged.target.isOptimized, false);
+    assert.equal(merged.target.optimizationCount, 1);
+    assert.equal(merged.target.contentRevision, 2);
     assert.equal(merged.source.id, source.id);
     assert.equal(merged.source.completed, true);
     assert.equal(merged.source.content, source.content);
@@ -322,24 +329,124 @@ test('记事合并按目标在前追加来源，并以事务移入废纸篓', as
   }
 });
 
-test('optimizer replacement is conditional, account isolated, and preserves note metadata', async () => {
+test('提示词优化状态支持条件提交、单步撤回、累计次数和手动新基线', async () => {
   const [note] = noteItems.createNoteItems(user.id, ['original'], 'purple');
   noteItems.updateNoteItem(user.id, note.id, { completed: true });
+  const completed = noteItems.getNoteItem(user.id, note.id)!;
+  assert.equal(completed.isOptimized, false);
+  assert.equal(completed.optimizationCount, 0);
+  assert.equal(completed.contentRevision, 0);
+  assert.throws(
+    () => noteItems.commitOptimizedNote(user.id, note.id, 'stale', 0, 'should not save'),
+    noteItems.NoteContentConflict,
+  );
+  const optimized = noteItems.commitOptimizedNote(user.id, note.id, 'original', 0, 'optimized')!;
+  assert.equal(optimized.content, 'optimized');
+  assert.equal(optimized.isOptimized, true);
+  assert.equal(optimized.optimizationCount, 1);
+  assert.equal(optimized.contentRevision, 1);
+  assert.equal(optimized.completed, true);
+  const recolored = noteItems.updateNoteItem(user.id, note.id, { color: 'blue' })!;
+  assert.equal(recolored.isOptimized, true);
+  assert.equal(recolored.optimizationCount, 1);
+  const reverted = noteItems.revertOptimizedNote(user.id, note.id, 'optimized', 1)!;
+  assert.equal(reverted.content, 'original');
+  assert.equal(reverted.isOptimized, false);
+  assert.equal(reverted.optimizationCount, 1);
+  assert.equal(reverted.contentRevision, 2);
+  assert.throws(
+    () => noteItems.revertOptimizedNote(user.id, note.id, 'original', 2),
+    error => error instanceof noteItems.NoteOptimizationConflict && error.code === 'NOT_OPTIMIZED',
+  );
+  const optimizedAgain = noteItems.commitOptimizedNote(user.id, note.id, 'original', 2, 'optimized again')!;
+  const manual = noteItems.updateNoteItem(user.id, note.id, {
+    content: 'manual baseline', expectedContent: optimizedAgain.content, expectedRevision: optimizedAgain.contentRevision,
+  })!;
+  assert.equal(manual.content, 'manual baseline');
+  assert.equal(manual.isOptimized, false);
+  assert.equal(manual.optimizationCount, 2);
+  assert.equal(manual.contentRevision, 4);
+
   const server = http.createServer(api.app); const port = await listen(server);
   const request = (token: string, body: object) => fetch(`http://127.0.0.1:${port}/api/note-items/${note.id}`, {
     method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body),
   });
   try {
-    assert.equal((await request(otherToken, { content: 'x', expectedContent: 'original' })).status, 404);
-    assert.equal((await request(userToken, { content: 'optimized', expectedContent: 'outdated' })).status, 409);
-    assert.equal(noteItems.getNoteItem(user.id, note.id)?.content, 'original');
-    const result = await request(userToken, { content: 'optimized', expectedContent: 'original' });
-    assert.equal(result.status, 200); const saved = (await result.json()).item;
-    assert.equal(saved.content, 'optimized'); assert.equal(saved.color, 'purple'); assert.equal(saved.completed, true);
+    assert.equal((await request(otherToken, { content: 'x', expectedContent: 'manual baseline', expectedRevision: 4 })).status, 404);
+    assert.equal((await request(userToken, { content: 'x', expectedContent: 'outdated', expectedRevision: 4 })).status, 409);
+    const unauthorizedOptimize = await fetch(`http://127.0.0.1:${port}/api/note-items/${note.id}/optimize`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedContent: 'manual baseline', expectedRevision: 4 }),
+    });
+    assert.equal(unauthorizedOptimize.status, 401);
+    const crossAccountOptimize = await fetch(`http://127.0.0.1:${port}/api/note-items/${note.id}/optimize`, {
+      method: 'POST', headers: { Authorization: `Bearer ${otherToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ expectedContent: 'manual baseline', expectedRevision: 4 }),
+    });
+    assert.equal(crossAccountOptimize.status, 404);
     const endpoint = `http://127.0.0.1:${port}/api/ai/prompt-optimize`;
     assert.equal((await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 401);
     for (const text of ['', 'x'.repeat(2001), {}]) {
       assert.equal((await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${userToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) })).status, 400);
     }
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('提示词优化路由成功提交、失败不变并支持账号隔离与重复撤回冲突', async () => {
+  const routeUser = db.createUser({
+    id: 'note-route-user', email: 'note-route-user@example.com', password_hash: 'not-a-real-password', role: 'user', disabled: 0, created_at: now, updated_at: now,
+  });
+  const [routeNote] = noteItems.createNoteItems(routeUser.id, ['route original']);
+  const [failedNote] = noteItems.createNoteItems(routeUser.id, ['route fail']);
+  const authenticate: RequestHandler = (req, _res, next) => {
+    (req as any).user = { userId: routeUser.id };
+    next();
+  };
+  const app = createApp({ isProduction: false, isReady: () => true });
+  app.use(createNotesRouter({
+    authenticate,
+    optimizePrompt: async (_userId, text) => {
+      if (String(text) === 'route fail') throw new Error('synthetic optimizer failure');
+      return { runId: 'test-run-id', input: String(text), optimizedText: 'route optimized' };
+    },
+  }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise<void>(resolve => server.once('listening', () => resolve()));
+  const port = (server.address() as { port: number }).port;
+  const base = `http://127.0.0.1:${port}`;
+  const request = (pathname: string, body: object) => fetch(base + pathname, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  try {
+    const failedResponse = await request(`/api/note-items/${failedNote.id}/optimize`, { expectedContent: failedNote.content, expectedRevision: 0 });
+    assert.equal(failedResponse.status, 502);
+    assert.deepEqual(noteItems.getNoteItem(routeUser.id, failedNote.id), failedNote);
+
+    const optimizedResponse = await request(`/api/note-items/${routeNote.id}/optimize`, { expectedContent: routeNote.content, expectedRevision: 0 });
+    assert.equal(optimizedResponse.status, 200);
+    const optimized = (await optimizedResponse.json()).item;
+    assert.equal(optimized.content, 'route optimized');
+    assert.equal(optimized.isOptimized, true);
+    assert.equal(optimized.optimizationCount, 1);
+    assert.equal(optimized.contentRevision, 1);
+    assert.equal(Object.prototype.hasOwnProperty.call(optimized, 'optimization_previous_content'), false);
+
+    const duplicate = await request(`/api/note-items/${routeNote.id}/optimize`, { expectedContent: 'route optimized', expectedRevision: 1 });
+    assert.equal(duplicate.status, 409);
+    const revertedResponse = await request(`/api/note-items/${routeNote.id}/revert-optimization`, { expectedContent: 'route optimized', expectedRevision: 1 });
+    assert.equal(revertedResponse.status, 200);
+    const reverted = (await revertedResponse.json()).item;
+    assert.equal(reverted.content, 'route original');
+    assert.equal(reverted.isOptimized, false);
+    assert.equal(reverted.optimizationCount, 1);
+    assert.equal(reverted.contentRevision, 2);
+    const duplicateRevert = await request(`/api/note-items/${routeNote.id}/revert-optimization`, { expectedContent: 'route original', expectedRevision: 2 });
+    assert.equal(duplicateRevert.status, 409);
+
+    const stale = await request(`/api/note-items/${routeNote.id}/optimize`, { expectedContent: 'route original', expectedRevision: 0 });
+    assert.equal(stale.status, 409);
+    assert.equal(noteItems.getNoteItem(routeUser.id, routeNote.id)?.content, 'route original');
+  } finally {
+    db.clearUserData(routeUser.id);
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
 });
